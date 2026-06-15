@@ -150,6 +150,56 @@ def plot_stacked_composition(
     return out_path
 
 
+def plot_validation_curves(val_rows: list[dict], out_dir: str | Path) -> list[Path]:
+    """Per-class validation curves: score, cost and feasibility for C / R / RC.
+
+    Each ``val_rows`` record is a flat dict with keys like ``C_cost``,
+    ``R_feasibility_rate``, ``overall_score`` and a ``global_epoch`` x value.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not val_rows:
+        return []
+    x = [r.get("global_epoch", i) for i, r in enumerate(val_rows)]
+    classes = ["C", "R", "RC", "overall"]
+    colors = {"C": "#2563eb", "R": "#d97706", "RC": "#7c3aed", "overall": "#111827"}
+    # (metric suffix, axis title, filename, optional y-limits)
+    metrics = [
+        ("cost", "Validation cost J", "validation_cost_per_class.png", None),
+        ("feasibility_rate", "Validation feasibility rate", "validation_feasibility_per_class.png", (0, 1.02)),
+        ("score", "Validation score (cost + 1e4·(1−feas))", "validation_score_per_class.png", None),
+        ("avg_used_evs", "Validation used EVs", "validation_used_evs_per_class.png", None),
+    ]
+    saved = []
+    for suffix, title, fname, ylim in metrics:
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        plotted = False
+        for cls in classes:
+            key = f"{cls}_{suffix}"
+            ys = [r.get(key, np.nan) for r in val_rows]
+            if all(np.isnan(v) if isinstance(v, float) else v is None for v in ys):
+                continue
+            ax.plot(x, ys, marker="o", ms=3, color=colors[cls],
+                    lw=2 if cls == "overall" else 1.5,
+                    ls="-" if cls != "overall" else "--", label=cls)
+            plotted = True
+        if not plotted:
+            plt.close(fig)
+            continue
+        ax.set_xlabel("epoch")
+        ax.set_ylabel(title)
+        ax.set_title(f"Per-class {title}")
+        if ylim:
+            ax.set_ylim(*ylim)
+        ax.legend(fontsize=8, title="class")
+        fig.tight_layout()
+        path = out_dir / fname
+        fig.savefig(path, dpi=120)
+        plt.close(fig)
+        saved.append(path)
+    return saved
+
+
 def plot_metric_by_instance(rows: list[dict], metric: str, out_path: str | Path, title: str | None = None) -> Path:
     """Bar chart of a metric across instances, grouped by method."""
     out_path = _ensure_dir(out_path)

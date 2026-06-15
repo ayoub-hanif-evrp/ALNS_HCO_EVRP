@@ -60,3 +60,25 @@ def write_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+class CsvLogger:
+    """Append one row at a time to a CSV (for live persistence during training)."""
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fieldnames: list[str] = []
+        # Fresh file each run.
+        self.path.write_text("", encoding="utf-8")
+
+    def log(self, record: dict[str, Any]) -> None:
+        for key in record:
+            if key not in self._fieldnames:
+                self._fieldnames.append(key)
+        write_header = self.path.stat().st_size == 0
+        with open(self.path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=self._fieldnames, extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(record)

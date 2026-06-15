@@ -1,19 +1,14 @@
-"""E-VRPTW Transformer — training progress monitor (NiceGUI).
-
-Reads only persisted logs under outputs/logs/train_log.jsonl and archived runs
-under outputs/runs/.
-"""
+"""E-VRPTW Transformer — training progress monitor (NiceGUI)."""
 
 from __future__ import annotations
 
-# Must run before importing nicegui (restores pkgutil.find_loader on 3.14).
 from . import _compat  # noqa: F401
 
 from pathlib import Path
 
 from nicegui import ui
 
-from src.webapp.dashboard_charts import TRAINING_CHART_SECTIONS, build_chart_figure
+from src.webapp.dashboard_charts import TRAINING_CHART_SECTIONS, build_chart_figure, is_wide_chart
 from src.webapp.dashboard_data import (
     load_metrics_df,
     load_run_config,
@@ -23,13 +18,14 @@ from src.webapp.dashboard_data import (
     progress_from_metrics,
     training_plan_from_config,
 )
-from src.webapp.plot_style import SECTION_ACCENTS
+from src.webapp.plot_style import CLASS_COLORS, CLASS_ORDER, STAGE_COLORS
 
 _PAGE = "w-full max-w-[1280px] mx-auto px-6"
 _SECTION = "w-full rounded-xl border border-slate-200 bg-white shadow-sm mb-5"
 _SECTION_HEAD = "px-5 py-3 border-b border-slate-100 bg-slate-50"
 _SECTION_BODY = "p-4"
 _TILE = "rounded-lg border border-slate-100 bg-white p-3"
+_ACCENTS = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#dc2626", "#0891b2", "#4f46e5"]
 
 
 def _fmt_pct(val) -> str:
@@ -55,33 +51,32 @@ def _field(label: str, value: str, *, mono: bool = False) -> None:
 
 def _kpi(label: str, value: str) -> None:
     with ui.column().classes(
-        "flex-1 min-w-[8.5rem] items-center py-3 border-r border-slate-100 last:border-0"
+        "flex-1 min-w-[7rem] items-center py-2 px-1 border-r border-slate-100 last:border-0"
     ):
-        ui.label(label).classes("text-[11px] uppercase tracking-wide text-slate-400")
-        ui.label(value).classes("text-lg font-semibold text-slate-900")
+        ui.label(label).classes("text-[10px] uppercase tracking-wide text-slate-400 text-center")
+        ui.label(value).classes("text-base font-semibold text-slate-900")
 
 
 def _section_has_data(df, charts: list) -> bool:
-    if df.empty:
-        return False
-    cols = set(df.columns)
-    for spec in charts:
-        ctype = spec.get("type")
-        if ctype == "area":
-            series = spec.get("series") or []
-            if any(s[0] in cols for s in series):
+    for c in charts:
+        t = c.get("type", "metric")
+        if t in ("cost_breakdown", "reward_components", "served_coverage", "optimization_panel"):
+            return True
+        if t == "per_class_bars":
+            metrics = c.get("metrics") or []
+            if any(m[0] in df.columns for m in metrics):
                 return True
-        if ctype == "multi_line":
-            series = spec.get("series") or []
-            if any(s[0] in cols for s in series):
-                return True
-        if spec.get("col") in cols:
+            continue
+        if t == "rolling_band" and c.get("col") in df.columns:
+            return True
+        if t in ("class_bar", "cycle_bars", "class_metric") and c.get("col") in df.columns:
+            return True
+        if c.get("col") in df.columns:
             return True
     return False
 
 
 def _plotly_payload(fig) -> dict:
-    """Plotly dict with responsive config for NiceGUI."""
     payload = fig.to_plotly_json()
     layout = payload.setdefault("layout", {})
     layout["autosize"] = True
@@ -109,10 +104,15 @@ def _plot_chart(df, plan: dict, spec: dict) -> None:
 
 
 def _render_charts(df, plan: dict, charts: list) -> None:
-    """One full-width chart per row (reliable with NiceGUI + Plotly)."""
+    wide = [s for s in charts if is_wide_chart(s)]
+    compact = [s for s in charts if s not in wide]
     with ui.column().classes("w-full gap-4").style("width: 100%;"):
-        for spec in charts:
+        for spec in wide:
             _plot_chart(df, plan, spec)
+    if compact:
+        with ui.element("div").classes("grid grid-cols-1 lg:grid-cols-2 gap-4 w-full"):
+            for spec in compact:
+                _plot_chart(df, plan, spec)
 
 
 def create_dashboard(
@@ -121,7 +121,6 @@ def create_dashboard(
     config_path: str | Path | None = None,
     outputs_root: str | Path | None = None,
 ) -> None:
-    """Register the dashboard page bound to a training log path."""
     log_path = Path(log_path)
     config_path = Path(config_path) if config_path is not None else None
     outputs_root = Path(outputs_root) if outputs_root is not None else Path("outputs")
@@ -134,36 +133,36 @@ def create_dashboard(
             <style>
               body { background: #f1f5f9 !important; }
               .nicegui-content { padding: 0 !important; }
-              .chart-slot { width: 100% !important; min-width: 0 !important; box-sizing: border-box; }
-              .chart-slot .js-plotly-plot,
-              .chart-slot .plotly-graph-div,
-              .chart-slot .plot-container {
-                width: 100% !important;
-                max-width: 100% !important;
-                box-sizing: border-box !important;
-              }
+              .chart-slot { width: 100% !important; min-width: 0 !important; }
+              .chart-slot .js-plotly-plot, .chart-slot .plotly-graph-div { width: 100% !important; }
               .js-plotly-plot .modebar { display: none !important; }
             </style>
             """
         )
 
         status_panel = ui.column().classes(_PAGE + " pt-4")
-        kpi_panel = ui.column().classes(_PAGE)
+        reward_kpi_panel = ui.column().classes(_PAGE)
         charts_panel = ui.column().classes(_PAGE + " pb-12")
 
         def refresh() -> None:
-            status = load_status(log_path, load_run_config(outputs_root, config_path))
-            meta = load_run_meta(outputs_root)
             cfg = load_run_config(outputs_root, config_path)
+            status = load_status(log_path, cfg)
+            meta = load_run_meta(outputs_root)
             df = prepare_metrics_df(load_metrics_df(log_path))
             plan = training_plan_from_config(cfg)
+
+            if not df.empty and not plan.get("total_training_updates"):
+                plan["total_training_updates"] = len(df)
+                plan["total_epochs"] = len(df)
+
             if not df.empty:
                 status = {**status, **progress_from_metrics(df, plan)}
 
-            total = int(plan.get("total_epochs") or status.get("total_epochs") or 0)
-            cur = int(status.get("epoch") or 0)
-            running = bool(status.get("running"))
+            total = int(plan.get("total_training_updates") or status.get("total_epochs") or len(df) or 0)
+            cur = int(status.get("training_update") or status.get("epoch") or 0)
+            is_cyclic = plan.get("training_mode") == "cyclic"
 
+            # ---- Status ----
             status_panel.clear()
             with status_panel:
                 with ui.card().classes(_SECTION):
@@ -173,47 +172,45 @@ def create_dashboard(
                         with ui.column().classes("p-5 gap-2"):
                             ui.label("Run").classes("text-xs font-bold text-slate-400")
                             _field("Run ID", str(meta.get("run_id", "—")), mono=True)
-                            _field("Seed", str(cfg.get("seed", "—")))
-                            _field("Epochs logged", str(len(df)))
-                            _field("Log file", str(log_path), mono=True)
+                            _field("Seed", str(meta.get("seed", cfg.get("seed", "—"))))
+                            _field("Iterations logged", str(len(df)))
 
                         with ui.column().classes("p-5 gap-2 lg:border-x border-slate-100"):
                             ui.label("Progress").classes("text-xs font-bold text-slate-400")
-                            _field("Epoch", f"{cur} / {total or '—'}")
+                            _field("Iteration", f"{cur} / {total or '—'}")
                             ui.linear_progress(value=min(cur / max(total, 1), 1.0)).classes("w-full")
-                            if running:
-                                ui.label("Training live").classes(
-                                    "text-sm font-medium text-green-700"
+                            if is_cyclic:
+                                cycles = plan.get("cycles", 5)
+                                ui.label(f"Cyclic: C → R → RC × {cycles}").classes(
+                                    "text-sm font-medium text-slate-700"
                                 )
-                            elif not df.empty:
-                                ui.label("Idle").classes("text-sm font-medium text-amber-700")
-                            else:
-                                ui.label("Waiting for data").classes(
-                                    "text-sm font-medium text-slate-500"
+                            phase_label = status.get("training_phase_name") or status.get("stage_name")
+                            if phase_label:
+                                st = int(status.get("curriculum_stage") or 0)
+                                ui.label(phase_label).classes("text-sm font-medium").style(
+                                    f"color:{STAGE_COLORS.get(st, '#2563eb')}"
                                 )
-                            _field("Method", str(plan.get("method", "reinforce")).upper())
-                            _field("Batch size", str(plan.get("batch_size", "—")))
+                            if not df.empty and "instance_name" in df.columns:
+                                last_inst = df.iloc[-1].get("instance_name")
+                                if last_inst:
+                                    _field("Last instance", str(last_inst), mono=True)
                             if status.get("message"):
                                 ui.label(status["message"]).classes("text-xs text-slate-400")
 
                         with ui.column().classes("p-5 gap-2"):
-                            ui.label("Training setup").classes("text-xs font-bold text-slate-400")
-                            _field("Policy", "Multi-agent Transformer")
-                            _field("Algorithm", "REINFORCE + moving baseline")
-                            fleet = cfg.get("fleet_search") or {}
-                            _field(
-                                "Fleet search",
-                                "enabled" if fleet.get("enabled") else "disabled",
+                            ui.label("Schedule").classes("text-xs font-bold text-slate-400")
+                            if is_cyclic:
+                                order = " → ".join(plan.get("class_order") or ["C", "R", "RC"])
+                                ui.label(f"{order} · 1 instance = 1 iteration").classes(
+                                    "text-xs text-slate-500"
+                                )
+                            _field("Algorithm", "REINFORCE + greedy baseline")
+                            ui.label("outputs/results/training_metrics.csv").classes(
+                                "text-[10px] font-mono text-slate-400 mt-1"
                             )
-                            ui.label(
-                                "Results archived under outputs/runs/ and "
-                                "outputs/results/archive/."
-                            ).classes("text-xs text-slate-500")
-                            ui.label("E-VRPTW · hard masks · charging head").classes(
-                                "text-[10px] px-2 py-1 rounded-full"
-                            ).style("background:#2563eb;color:#fff;")
 
-            kpi_panel.clear()
+            # ---- Reward KPIs (top, right after status) ----
+            reward_kpi_panel.clear()
             if not df.empty:
                 last = df.iloc[-1]
 
@@ -224,45 +221,74 @@ def create_dashboard(
                             return v
                     return last.get(raw)
 
-                with kpi_panel:
+                with reward_kpi_panel:
                     with ui.card().classes(_SECTION):
-                        ui.label(
-                            "Recent performance · last logged epoch "
-                            "(rolling mean where available)"
-                        ).classes("text-xs font-bold text-slate-400 px-5 pt-4")
-                        with ui.row().classes("w-full flex-wrap justify-around"):
-                            _kpi("Reward", _fmt_num(last.get("reward"), 1))
-                            _kpi("Best reward", _fmt_num(last.get("best_reward"), 1))
+                        ui.label("Reward & optimization · latest step").classes(
+                            "text-xs font-bold text-slate-400 px-5 pt-4"
+                        )
+                        with ui.row().classes("w-full flex-wrap justify-around pb-2"):
+                            _kpi("Reward", _fmt_num(pick("rolling_raw_return_mean", "reward"), 2))
                             _kpi("Cost J", _fmt_num(last.get("cost"), 1))
-                            _kpi("Feasibility", _fmt_pct(pick("rolling_feasibility_rate_mean", "feasibility_rate")))
-                            _kpi("Used EVs", _fmt_num(pick("rolling_avg_used_evs_mean", "avg_used_evs"), 2))
-                            _kpi("Unserved", _fmt_num(pick("rolling_avg_unserved_mean", "avg_unserved"), 2))
-                            _kpi("Violation", _fmt_num(pick("rolling_avg_violation_mean", "avg_violation"), 2))
-                            _kpi("Distance", _fmt_num(last.get("avg_distance"), 1))
                             _kpi("Loss", _fmt_num(last.get("loss"), 3))
+                            _kpi("Policy loss", _fmt_num(last.get("policy_loss"), 3))
+                            _kpi("Advantage", _fmt_num(last.get("advantage"), 3))
                             _kpi("Entropy", _fmt_num(last.get("entropy"), 3))
+                            _kpi("Grad norm", _fmt_num(last.get("grad_norm"), 3))
+                            _kpi("LR", _fmt_num(last.get("learning_rate"), 6))
+                            _kpi("Served", _fmt_pct(pick("rolling_served_ratio_mean", "served_ratio")))
 
+                # Per-class snapshot (trailing window)
+                if "instance_class" in df.columns:
+                    w = min(10, max(3, len(df) // 3))
+                    with reward_kpi_panel:
+                        with ui.card().classes(_SECTION):
+                            ui.label("Per-class snapshot · trailing window mean").classes(
+                                "text-xs font-bold text-slate-400 px-5 pt-4"
+                            )
+                            with ui.row().classes("w-full flex-wrap gap-3 px-4 pb-4"):
+                                for cls in CLASS_ORDER:
+                                    g = df[df["instance_class"] == cls].tail(w)
+                                    if g.empty:
+                                        continue
+                                    color = CLASS_COLORS.get(cls, "#64748b")
+                                    with ui.column().classes(
+                                        "flex-1 min-w-[10rem] rounded-lg border border-slate-100 p-3"
+                                    ).style(f"border-top: 3px solid {color}"):
+                                        ui.label(cls).classes("text-sm font-bold").style(
+                                            f"color:{color}"
+                                        )
+                                        ui.label(f"Reward {_fmt_num(g['reward'].mean(), 2)}").classes(
+                                            "text-xs text-slate-600"
+                                        )
+                                        if "cost" in g.columns:
+                                            ui.label(f"Cost J {_fmt_num(g['cost'].mean(), 1)}").classes(
+                                                "text-xs text-slate-600"
+                                            )
+                                        if "served_ratio" in g.columns:
+                                            ui.label(
+                                                f"Served {_fmt_pct(g['served_ratio'].mean())}"
+                                            ).classes("text-xs text-slate-600")
+                                        if "avg_used_evs" in g.columns:
+                                            ui.label(
+                                                f"EVs {_fmt_num(g['avg_used_evs'].mean(), 1)}"
+                                            ).classes("text-xs text-slate-600")
+
+            # ---- Charts (flat sections, no dropdowns) ----
             charts_panel.clear()
             with charts_panel:
                 if df.empty:
                     with ui.card().classes(_SECTION + " p-10 text-center"):
                         ui.label("Waiting for metrics…").classes("text-slate-600")
                         ui.label(
-                            "python main_train.py --config configs/default.yaml"
+                            "python main_train.py --config configs/curriculum.yaml --curriculum"
                         ).classes("text-xs font-mono text-slate-400 mt-2")
-                        ui.label(
-                            "python main_dashboard.py --config configs/default.yaml"
-                        ).classes("text-xs font-mono text-slate-400 mt-1")
-                        ui.label("See commands.txt for the full command list").classes(
-                            "text-xs text-slate-400 mt-1"
-                        )
                     return
 
                 for n, section in enumerate(TRAINING_CHART_SECTIONS, 1):
                     charts = section.get("charts", [])
                     if not _section_has_data(df, charts):
                         continue
-                    accent = SECTION_ACCENTS[(n - 1) % len(SECTION_ACCENTS)]
+                    accent = _ACCENTS[(n - 1) % len(_ACCENTS)]
                     with ui.card().classes(_SECTION):
                         with ui.row().classes(_SECTION_HEAD + " items-center gap-3"):
                             ui.element("div").classes("w-1.5 h-9 rounded-full shrink-0").style(
@@ -273,9 +299,7 @@ def create_dashboard(
                                     "text-base font-semibold text-slate-800"
                                 )
                                 if section.get("subtitle"):
-                                    ui.label(section["subtitle"]).classes(
-                                        "text-xs text-slate-500"
-                                    )
+                                    ui.label(section["subtitle"]).classes("text-xs text-slate-500")
                         with ui.column().classes(_SECTION_BODY).style("width: 100%;"):
                             _render_charts(df, plan, charts)
 
@@ -284,19 +308,14 @@ def create_dashboard(
                 "w-full max-w-[1280px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
-                    ui.label("E-VRPTW Transformer · Training monitor").classes(
-                        "text-lg font-bold"
-                    )
+                    ui.label("E-VRPTW Transformer · Training monitor").classes("text-lg font-bold")
                     ui.label(str(log_path)).classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")
             ui.label(
-                "One chart per row · no mode bar · objective J = fleet + route costs + penalties · "
-                "feasibility rate and unserved customers are the primary constraint indicators"
-            ).classes(
-                "text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1280px] mx-auto block"
-            )
+                "Reward metrics first · C → R → RC cyclic schedule · 1 instance = 1 iteration"
+            ).classes("text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1280px] mx-auto block")
 
         poll = ui.timer(3.0, refresh)
         poll.active = True

@@ -10,11 +10,12 @@ import numpy as np
 import torch
 
 from src.data.evrptw_dataset import split_dataset
-from src.env.cost import CostWeights
+from src.env.cost import CostWeights, training_reward
 from src.models.policy import TransformerEVRPTWPolicy
-from src.training.baseline import MovingAverageBaseline
+from src.training.baseline import GreedyRolloutBaseline, MovingAverageBaseline
 from src.training.rollout import run_episode
-from src.utils.logging_utils import JsonlLogger, get_logger, write_csv
+from src.utils.logging_utils import CsvLogger, JsonlLogger, get_logger, write_csv
+from src.utils.output_cleanup import clear_training_outputs
 from src.utils.plotting import (
     plot_stacked_composition,
     plot_training_curves,
@@ -51,7 +52,13 @@ def train(config: dict) -> dict:
 
     tcfg = config["training"]
     optimizer = torch.optim.Adam(policy.parameters(), lr=float(tcfg["learning_rate"]))
-    baseline = MovingAverageBaseline(beta=float(tcfg.get("baseline_beta", 0.9)))
+    baseline_kind = str(tcfg.get("baseline", "moving_average"))
+    reward_scale = float(tcfg.get("reward_scale", 1000.0))
+    normalize_advantage = bool(tcfg.get("normalize_advantage", True))
+    greedy_baseline = GreedyRolloutBaseline(
+        weights, charging_portions, use_horizon, max_steps_factor, reward_scale=reward_scale,
+    )
+    ma_baseline = MovingAverageBaseline(beta=float(tcfg.get("baseline_beta", 0.9)))
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
     batch_size = int(tcfg["batch_size"])
@@ -63,16 +70,21 @@ def train(config: dict) -> dict:
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
 
     out_cfg = config["outputs"]
+    clear_training_outputs(out_cfg)
     Path(out_cfg["checkpoints"]).mkdir(parents=True, exist_ok=True)
     log_path = Path(out_cfg["logs"]) / "train_log.jsonl"
     jsonl = JsonlLogger(log_path)
+    results_dir = Path(out_cfg["results"])
+    results_dir.mkdir(parents=True, exist_ok=True)
+    train_csv = CsvLogger(results_dir / "training_metrics.csv")
 
-    # Archive this run so prior results are never lost when a new run starts.
+    # Archive this run (live outputs are cleared at the start of each new run).
     run_id = time.strftime("run_%Y%m%d_%H%M%S")
     run_dir = Path(out_cfg["root"]) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     run_logger = JsonlLogger(run_dir / "metrics.jsonl")
+    run_train_csv = CsvLogger(run_dir / "metrics.csv")
     LOGGER.info(f"Run archive: {run_dir}")
 
     rng = random.Random(int(config.get("seed", 42)))
@@ -87,12 +99,12 @@ def train(config: dict) -> dict:
         ]
 
         optimizer.zero_grad()
-        rewards, feas_flags, used_evs_list = [], [], []
+        raw_costs, rewards, feas_flags, used_evs_list = [], [], [], []
         dist_list, charge_list, wait_list, viol_list = [], [], [], []
         unserved_list, duration_list = [], []
-        served_rate_list, customers_list, charging_visit_list = [], [], []
+        served_rate_list, customers_list = [], []
         breakdowns: list[dict] = []
-        policy_losses, entropies = [], []
+        log_probs, entropies, advantages = [], [], []
 
         for idx in batch_idx:
             instance = train_ds[idx]
@@ -102,7 +114,16 @@ def train(config: dict) -> dict:
                 charging_portions=charging_portions, use_horizon_check=use_horizon,
                 max_steps_factor=max_steps_factor,
             )
-            reward = -result.objective
+            raw_j = float(result.objective)
+            reward = training_reward(raw_j, reward_scale)
+            if baseline_kind == "greedy_rollout":
+                b = greedy_baseline.reward(instance, policy, m, device)
+            else:
+                b = 0.0  # filled after batch mean for moving-average baseline
+            advantages.append(reward - b if baseline_kind == "greedy_rollout" else reward)
+            log_probs.append(result.log_prob_sum)
+            entropies.append(result.entropy_sum)
+            raw_costs.append(raw_j)
             rewards.append(reward)
             feas_flags.append(float(result.feasible))
             used_evs_list.append(result.summary.used_evs)
@@ -114,7 +135,6 @@ def train(config: dict) -> dict:
             n_cust = max(int(instance.num_customers), 1)
             customers_list.append(n_cust)
             served_rate_list.append(1.0 - result.summary.unserved_customers / n_cust)
-            charging_visit_list.append(result.summary.total_charging_time)
             viol_list.append(
                 result.summary.total_battery_violation
                 + result.summary.total_capacity_violation
@@ -122,18 +142,17 @@ def train(config: dict) -> dict:
                 + result.summary.unserved_customers
             )
             breakdowns.append(result.breakdown)
-            policy_losses.append((reward, result.log_prob_sum))
-            entropies.append(result.entropy_sum)
 
         batch_mean_reward = float(np.mean(rewards))
-        b = baseline.update(batch_mean_reward)
+        if baseline_kind != "greedy_rollout":
+            b = ma_baseline.update(batch_mean_reward)
+            advantages = [r - b for r in rewards]
 
-        # REINFORCE: loss = -mean(advantage.detach() * log_prob) - entropy_coef * entropy
-        loss_terms = []
-        for reward, log_prob in policy_losses:
-            advantage = reward - b
-            loss_terms.append(-advantage * log_prob)
-        policy_loss = torch.stack(loss_terms).mean()
+        adv_raw = torch.tensor(advantages, dtype=torch.float32)
+        adv = adv_raw.clone()
+        if normalize_advantage and adv.numel() > 1 and adv.std() > 1e-8:
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+        policy_loss = torch.stack([-adv[i] * log_probs[i] for i in range(len(log_probs))]).mean()
         entropy_term = torch.stack(entropies).mean()
         loss = policy_loss - entropy_coef * entropy_term
 
@@ -157,22 +176,28 @@ def train(config: dict) -> dict:
         mean_charge = float(np.mean(charge_list))
         mean_wait = float(np.mean(wait_list))
         mean_active = mean_dist + mean_charge + mean_wait
+        mean_feas = float(np.mean(feas_flags))
         record = {
             "epoch": epoch,
             "reward": batch_mean_reward,
+            "reward_scaled": batch_mean_reward,
+            "reward_scale": reward_scale,
             "reward_std": float(np.std(rewards)),
             "reward_min": float(np.min(rewards)),
             "reward_max": float(np.max(rewards)),
             "best_reward": best_reward,
-            "baseline": b,
-            "advantage": batch_mean_reward - b,
-            "cost": float(np.mean([-r for r in rewards])),
+            "baseline": float(batch_mean_reward - float(adv_raw.mean())),
+            "advantage": float(adv_raw.mean()),
+            "cost": float(np.mean(raw_costs)),
+            "cost_raw": float(np.mean(raw_costs)),
             "loss": float(loss.item()),
             "policy_loss": float(policy_loss.item()),
             "grad_norm": float(grad_norm),
             "learning_rate": float(optimizer.param_groups[0]["lr"]),
-            "feasibility_rate": float(np.mean(feas_flags)),
+            "feasibility_rate": mean_feas,
+            "feasibility_rate_pct": 100.0 * mean_feas,
             "served_rate": mean_served,
+            "served_rate_pct": 100.0 * mean_served,
             "avg_used_evs": mean_evs,
             "avg_distance": mean_dist,
             "avg_duration": float(np.mean(duration_list)),
@@ -189,6 +214,8 @@ def train(config: dict) -> dict:
         }
         jsonl.log(record)
         run_logger.log(record)
+        train_csv.log(record)
+        run_train_csv.log(record)
         if epoch % int(tcfg.get("log_every", 1)) == 0:
             LOGGER.info(
                 f"epoch {epoch:3d} | reward {batch_mean_reward:10.1f} | "

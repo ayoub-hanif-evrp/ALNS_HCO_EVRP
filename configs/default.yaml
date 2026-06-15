@@ -24,10 +24,10 @@ fleet_search:
   selection_mode: hierarchical  # hierarchical | scalar
 
 model:
-  embedding_dim: 128
-  encoder_layers: 3
+  embedding_dim: 192      # was 128 — ~2.7× params, medium capacity
+  encoder_layers: 4       # was 3
   heads: 8
-  feedforward_dim: 512
+  feedforward_dim: 768    # was 512 (4× embedding_dim)
   dropout: 0.1
   use_ev_communication: true
 
@@ -40,6 +40,8 @@ training:
   grad_clip: 1.0
   baseline: moving_average
   baseline_beta: 0.9
+  reward_scale: 1000.0       # R_train = -J / reward_scale (keeps gradients stable)
+  normalize_advantage: true   # batch z-score of advantages before policy loss
   use_fleet_search: false  # training uses fixed m = m_min for speed
   checkpoint_every: 10
   log_every: 1

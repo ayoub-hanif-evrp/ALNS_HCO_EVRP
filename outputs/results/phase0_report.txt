@@ -1,0 +1,30 @@
+Phase 0 — environment & mask sanity checks
+====================================================
+[PASS] dataset_loader
+        c101C5: N=9, customers=5, stations=3
+[PASS] matrices_valid
+        shape_ok=True, zero_diag=True, nonneg=True, dist_symmetric=True
+[PASS] unit_consistency
+        v=1.0, r=1.0, time=dist/v:True, energy=dist*r:True, unit_identity(v=1,r=1)=True
+[PASS] served_customer_masked
+        feasible_before=True, after_served=False
+[PASS] reserved_customer_masked
+        ev1 sees customer 4 feasible=False (expected masked)
+[PASS] battery_cannot_reach
+        battery=10.308 < energy_to_j=20.616, reason=battery_cannot_reach
+[PASS] anti_stranding_masked
+        battery=30.923, reach=20.616, escape=20.616, reason=battery_would_strand
+[PASS] capacity_exceeded_masked
+        remaining_cap=5.000 < demand=10.000, reason=capacity_exceeded
+[PASS] late_arrival_infeasible
+        current_time>407.0 (due), reason=time_window_late
+[PASS] early_arrival_waiting
+        arrival=20.62, ready=355.00, waiting accrued=334.38 (expected 334.38)
+[PASS] station_reusable
+        ev0 could use station=True, ev1 after reuse=True
+[PASS] depot_return_works
+        finished=True, last_node=0 (depot=0)
+[PASS] active_evs_return_to_depot
+        used_evs=4, all ended at depot=True
+----------------------------------------------------
+13/13 checks passed
