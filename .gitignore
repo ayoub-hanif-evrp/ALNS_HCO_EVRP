@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Training artifacts: keep results, figures and the key checkpoints,
+# but skip the noisy intermediate per-epoch checkpoints and live log.
+outputs/checkpoints/epoch_*.pt
+outputs/logs/train_log.jsonl
+
+# Per-run archives can be regenerated; keep the repo lean.
+outputs/runs/

@@ -1,0 +1,96 @@
+==============================================================================
+ Multi-Agent Transformer E-VRPTW Solver - Command Reference
+==============================================================================
+ Run all commands from the project root:
+   c:\Users\AYOUB\OneDrive - EMSI\Bureau\PHD_WORK\Transformer_MARL_EVRP
+ Shell: PowerShell (Windows)
+==============================================================================
+
+
+------------------------------------------------------------------------------
+ 1. SETUP  -  install dependencies (run once)
+------------------------------------------------------------------------------
+pip install -r requirements.txt
+
+
+------------------------------------------------------------------------------
+ 2. RUN THE UNIT TESTS  -  verify the solver before training
+------------------------------------------------------------------------------
+python -m pytest tests/ -v
+
+# Run a single test file:
+python -m pytest tests/test_masks.py -v
+
+
+------------------------------------------------------------------------------
+ 3. TRAIN THE MODEL
+------------------------------------------------------------------------------
+# Full training with the default config:
+python main_train.py --config configs/default.yaml
+
+# Useful overrides:
+python main_train.py --config configs/default.yaml --epochs 50
+python main_train.py --config configs/default.yaml --device cpu
+python main_train.py --config configs/default.yaml --seed 123
+
+# TIP: to iterate fast, first train only on the small instances by editing
+# configs/default.yaml:
+#     dataset:
+#       train_size_filter: ["C5"]
+#       eval_size_filter: ["C5"]
+# then scale up to the full 100-customer instances (set both filters to null).
+
+
+------------------------------------------------------------------------------
+ 4. LIVE TRAINING DASHBOARD  (run in a SECOND terminal, while training runs)
+------------------------------------------------------------------------------
+python main_dashboard.py --config configs/default.yaml
+
+# Then open this in your browser:
+#     http://localhost:8080
+# The page auto-refreshes every 3 seconds with all metrics.
+
+# If port 8080 is busy, choose another port:
+python main_dashboard.py --config configs/default.yaml --port 8090
+
+# Point the dashboard at a specific log file:
+python main_dashboard.py --log outputs/logs/train_log.jsonl --port 8090
+
+
+------------------------------------------------------------------------------
+ 5. EVALUATE THE TRAINED MODEL  (model + baselines + fleet-size search)
+------------------------------------------------------------------------------
+python main_evaluate.py --config configs/default.yaml
+
+# Evaluate a specific checkpoint:
+python main_evaluate.py --config configs/default.yaml --checkpoint outputs/checkpoints/best.pt
+
+# Force CPU:
+python main_evaluate.py --config configs/default.yaml --device cpu
+
+
+------------------------------------------------------------------------------
+ 6. WHERE THE OUTPUTS GO
+------------------------------------------------------------------------------
+# Checkpoints : outputs/checkpoints/   (best.pt, last.pt, epoch_*.pt)
+# Train log   : outputs/logs/train_log.jsonl   (read by the dashboard)
+# Results CSV : outputs/results/results.csv
+# Routes JSON : outputs/routes/<instance>_routes.json
+# Figures     : outputs/figures/   (training curves, fleet-search, routes, comparisons)
+
+
+------------------------------------------------------------------------------
+ 7. TYPICAL FULL WORKFLOW
+------------------------------------------------------------------------------
+# Terminal 1:
+pip install -r requirements.txt
+python -m pytest tests/ -v
+python main_train.py --config configs/default.yaml
+
+# Terminal 2 (started right after training begins):
+python main_dashboard.py --config configs/default.yaml
+#   -> open http://localhost:8080
+
+# After training finishes:
+python main_evaluate.py --config configs/default.yaml
+==============================================================================
