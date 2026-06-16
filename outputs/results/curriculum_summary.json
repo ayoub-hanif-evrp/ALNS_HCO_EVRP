@@ -1,0 +1,59 @@
+{
+  "run_id": "run_curriculum_20260616_182850",
+  "run_dir": "outputs\\runs\\run_curriculum_20260616_182850",
+  "schedule": {
+    "mode": "progressive",
+    "class_order": [
+      "C",
+      "RC",
+      "R"
+    ],
+    "train_classes": [
+      "C",
+      "R",
+      "RC"
+    ],
+    "cycles_small": 3,
+    "cycles_full": 2,
+    "cycles_by_class": {
+      "C": {
+        "small": 3,
+        "full": 2
+      },
+      "RC": {
+        "small": 2,
+        "full": 2
+      },
+      "R": {
+        "small": 2,
+        "full": 2
+      }
+    },
+    "reload_phase_checkpoint": true,
+    "min_class_feasibility": {},
+    "gate_max_retries": 2,
+    "total_epochs": 102
+  },
+  "total_epochs": 102,
+  "best_checkpoints": {
+    "phase_C_best": {
+      "global_epoch": 31,
+      "phase": "progressive_C",
+      "path": "outputs\\checkpoints\\phase_C_best.pt",
+      "source": "current_policy"
+    },
+    "phase_RC_best": {
+      "global_epoch": 61,
+      "phase": "progressive_RC",
+      "path": "outputs\\checkpoints\\phase_RC_best.pt",
+      "source": "current_policy"
+    },
+    "phase_R_best": {
+      "global_epoch": 101,
+      "phase": "progressive_R",
+      "path": "outputs\\checkpoints\\phase_R_best.pt",
+      "source": "current_policy"
+    }
+  },
+  "phase0_passed": true
+}
