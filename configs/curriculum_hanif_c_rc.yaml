@@ -2,7 +2,8 @@
 # Kept for backward compatibility with existing commands.
 
 seed: 42
-device: auto
+device: cuda
+deterministic: false
 
 dataset:
   path: dataset/converted_hanif_data

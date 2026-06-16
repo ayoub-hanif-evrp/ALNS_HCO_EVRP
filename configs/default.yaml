@@ -1,7 +1,8 @@
 # Default configuration for the Multi-Agent Transformer E-VRPTW solver.
 
 seed: 42
-device: auto  # auto | cpu | cuda
+device: cuda  # auto | cpu | cuda — verify GPU: python scripts/check_gpu.py
+deterministic: false
 
 dataset:
   path: dataset/evrptw_instances

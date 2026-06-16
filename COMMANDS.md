@@ -18,6 +18,28 @@ Install dependencies (once):
 pip install -r requirements.txt
 ```
 
+### GPU (recommended)
+
+All configs default to **`device: cuda`**. Check that PyTorch sees your GPU:
+
+```powershell
+python scripts/check_gpu.py
+```
+
+If CUDA is not available, install a GPU build of PyTorch (example — adjust CUDA version to match your driver):
+
+```powershell
+pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu126
+```
+
+Override on the command line:
+
+```powershell
+python main_train.py --config configs/curriculum_hanif.yaml --curriculum --device cuda
+```
+
+Use `--device cpu` only for debugging small instances.
+
 ---
 
 ## 2. Unit tests
@@ -218,6 +240,7 @@ python main_evaluate.py --config configs/curriculum_hanif.yaml --device cpu
 
 ```powershell
 pip install -r requirements.txt
+python scripts/check_gpu.py
 python scripts/convert_hanif_dataset.py
 python -m pytest tests/ -v
 python main_train.py --config configs/curriculum_hanif.yaml --curriculum

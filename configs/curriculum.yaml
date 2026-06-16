@@ -5,7 +5,8 @@
 #   One instance = one iteration (epoch).
 
 seed: 42
-device: auto  # auto | cpu | cuda
+device: cuda  # auto | cpu | cuda
+deterministic: false
 
 dataset:
   path: dataset/evrptw_instances

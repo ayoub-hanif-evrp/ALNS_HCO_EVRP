@@ -24,7 +24,8 @@ Transformer_MARL_EVRP/
 │   ├── Schneider/            # Legacy Solomon/Schneider VRPTW instances
 │   └── converted_hanif_data/ # Generated fast loader (not in git — run convert script)
 ├── scripts/
-│   └── convert_hanif_dataset.py
+│   ├── convert_hanif_dataset.py
+│   └── check_gpu.py
 ├── src/
 │   ├── data/                 # Loaders, Hanif parser/converter, dataset splits
 │   ├── env/                  # EVRPTW environment, masks, cost function
@@ -43,11 +44,38 @@ Transformer_MARL_EVRP/
 ## Requirements
 
 - Python 3.10+ (tested on 3.14 with NiceGUI compatibility shim)
+- **NVIDIA GPU + CUDA PyTorch** (strongly recommended for Hanif 1000-customer runs)
 - PyTorch, NumPy, Pandas, Plotly, NiceGUI, PyYAML
 
 ```powershell
 pip install -r requirements.txt
 ```
+
+### GPU setup
+
+Training defaults to **`device: cuda`** in all configs. Verify PyTorch sees your GPU **before** a long run:
+
+```powershell
+python scripts/check_gpu.py
+```
+
+If it fails, you likely have the **CPU-only** PyTorch wheel. Install a CUDA build matching your driver (example for CUDA 12.4):
+
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+```
+
+Pick the correct wheel at [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/).
+
+When training starts you should see:
+
+```text
+Curriculum training on device: cuda — NVIDIA GeForce RTX … (… GB)
+```
+
+With GPU, Hanif steps are typically **several× faster** than CPU (~45–90 s/step on CPU).
+
+Set `deterministic: true` in the config for fully reproducible runs (slightly slower on GPU).
 
 ## Quick start (Hanif benchmark — recommended)
 
@@ -138,9 +166,11 @@ Use the **Sections** jump bar to scroll to each block.
 ## Performance notes
 
 - Hanif instances have **~1000 customers + ~333 stations** (~1334 nodes).
-- On **CPU**, expect **~45–90 s per training iteration** (graph size + Transformer, not file I/O).
-- Use `baseline: moving_average` (default in Hanif config); `greedy_rollout` roughly doubles step time.
-- **GPU** (`device: cuda` in config) is strongly recommended for full benchmark runs.
+- **GPU (`device: cuda`)** is the default — run `python scripts/check_gpu.py` first.
+- On **CPU** (CPU-only PyTorch), expect **~45–90 s per training iteration**.
+- On **GPU**, expect **much faster** steps (often 5–20× vs CPU, depending on VRAM/GPU).
+- Use `baseline: moving_average` (Hanif default); `greedy_rollout` roughly doubles step time.
+- `deterministic: false` (default) enables cuDNN autotune for faster GPU training.
 
 ## Phase 0 checks
 

@@ -7,7 +7,8 @@
 #   python main_dashboard.py --config configs/curriculum_c_rc.yaml
 
 seed: 42
-device: auto
+device: cuda
+deterministic: false
 
 dataset:
   path: dataset/Schneider/evrptw_instances

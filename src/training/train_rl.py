@@ -22,7 +22,7 @@ from src.utils.plotting import (
     plot_training_curves,
     plot_training_overview,
 )
-from src.utils.seed import resolve_device, set_seed
+from src.utils.seed import describe_device, resolve_device, set_seed
 
 LOGGER = get_logger()
 
@@ -33,9 +33,10 @@ def build_policy(config: dict, charging_portions: list[float]) -> TransformerEVR
 
 def train(config: dict) -> dict:
     """Run REINFORCE training; return a summary dict of the run."""
-    set_seed(int(config.get("seed", 42)))
+    deterministic = bool(config.get("deterministic", False))
+    set_seed(int(config.get("seed", 42)), deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
-    LOGGER.info(f"Training on device: {device}")
+    LOGGER.info(f"Training on device: {describe_device(device)}")
 
     ds_cfg = config["dataset"]
     train_ds, _eval_ds = split_dataset(

@@ -32,7 +32,7 @@ from src.utils.plotting import (
     plot_metric_by_instance,
     plot_routes,
 )
-from src.utils.seed import resolve_device, set_seed
+from src.utils.seed import describe_device, resolve_device, set_seed
 
 LOGGER = get_logger()
 
@@ -68,8 +68,10 @@ def _baseline_runner(policy_factory, weights, use_horizon, max_steps_factor):
 
 
 def evaluate(config: dict, checkpoint: str | None = None) -> dict:
-    set_seed(int(config.get("seed", 42)))
+    deterministic = bool(config.get("deterministic", False))
+    set_seed(int(config.get("seed", 42)), deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
+    LOGGER.info(f"Evaluation on device: {describe_device(device)}")
 
     ds_cfg = config["dataset"]
     _train_ds, eval_ds = split_dataset(

@@ -62,7 +62,7 @@ from src.utils.plotting import (
     plot_training_overview,
     plot_validation_curves,
 )
-from src.utils.seed import resolve_device, set_seed
+from src.utils.seed import describe_device, resolve_device, set_seed
 
 LOGGER = get_logger()
 
@@ -138,9 +138,10 @@ def _load_checkpoint_into_policy(policy, checkpoint_path: Path, device) -> None:
 
 
 def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False) -> dict:
-    set_seed(int(config.get("seed", 42)))
+    deterministic = bool(config.get("deterministic", False))
+    set_seed(int(config.get("seed", 42)), deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
-    LOGGER.info(f"Curriculum training on device: {device}")
+    LOGGER.info(f"Curriculum training on device: {describe_device(device)}")
 
     ds_cfg = config["dataset"]
     seed = int(config.get("seed", 42))
@@ -182,10 +183,11 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         _probe.num_nodes,
         _load_s,
     )
-    if _probe.num_customers >= 500 and str(device) == "cpu":
+    if _probe.num_customers >= 500 and device.type == "cpu":
         LOGGER.warning(
-            "Hanif 1000-customer instances on CPU are slow (~1–3 min/step) due to graph size, "
-            "not file loading. Use baseline=moving_average (not greedy_rollout) or GPU if available."
+            "Hanif 1000-customer instances on CPU are slow (~45–90 s/step). "
+            "Config uses device=%s but PyTorch sees no CUDA — run: python scripts/check_gpu.py",
+            config.get("device", "auto"),
         )
 
     charging_portions = config["problem"]["charging_portions"]

@@ -1,0 +1,387 @@
+================================================================================
+ TRANSFORMER_MARL_EVRP — PROJECT CONTEXT
+ Last updated: 2026-06-16 (GPU training verified on RTX A2000)
+ GitHub: https://github.com/ayoub-hanif-evrp/Transformer_MARL_EVRP
+================================================================================
+
+This file summarizes what this project is, what was built/changed, and how to
+run training (including GPU) on this PC or another machine.
+
+See also: README.md, COMMANDS.md, context.txt (this file)
+
+
+================================================================================
+ 0. HOW TO ACTIVATE GPU (READ THIS FIRST)
+================================================================================
+
+GPU training needs TWO things:
+  (1) NVIDIA driver working          -> nvidia-smi shows your GPU
+  (2) PyTorch CUDA wheel installed   -> NOT the default CPU-only pip torch
+
+The project config alone does NOT activate GPU. You must install CUDA PyTorch
+and START A NEW training process after that.
+
+--- ACTIVATION CHECKLIST (do in order) ---
+
+  1. Check NVIDIA driver (does NOT install anything):
+       nvidia-smi
+     Expected: GPU name + driver version (e.g. RTX A2000, driver 595.x)
+
+  2. Install project Python deps:
+       pip install -r requirements.txt
+
+  3. Check current PyTorch:
+       python scripts/check_gpu.py
+
+     BAD (CPU-only — GPU NOT active for training):
+       PyTorch version : 2.12.0+cpu
+       CUDA available  : False
+
+     GOOD (GPU active for PyTorch):
+       PyTorch version : 2.12.0+cu126   (or +cu124, +cu128)
+       CUDA available  : True
+       Matmul smoke OK : ... on cuda:0
+
+  4. If step 3 failed — install CUDA PyTorch (ONLY changes the torch package):
+
+       pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu126
+
+     On another PC, pick cu124 / cu126 / cu128 from:
+       https://pytorch.org/get-started/locally/
+
+     WARNING: Do NOT use plain "pip install torch" — it often installs CPU-only.
+     Do NOT uninstall or change NVIDIA drivers with pip.
+
+  5. Re-run check until it passes:
+       python scripts/check_gpu.py
+
+  6. Config already has device: cuda in configs/curriculum_hanif.yaml.
+     Start training (NEW process — stop any old run first with Ctrl+C):
+
+       python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+
+  7. CONFIRM in the FIRST log line of training:
+
+       GOOD:  Curriculum training on device: cuda — NVIDIA RTX A2000 12GB (12.0 GB)
+       BAD:   Curriculum training on device: cpu
+
+     If you see "cpu", the running process started before CUDA PyTorch was
+     installed — stop it and restart from step 6.
+
+  8. Optional — watch GPU usage while training (second terminal):
+       nvidia-smi -l 2
+     GPU-Util and memory should increase during training steps.
+
+--- WHAT WE DID / DID NOT TOUCH ON YOUR PC ---
+
+  DID:
+    - Installed PyTorch CUDA wheel (torch 2.12.0+cu126) via pip only
+    - Set configs to device: cuda
+    - Added scripts/check_gpu.py
+
+  DID NOT:
+    - Uninstall or modify NVIDIA drivers
+    - Change CUDA toolkit system install
+    - Affect other Python environments unless you use the same python.exe
+
+--- VERIFIED WORKING ON THIS PC (2026-06-16) ---
+
+  GPU:     NVIDIA RTX A2000 12GB
+  Driver:  595.71
+  PyTorch: 2.12.0+cu126
+  Training log: "Curriculum training on device: cuda — NVIDIA RTX A2000 12GB"
+
+
+Multi-Agent Reinforcement Learning solver for E-VRPTW (Electric Vehicle
+Routing Problem with Time Windows and Recharging Stations).
+
+Architecture:
+  - Transformer encoder over full static graph (depot + customers + stations)
+  - Event-driven asynchronous multi-EV decoder
+  - Hard feasibility masks (battery, capacity, TW, anti-stranding, reservations)
+  - Partial charging at stations with Hanif log-normal energy prices
+  - REINFORCE training + progressive curriculum over instance classes C, R, RC
+  - Fleet-size search at validation/evaluation time
+
+Primary benchmark: Hanif EVRPTW variant B (relaxed time windows), 1000 customers
+per instance, ~333 charging stations, battery 600, per-instance load capacity
+(200 / 700 / 1000 depending on series).
+
+
+================================================================================
+ 2. REPOSITORY STRUCTURE (KEY PATHS)
+================================================================================
+
+configs/curriculum_hanif.yaml     <- MAIN training config (use this)
+configs/curriculum_hanif_c_rc.yaml <- alias, same settings
+configs/default.yaml              <- flat REINFORCE (legacy Schneider path)
+COMMANDS.md                       <- full command reference (Markdown)
+README.md                         <- project overview
+context.txt                       <- this file (project context + GPU activation)
+
+dataset/Hanif/.../variant_B_relaxed_TW/   <- raw Hanif .txt + station CSVs (in git)
+dataset/converted_hanif_data/             <- fast NPZ cache (~1 GB, NOT in git)
+dataset/Schneider/vrptw_instances/        <- legacy 100-customer instances
+
+scripts/convert_hanif_dataset.py  <- one-time conversion to converted_hanif_data
+scripts/check_gpu.py              <- verify PyTorch sees GPU before training
+
+src/data/          hanif_parser.py, hanif_converter.py, hanif_loader.py, evrptw_dataset.py
+src/env/           evrptw_env.py, masks.py, cost.py (includes charging price term)
+src/models/        Transformer policy (encoder + pointer decoder + EV comm)
+src/training/      curriculum_train.py, validation.py, phase0_checks.py
+src/webapp/        NiceGUI live dashboard (grouped metric sections)
+
+outputs/checkpoints/     best.pt, best_C.pt, best_R.pt, best_RC.pt, last.pt, ...
+outputs/logs/train_log.jsonl     <- dashboard reads this
+outputs/results/training_metrics.csv
+outputs/runs/<run_id>/           archived run copies
+
+
+================================================================================
+ 3. WHAT WAS DONE (CONVERSATION / DEVELOPMENT HISTORY)
+================================================================================
+
+DATASET — Hanif integration
+  - Switched from slow raw .txt loading to pre-converted NPZ/JSON folders
+  - convert_hanif_dataset.py writes per instance:
+      evrp_instance.json, nodes.csv, matrices.npz, stations.csv, summary.json
+  - Real EV params from dataset: battery 600, h=1.0, per-instance load capacity,
+    per-station charging_rate and price (mu/sigma from Hanif station CSVs)
+  - converted_hanif_data/ excluded from git (.gitignore) — regenerate locally
+
+COST FUNCTION — charging price
+  - Added lambda_charging_price and total_charging_price objective term
+  - Price = expected log-normal exp(mu + sigma^2/2) per station × charged energy
+  - Logged as mean_obj_charging_price / avg_charging_price in metrics
+
+TRAINING — curriculum
+  - Primary config: curriculum_hanif.yaml
+  - Progressive curriculum: C -> RC -> R (small cycles then full)
+  - Phase 0 sanity checks (14 tests) before training
+  - baseline: moving_average (NOT greedy_rollout — too slow on 1000-customer CPU)
+  - Per-class validation, multi-checkpointing (best_C, best_R, best_RC, ...)
+  - Validation score: cost + 10000 * (1 - feasibility_rate)
+
+BUG FIXES
+  - _SubsetDataset hanif_mode delegation in evrptw_dataset.py
+  - validation.py: fixed list unpack bug (10 lists vs 9 variables) for price metric
+  - Dashboard: removed redundant KPI panels; one chart per cost term
+
+DASHBOARD
+  - Grouped sections (like Policy optimization card for each theme):
+      Total J, Fleet & routing, Charging, Waiting, Service penalties,
+      Constraint penalties, Solution quality, Fleet utilization,
+      Per-class summaries, Policy optimization
+  - Jump links at top; auto-refresh every 3s
+  - python main_dashboard.py --config configs/curriculum_hanif.yaml
+
+GPU SUPPORT
+  - All configs: device: cuda, deterministic: false
+  - resolve_device() in src/utils/seed.py — clear error if cuda requested but missing
+  - describe_device() logs GPU name + VRAM at training start
+  - scripts/check_gpu.py — smoke test before long runs
+
+DOCS & GIT
+  - README.md and COMMANDS.md (replaced commands.txt)
+  - context.txt — full project context + GPU activation guide
+  - Pushed to GitHub (main branch); converted_hanif_data NOT in repo
+  - context.txt may be updated locally — copy to second PC or commit when ready
+
+
+================================================================================
+ 4. GPU DETAILS (EXPANDED — see section 0 for activation checklist)
+================================================================================
+
+IMPORTANT: GPU training uses PyTorch CUDA wheel — NOT the NVIDIA driver alone.
+Your driver can be fine while PyTorch still runs on CPU (2.12.0+cpu).
+
+Symptoms you are NOT on GPU:
+  - Log says: "Curriculum training on device: cpu"
+  - check_gpu.py shows CUDA available: False
+  - ~45–90 seconds per Hanif training iteration
+
+Symptoms you ARE on GPU:
+  - Log says: "Curriculum training on device: cuda — <GPU name> (... GB)"
+  - check_gpu.py passes with Matmul smoke OK on cuda:0
+  - nvidia-smi shows python.exe using GPU memory during training
+
+--- Step A: Verify NVIDIA driver (any PC with NVIDIA GPU) ---
+
+  nvidia-smi
+
+  You should see your GPU name and driver version. If this fails, install/update
+  NVIDIA drivers first (from nvidia.com) — do NOT use pip for drivers.
+
+--- Step B: Install Python deps ---
+
+  cd Transformer_MARL_EVRP
+  pip install -r requirements.txt
+
+--- Step C: Install PyTorch WITH CUDA (critical step) ---
+
+  First check what you have:
+
+    python scripts/check_gpu.py
+
+  If it says "2.12.0+cpu" or CUDA available: False, install CUDA PyTorch.
+
+  This PC (RTX A2000, driver 595.71) uses cu126 successfully:
+
+    pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu126
+
+  Other PCs — pick wheel matching driver (see pytorch.org/get-started/locally):
+    cu124  -> older CUDA 12.4 builds
+    cu126  -> CUDA 12.6 (recommended if driver supports CUDA 12.x+)
+    cu128  -> newer builds if available
+
+  NOTE: pip install torch (default PyPI) often installs CPU-only on Windows.
+  Always use the --index-url line above for GPU training.
+
+--- Step D: Confirm GPU works ---
+
+    python scripts/check_gpu.py
+
+  Expected output on this PC:
+    PyTorch version : 2.12.0+cu126
+    CUDA available  : True
+    GPU 0: NVIDIA RTX A2000 12GB (12.0 GB)
+    Training device : cuda — NVIDIA RTX A2000 12GB (12.0 GB)
+    Matmul smoke OK : ...
+
+--- Step E: Train on GPU ---
+
+  STOP any old training first (Ctrl+C) if it was started on CPU.
+
+  Config already has device: cuda. Run:
+
+    python scripts/convert_hanif_dataset.py          # once per machine
+    python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+
+  At startup you MUST see (first INFO line):
+
+    Curriculum training on device: cuda — NVIDIA ... (... GB)
+
+  If you see "device: cpu", PyTorch CUDA is still not installed — redo Step C
+  and start a NEW training process (do not continue an old one).
+
+  Optional CLI override:
+
+    python main_train.py --config configs/curriculum_hanif.yaml --curriculum --device cuda
+
+  Force CPU (debug only):
+
+    python main_train.py --config configs/curriculum_hanif.yaml --curriculum --device cpu
+
+--- Step F: Dashboard (second terminal) ---
+
+    python main_dashboard.py --config configs/curriculum_hanif.yaml
+    -> http://localhost:8080
+
+--- Performance expectations ---
+
+  CPU (2.12.0+cpu):  ~45–90 seconds per training iteration on Hanif 1000-customer
+  GPU (RTX A2000):   typically several times faster (exact speed varies)
+
+  If training was started BEFORE installing CUDA PyTorch, stop it (Ctrl+C) and
+  restart — old process still uses CPU.
+
+
+================================================================================
+ 5. SETUP ON A NEW / SECOND PC (CHECKLIST)
+================================================================================
+
+  [ ] git clone https://github.com/ayoub-hanif-evrp/Transformer_MARL_EVRP.git
+  [ ] cd Transformer_MARL_EVRP
+  [ ] pip install -r requirements.txt
+  [ ] nvidia-smi   (confirm GPU + driver)
+  [ ] pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu126
+      (adjust cu124/cu126/cu128 for that machine's driver)
+  [ ] python scripts/check_gpu.py   (must pass)
+  [ ] python scripts/convert_hanif_dataset.py   (creates ~1 GB local cache)
+  [ ] python -m pytest tests/ -v
+  [ ] python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+  [ ] python main_dashboard.py --config configs/curriculum_hanif.yaml
+
+  Copy this context.txt to the new PC or keep it in the repo for reference.
+  Do NOT copy dataset/converted_hanif_data/ via git — regenerate with convert script.
+
+
+================================================================================
+ 6. MAIN COMMANDS (QUICK REFERENCE)
+================================================================================
+
+  Phase 0 checks only:
+    python main_train.py --config configs/curriculum_hanif.yaml --phase0-only
+
+  Train:
+    python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+
+  Dashboard:
+    python main_dashboard.py --config configs/curriculum_hanif.yaml
+
+  Evaluate:
+    python main_evaluate.py --config configs/curriculum_hanif.yaml --checkpoint outputs/checkpoints/best.pt
+
+  GPU check:
+    python scripts/check_gpu.py
+
+
+================================================================================
+ 7. CONFIG NOTES (curriculum_hanif.yaml)
+================================================================================
+
+  device: cuda
+  deterministic: false          # true = reproducible but slower on GPU
+  dataset.path: dataset/converted_hanif_data
+  problem.load_capacity: null   # MUST stay null — per-instance Hanif loads
+  training.baseline: moving_average
+  training.reward_scale: 1000.0
+  curriculum.mode: progressive
+  curriculum.class_order: [C, RC, R]
+  cost.lambda_charging_price: 1.0
+
+  Hanif "small" vs "full" in curriculum = series 1 vs series 2, NOT fewer
+  customers — both tiers have 1000 customers.
+
+
+================================================================================
+ 8. TROUBLESHOOTING
+================================================================================
+
+  Training says "device: cpu"
+    -> PyTorch is CPU-only wheel. Run check_gpu.py and reinstall cu126 torch.
+
+  "device=cuda requested but PyTorch cannot use CUDA"
+    -> Same fix as above.
+
+  Port 8080 busy (dashboard)
+    -> python main_dashboard.py --config configs/curriculum_hanif.yaml --port 8081
+
+  Validation crash (ValueError unpack) — FIXED in validation.py line 67
+
+  Training very slow on CPU — expected for 1334-node graphs; use GPU.
+
+  converted_hanif_data missing after clone
+    -> python scripts/convert_hanif_dataset.py
+
+  Do NOT commit converted_hanif_data/ — too large for GitHub (~1 GB)
+
+
+================================================================================
+ 9. THIS PC — CURRENT STATUS
+================================================================================
+
+  GPU hardware:  NVIDIA RTX A2000 12GB
+  Driver:        595.71
+  PyTorch:       2.12.0+cu126
+  CUDA in PyTorch: True
+
+  GPU training VERIFIED (2026-06-16 17:37):
+    python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+    -> "Curriculum training on device: cuda — NVIDIA RTX A2000 12GB (12.0 GB)"
+
+  Remember: each new training run clears outputs/checkpoints by default at start.
+  Old CPU runs do not switch to GPU — always restart after fixing PyTorch.
+
+================================================================================

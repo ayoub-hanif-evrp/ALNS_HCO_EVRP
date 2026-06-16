@@ -3,7 +3,8 @@
 #   python main_train.py --config configs/curriculum_hanif.yaml --curriculum
 
 seed: 42
-device: auto
+device: cuda  # requires CUDA PyTorch — verify with: python scripts/check_gpu.py
+deterministic: false  # false = faster cuDNN on GPU; true = fully reproducible
 
 dataset:
   path: dataset/converted_hanif_data
