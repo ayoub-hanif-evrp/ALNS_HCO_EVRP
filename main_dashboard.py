@@ -24,7 +24,7 @@ from src.webapp.dashboard import create_dashboard
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Live training dashboard for the E-VRPTW solver.")
-    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config.")
+    parser.add_argument("--config", type=str, default="configs/train.yaml", help="Path to YAML config.")
     parser.add_argument("--log", type=str, default=None, help="Override path to the train_log.jsonl file.")
     parser.add_argument("--port", type=int, default=8080, help="Port to serve the dashboard on.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host/interface to bind.")

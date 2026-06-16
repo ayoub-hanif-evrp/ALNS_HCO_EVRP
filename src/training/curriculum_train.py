@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.data.evrptw_dataset import split_dataset
+from src.data.evrptw_dataset import EVRPTWDataset, split_dataset
 from src.data.instance_loader import load_capacity_from_config, summarize_vehicle_params
 from src.data.instance_class import group_indices_by_class
 from src.env.cost import CostWeights, training_reward
@@ -52,7 +52,22 @@ from src.training.phase0_checks import (
     run_phase0_checks,
 )
 from src.training.rollout import run_episode
-from src.training.train_rl import _save_checkpoint, build_policy
+from src.training.fixed_mini import (
+    MANIFEST_FILENAME,
+    all_fixed_names,
+    assert_disjoint_train_eval,
+    build_fixed_mini_datasets,
+    build_fixed_mini_schedule,
+    filter_eval_groups,
+    fixed_train_set_hash,
+    load_fixed_train_manifest,
+    log_fixed_train_startup,
+    manifest_fixed_by_class,
+    resolve_fixed_train_instances,
+    total_expected_updates,
+    write_fixed_train_manifest,
+)
+from src.training.train_rl import _save_checkpoint, build_policy, load_checkpoint_training_meta
 from src.training.validation import validate
 from src.utils.logging_utils import CsvLogger, JsonlLogger, get_logger, write_csv
 from src.utils.output_cleanup import clear_training_outputs
@@ -109,8 +124,9 @@ class CheckpointManager:
             saved.append("best_feasibility")
         return saved
 
-    def save_last(self):
-        _save_checkpoint(self.policy, self.config, self.dir / "last.pt")
+    def save_last(self, training_meta: dict | None = None):
+        meta = training_meta if training_meta is not None else getattr(self, "training_meta", None)
+        _save_checkpoint(self.policy, self.config, self.dir / "last.pt", meta)
 
     def save_phase_checkpoint(self, cls: str, global_epoch: int, phase_name: str) -> Path:
         """Persist best weights for a curriculum class block (anti-forgetting anchor)."""
@@ -130,14 +146,21 @@ class CheckpointManager:
         return dst
 
 
-def _load_checkpoint_into_policy(policy, checkpoint_path: Path, device) -> None:
+def _load_checkpoint_into_policy(policy, checkpoint_path: Path, device) -> dict:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     policy.load_state_dict(ckpt["model_state"])
     policy.to(device)
     policy.train()
+    return ckpt
 
 
-def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False) -> dict:
+def train_curriculum(
+    config: dict,
+    run_phase0: bool = True,
+    force: bool = False,
+    resume_checkpoint: str | Path | None = None,
+    resume_run_dir: str | Path | None = None,
+) -> dict:
     deterministic = bool(config.get("deterministic", False))
     set_seed(int(config.get("seed", 42)), deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
@@ -145,17 +168,51 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
 
     ds_cfg = config["dataset"]
     seed = int(config.get("seed", 42))
-    train_ds, eval_ds = split_dataset(
-        ds_cfg["path"], train_ratio=float(ds_cfg.get("train_ratio", 0.8)), seed=seed,
-        train_filter=ds_cfg.get("train_size_filter"), eval_filter=ds_cfg.get("eval_size_filter"),
-        load_capacity=load_capacity_from_config(config),
-        ev_specs_path=ds_cfg.get("ev_specs_path"),
-    )
+    ccfg_early = config.get("curriculum") or {}
+    fixed_mini_mode = str(ccfg_early.get("mode", "phases")).lower() == "fixed_mini"
+    fixed_manifest: dict | None = None
+    fixed_by_class: dict[str, list[str]] | None = None
+    fixed_name_set: set[str] = set()
+    resume_start_step = 0
+
+    if fixed_mini_mode:
+        full_ds = EVRPTWDataset(
+            ds_cfg["path"],
+            load_capacity=load_capacity_from_config(config),
+            ev_specs_path=ds_cfg.get("ev_specs_path"),
+        )
+        if resume_checkpoint:
+            ckpt_meta = load_checkpoint_training_meta(resume_checkpoint)
+            if not ckpt_meta or ckpt_meta.get("mode") != "fixed_mini":
+                raise RuntimeError("Resume checkpoint missing fixed_mini training_meta")
+            manifest_path = Path(resume_run_dir or Path(ckpt_meta["manifest_path"]).parent) / MANIFEST_FILENAME
+            if not manifest_path.exists():
+                manifest_path = Path(ckpt_meta["manifest_path"])
+            fixed_manifest = load_fixed_train_manifest(manifest_path)
+            fixed_by_class = manifest_fixed_by_class(fixed_manifest)
+            resume_start_step = int(ckpt_meta.get("global_step", 0))
+            LOGGER.info(f"Resuming fixed_mini from step {resume_start_step}; manifest={manifest_path}")
+        else:
+            fixed_by_class = resolve_fixed_train_instances(full_ds.names, config, seed)
+        fixed_name_set = all_fixed_names(fixed_by_class)
+        train_ds, eval_ds = build_fixed_mini_datasets(full_ds, fixed_name_set)
+        assert_disjoint_train_eval(fixed_name_set, eval_ds.names)
+    else:
+        train_ds, eval_ds = split_dataset(
+            ds_cfg["path"], train_ratio=float(ds_cfg.get("train_ratio", 0.8)), seed=seed,
+            train_filter=ds_cfg.get("train_size_filter"), eval_filter=ds_cfg.get("eval_size_filter"),
+            load_capacity=load_capacity_from_config(config),
+            ev_specs_path=ds_cfg.get("ev_specs_path"),
+        )
+
     train_groups = group_indices_by_class(train_ds.names)
     eval_groups = group_indices_by_class(eval_ds.names)
     val_classes = active_train_classes(config)
     train_groups = {c: train_groups.get(c, []) for c in val_classes}
     eval_groups = {c: eval_groups.get(c, []) for c in val_classes}
+    if fixed_mini_mode:
+        eval_groups = filter_eval_groups(eval_groups, eval_ds.names, fixed_name_set)
+        assert_disjoint_train_eval(fixed_name_set, eval_ds.names)
     LOGGER.info(
         "Train by class: " + ", ".join(f"{c}={len(train_groups.get(c, []))}" for c in val_classes)
         + " | Eval by class: " + ", ".join(f"{c}={len(eval_groups.get(c, []))}" for c in val_classes)
@@ -199,12 +256,41 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     selection_mode = fcfg.get("selection_mode", "hierarchical")
 
     out_cfg = config["outputs"]
-    clear_training_outputs(out_cfg)
+    if not resume_checkpoint:
+        clear_training_outputs(out_cfg)
 
-    run_id = time.strftime("run_curriculum_%Y%m%d_%H%M%S")
-    run_dir = Path(out_cfg["root"]) / "runs" / run_id
+    if resume_checkpoint and resume_run_dir:
+        run_dir = Path(resume_run_dir)
+        run_id = run_dir.name
+    else:
+        run_id = time.strftime("run_curriculum_%Y%m%d_%H%M%S")
+        run_dir = Path(out_cfg["root"]) / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    if fixed_mini_mode and fixed_by_class is not None:
+        class_order_fm = [c.upper() for c in ccfg_early.get("class_order", ["C", "RC", "R"])]
+        cycles_fm = {
+            str(k).upper(): int(v)
+            for k, v in (ccfg_early.get("cycles_by_class") or {}).items()
+            if not isinstance(v, dict)
+        }
+        if not fixed_manifest:
+            manifest_path = write_fixed_train_manifest(
+                run_dir,
+                fixed_by_class=fixed_by_class,
+                seed=seed,
+                dataset_path=str(ds_cfg["path"]),
+                class_order=class_order_fm,
+                cycles_by_class=cycles_fm,
+            )
+            fixed_manifest = load_fixed_train_manifest(manifest_path)
+        log_fixed_train_startup(
+            LOGGER,
+            fixed_by_class,
+            run_dir / MANIFEST_FILENAME,
+            total_expected_updates(fixed_by_class, cycles_fm),
+        )
 
     # ---------------- Phase 0 ----------------
     phase0_results = None
@@ -226,6 +312,15 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     # ---------------- Training setup ----------------
     tcfg = config["training"]
     policy = build_policy(config, charging_portions).to(device)
+    if resume_checkpoint:
+        ckpt = _load_checkpoint_into_policy(policy, Path(resume_checkpoint), device)
+        ckpt_meta = ckpt.get("training_meta") or {}
+        if ckpt_meta.get("baseline_value") is not None:
+            ma_baseline_pre = float(ckpt_meta["baseline_value"])
+        else:
+            ma_baseline_pre = None
+    else:
+        ma_baseline_pre = None
     optimizer = torch.optim.Adam(policy.parameters(), lr=float(tcfg["learning_rate"]))
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
@@ -243,6 +338,11 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         weights, charging_portions, use_horizon, max_steps_factor, reward_scale=reward_scale,
     )
     ma_baseline = MovingAverageBaseline(beta=float(tcfg.get("baseline_beta", 0.9)))
+    if ma_baseline_pre is not None:
+        ma_baseline.value = ma_baseline_pre
+
+    min_decisions_warn = tcfg.get("min_decisions_warn")
+    min_decisions_warn = int(min_decisions_warn) if min_decisions_warn is not None else None
 
     log_path = Path(out_cfg["logs"]) / "train_log.jsonl"
     train_logger = JsonlLogger(log_path)
@@ -264,6 +364,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     cyclic_mode = mode == "cyclic"
     rc_size_mode = mode == "rc_size"
     progressive_mode = mode == "progressive"
+    fixed_mini_mode = mode == "fixed_mini"
     size_curriculum_mode = rc_size_mode or progressive_mode
     phases = phases_from_config(
         ccfg if not cyclic_mode and not size_curriculum_mode else None
@@ -282,6 +383,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         for k, v in (ccfg.get("min_class_feasibility") or {}).items()
     }
     gate_max_retries = int(ccfg.get("gate_max_retries", 2))
+    fixed_mini_steps: list[dict] = []
 
     if not validate_during_training:
         validate_every = 0
@@ -368,13 +470,50 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
             f"Cyclic schedule: {' → '.join(class_order)} × {cycles} cycles "
             f"= {total_steps} iterations ({schedule_meta['steps_per_cycle']} instances/cycle)"
         )
+    elif fixed_mini_mode:
+        assert fixed_by_class is not None
+        class_order_fm = [c.upper() for c in ccfg.get("class_order", ["C", "RC", "R"])]
+        cycles_fm = {
+            str(k).upper(): int(v)
+            for k, v in (ccfg.get("cycles_by_class") or {}).items()
+            if not isinstance(v, dict)
+        }
+        name_to_train_idx = {n: i for i, n in enumerate(train_ds.names)}
+        fixed_mini_steps = build_fixed_mini_schedule(
+            train_ds.names,
+            name_to_train_idx,
+            fixed_by_class,
+            class_order=class_order_fm,
+            cycles_by_class=cycles_fm,
+            shuffle_within_cycle=bool(ccfg.get("shuffle_within_class", False)),
+            seed=seed,
+        )
+        total_updates = total_expected_updates(fixed_by_class, cycles_fm)
+        if resume_start_step > 0:
+            fixed_mini_steps = fixed_mini_steps[resume_start_step:]
+        schedule_meta = {
+            "mode": "fixed_mini",
+            "class_order": class_order_fm,
+            "cycles_by_class": cycles_fm,
+            "fixed_train_set_hash": fixed_train_set_hash(fixed_by_class),
+            "total_epochs": total_updates,
+            "resume_start_step": resume_start_step,
+            "remaining_steps": len(fixed_mini_steps),
+        }
+        LOGGER.info(
+            f"Fixed mini curriculum: {len(fixed_by_class['C'])}+{len(fixed_by_class['RC'])}+"
+            f"{len(fixed_by_class['R'])} instances × cycles = {total_updates} updates "
+            f"({len(fixed_mini_steps)} remaining)"
+        )
     else:
+        fixed_mini_steps = []
         LOGGER.info("Schedule: " + ", ".join(f"P{p.index}:{p.name}({p.epochs})" for p in phases))
 
     train_records: list[dict] = []
     val_records: list[dict] = []
-    global_epoch = 0
+    global_epoch = resume_start_step if fixed_mini_mode else 0
     hard_pool: list[int] = []
+    manifest_path_str = str(run_dir / MANIFEST_FILENAME) if fixed_mini_mode else ""
 
     _CLASS_PHASE_ID = {"C": 1, "R": 2, "RC": 3}
 
@@ -389,6 +528,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
             use_horizon=use_horizon, max_steps_factor=max_steps_factor,
             extra_margin=val_extra_margin, selection_mode=selection_mode,
             max_instances=val_max_per_class,
+            exclude_names=fixed_name_set if fixed_mini_mode else None,
         )
         flat = {
             "global_epoch": ge,
@@ -468,6 +608,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
                 rng, baseline_kind, greedy_baseline, ma_baseline,
                 entropy_coef, grad_clip, reward_scale, normalize_advantage,
                 served_progress_bonus=served_progress_bonus,
+                min_decisions_warn=min_decisions_warn,
             )
             record["epoch"] = global_epoch
             record["phase"] = step_phase.index
@@ -504,8 +645,82 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         run_train_csv.log(record)
         train_records.append(record)
 
+    # ---------------- Fixed mini curriculum (15 instances, repeated cycles) ----------------
+    elif fixed_mini_mode:
+        fixed_phase = Phase(0, "fixed_mini", val_classes, 0)
+        for step in fixed_mini_steps:
+            cls = step["instance_class"]
+            idx = step["instance_idx"]
+            name = step["instance_name"]
+            if name not in fixed_name_set:
+                raise RuntimeError(f"Training instance {name} is not in the fixed manifest")
+            if train_ds.names[idx] != name:
+                raise RuntimeError(f"Index/name mismatch for fixed training instance {name}")
+
+            margin = extra_margin_for_class(config, cls)
+            step_phase = Phase(
+                _CLASS_PHASE_ID.get(cls, 0),
+                f"{step.get('tier_label', cls)}_cycle{step['cycle']}",
+                [cls],
+                0,
+                extra_margin=margin,
+            )
+            record = _train_step(
+                policy, optimizer, train_ds, [idx], weights, device,
+                charging_portions, use_horizon, max_steps_factor, step_phase,
+                rng, baseline_kind, greedy_baseline, ma_baseline,
+                entropy_coef, grad_clip, reward_scale, normalize_advantage,
+                served_progress_bonus=served_progress_bonus,
+                min_decisions_warn=min_decisions_warn,
+            )
+            record["global_step"] = global_epoch
+            record["epoch"] = global_epoch
+            record["phase"] = step_phase.index
+            record["phase_name"] = step_phase.name
+            record["cycle"] = step["cycle"]
+            record["size_tier"] = step.get("size_tier", "fixed")
+            record["instance_class"] = cls
+            record["instance_idx"] = idx
+            record["instance_name"] = name
+            record["step_in_cycle"] = step["step_in_cycle"]
+            record["block_label"] = "fixed_mini"
+            _log_and_store(record)
+
+            if global_epoch % int(tcfg.get("log_every", 1)) == 0:
+                LOGGER.info(
+                    f"fixed_mini | cycle {step['cycle']} {cls} step {global_epoch:5d} | "
+                    f"{name} | reward {record['reward']:8.2f} "
+                    f"| feas {record['feasibility_rate']:.2f} "
+                    f"| served {record['served_rate_pct']:.0f}% "
+                    f"| decisions {record.get('num_decisions', 0)} "
+                    f"| done {record.get('done_reason', '?')}"
+                )
+
+            if validate_every > 0 and (global_epoch + 1) % validate_every == 0:
+                _run_validation(fixed_phase, global_epoch)
+                if _should_early_stop():
+                    LOGGER.info(f"Early stop at epoch {global_epoch} (no val improvement)")
+                    break
+
+            training_meta = {
+                "mode": "fixed_mini",
+                "global_step": global_epoch + 1,
+                "manifest_path": manifest_path_str,
+                "baseline_value": ma_baseline.get(),
+            }
+            if (global_epoch + 1) % 20 == 0:
+                ckpt_mgr.save_last(training_meta)
+            global_epoch += 1
+
+        ckpt_mgr.save_last({
+            "mode": "fixed_mini",
+            "global_step": global_epoch,
+            "manifest_path": manifest_path_str,
+            "baseline_value": ma_baseline.get(),
+        })
+
     # ---------------- Size curriculum (RC-only or progressive C→RC→R) ----------------
-    if size_curriculum_mode:
+    elif size_curriculum_mode:
         stop_flag = [False]
 
         if progressive_mode:
@@ -594,6 +809,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
                     rng, baseline_kind, greedy_baseline, ma_baseline,
                     entropy_coef, grad_clip, reward_scale, normalize_advantage,
                     served_progress_bonus=served_progress_bonus,
+                    min_decisions_warn=min_decisions_warn,
                 )
                 record["epoch"] = global_epoch
                 record["phase"] = step_phase.index
@@ -644,6 +860,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
                 rng, baseline_kind, greedy_baseline, ma_baseline,
                 entropy_coef, grad_clip, reward_scale, normalize_advantage,
                 served_progress_bonus=served_progress_bonus,
+                min_decisions_warn=min_decisions_warn,
             )
             record["epoch"] = global_epoch
             record["phase"] = step_phase.index
@@ -754,6 +971,7 @@ def _train_step(
     use_horizon, max_steps_factor, phase, rng, baseline_kind, greedy_baseline,
     ma_baseline, entropy_coef, grad_clip, reward_scale, normalize_advantage,
     served_progress_bonus: float = 0.0,
+    min_decisions_warn: int | None = None,
 ) -> dict:
     """One REINFORCE update on a sampled batch; return the metrics record."""
     policy.train()
@@ -765,6 +983,7 @@ def _train_step(
     served_rate_list, customers_list = [], []
     breakdowns: list[dict] = []
     log_probs, entropies, advantages = [], [], []
+    episode_extras: list[dict] = []
 
     for idx in batch_idx:
         instance = train_ds[idx]
@@ -773,6 +992,7 @@ def _train_step(
             instance, policy, m, weights, mode="sampling", device=device,
             charging_portions=charging_portions, use_horizon_check=use_horizon,
             max_steps_factor=max_steps_factor,
+            min_decisions_warn=min_decisions_warn,
         )
         raw_j = float(result.objective)
         n_cust = max(int(instance.num_customers), 1)
@@ -806,12 +1026,25 @@ def _train_step(
             + result.summary.total_lateness + result.summary.unserved_customers
         )
         breakdowns.append(result.breakdown)
+        episode_extras.append({
+            "num_decisions": result.num_decisions,
+            "done_reason": result.done_reason,
+            "fleet_size": result.fleet_size,
+            "served_customers": n_cust - int(result.summary.unserved_customers),
+            "total_customers": n_cust,
+            "unserved_customers": int(result.summary.unserved_customers),
+            "battery_violations": float(result.env.total_battery_violation),
+            "capacity_violations": float(result.env.total_capacity_violation),
+            "tw_violations": float(result.env.total_lateness),
+            "objective_total": raw_j,
+            "route_duration": float(result.summary.total_duration),
+        })
 
     adv_raw = torch.tensor(advantages, dtype=torch.float32)
     adv = adv_raw.clone()
     if normalize_advantage and adv.numel() > 1 and adv.std() > 1e-8:
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-    loss_terms = [-adv[i] * log_probs[i] for i in range(len(log_probs))]
+    loss_terms = [-adv[i].detach() * log_probs[i] for i in range(len(log_probs))]
     policy_loss = torch.stack(loss_terms).mean()
     entropy_term = torch.stack(entropies).mean()
     loss = policy_loss - entropy_coef * entropy_term
@@ -863,6 +1096,7 @@ def _train_step(
         "waiting_time_share": mean_wait / mean_active if mean_active > 0 else 0.0,
         "entropy": float(entropy_term.item()),
         **breakdown_means,
+        **(episode_extras[0] if len(episode_extras) == 1 else {}),
     }
 
 

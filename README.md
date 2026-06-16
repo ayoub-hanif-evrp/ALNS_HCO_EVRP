@@ -100,35 +100,32 @@ python -m pytest tests/ -v
 ### 3. Train with progressive curriculum
 
 ```powershell
-python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+python main_train.py
 ```
 
 **Terminal 2** — live dashboard:
 
 ```powershell
-python main_dashboard.py --config configs/curriculum_hanif.yaml
+python main_dashboard.py
 ```
 
-Open **http://localhost:8080**
+Open **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, curriculum cycles, model size, etc.
 
 ### 4. Evaluate
 
 ```powershell
-python main_evaluate.py --config configs/curriculum_hanif.yaml --checkpoint outputs/checkpoints/best.pt
+python main_evaluate.py --checkpoint outputs/checkpoints/last.pt
 ```
 
-See **[COMMANDS.md](COMMANDS.md)** for all configs, flags, and workflows.
+See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which params to tune.
 
 ## Config files
 
 | Config | Purpose |
 |--------|---------|
-| `configs/curriculum_hanif.yaml` | **Primary** — Hanif C+R+RC, progressive curriculum |
-| `configs/curriculum_hanif_c_rc.yaml` | Alias / same Hanif settings |
-| `configs/curriculum_progressive.yaml` | Progressive C → RC → R (generic path) |
-| `configs/curriculum.yaml` | Classic 4-phase curriculum (Schneider-sized instances) |
-| `configs/curriculum_rc.yaml` | RC-only size curriculum |
-| `configs/default.yaml` | Flat REINFORCE on configured dataset path |
+| `configs/train.yaml` | **Primary** — Hanif full curriculum; edit this file |
+| `configs/default.yaml` | Flat REINFORCE (legacy / small tests) |
+| Other `configs/curriculum_*.yaml` | Alternate curriculum presets (optional) |
 
 ## Datasets
 
@@ -177,7 +174,7 @@ Use the **Sections** jump bar to scroll to each block.
 Before curriculum training, the runner validates loaders, matrices, masks, battery/capacity/TW logic, and depot return:
 
 ```powershell
-python main_train.py --config configs/curriculum_hanif.yaml --phase0-only
+python main_train.py --phase0-only
 ```
 
 ## License & citation

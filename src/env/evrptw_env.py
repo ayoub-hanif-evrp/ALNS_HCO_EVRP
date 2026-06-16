@@ -70,6 +70,10 @@ class EVRPTWEnv:
         self.infeasible = False
         self.infeasibility_reasons: list[str] = []
         self.step_count = 0
+        self.done_reason: str | None = None
+
+    def get_done_reason(self) -> str:
+        return self.done_reason or "in_progress"
 
     # ------------------------------------------------------------------ #
     # Event selection and feasibility
@@ -84,15 +88,21 @@ class EVRPTWEnv:
         return self.num_served_customers >= self.instance.num_customers
 
     def is_done(self) -> bool:
+        if self.done_reason is not None:
+            return True
         if self.step_count >= self.max_steps:
+            self.done_reason = "max_steps"
             return True
         # Done when every EV is finished.
         if all(ev.finished for ev in self.evs):
+            self.done_reason = "all_evs_finished"
             return True
         # Done when all customers are served and no EV still needs to move.
         if self.all_customers_served():
             # EVs away from depot still need to return; otherwise done.
-            return all(ev.finished or ev.current_node == self.instance.depot_index for ev in self.evs)
+            if all(ev.finished or ev.current_node == self.instance.depot_index for ev in self.evs):
+                self.done_reason = "all_served_returned"
+                return True
         return False
 
     # ------------------------------------------------------------------ #

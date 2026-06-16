@@ -9,7 +9,7 @@ from src.utils.config import load_config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate the E-VRPTW Transformer solver.")
-    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config.")
+    parser.add_argument("--config", type=str, default="configs/train.yaml", help="Path to YAML config.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to a model checkpoint.")
     parser.add_argument("--device", type=str, default=None, help="Override device (cpu/cuda/auto).")
     return parser.parse_args()

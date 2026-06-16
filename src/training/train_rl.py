@@ -309,16 +309,26 @@ def _sample_m(instance, extra_margin: int, rng: random.Random) -> int:
     return rng.randint(m_min, max(m_min, m_max))
 
 
-def _save_checkpoint(policy, config: dict, path: Path) -> None:
+def _save_checkpoint(
+    policy,
+    config: dict,
+    path: Path,
+    training_meta: dict | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_state": policy.state_dict(),
-            "model_config": config["model"],
-            "charging_portions": policy.charging_portions,
-        },
-        path,
-    )
+    payload = {
+        "model_state": policy.state_dict(),
+        "model_config": config["model"],
+        "charging_portions": policy.charging_portions,
+    }
+    if training_meta is not None:
+        payload["training_meta"] = training_meta
+    torch.save(payload, path)
+
+
+def load_checkpoint_training_meta(checkpoint_path: str | Path) -> dict | None:
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    return ckpt.get("training_meta")
 
 
 def load_policy(checkpoint_path: str | Path, device: torch.device | str = "cpu") -> TransformerEVRPTWPolicy:

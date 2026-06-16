@@ -1,12 +1,15 @@
 """Episode rollout for the learned policy under the event-driven environment."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
+from src.utils.logging_utils import get_logger
+
+LOGGER = get_logger()
 
 
 @dataclass
@@ -19,6 +22,8 @@ class EpisodeResult:
     entropy_sum: torch.Tensor
     feasible: bool
     num_decisions: int = 0
+    done_reason: str = "unknown"
+    fleet_size: int = 0
 
 
 def run_episode(
@@ -31,6 +36,7 @@ def run_episode(
     charging_portions: list[float] | None = None,
     use_horizon_check: bool = True,
     max_steps_factor: int = 6,
+    min_decisions_warn: int | None = None,
 ) -> EpisodeResult:
     """Run a single event-driven episode and return result + RL signals.
 
@@ -53,6 +59,7 @@ def run_episode(
     while not env.is_done():
         ev = env.select_acting_ev()
         if ev is None:
+            env.done_reason = "no_acting_ev"
             break
         feasible_mask, _ = env.feasible_mask(ev)
         if not feasible_mask.any():
@@ -64,6 +71,18 @@ def run_episode(
         num_decisions += 1
         env.apply_action(ev, action.node, action.charge_portion)
 
+    done_reason = env.get_done_reason()
+    if env.done_reason is None and env.is_done():
+        done_reason = env.get_done_reason()
+
+    if min_decisions_warn is not None and instance.num_customers >= 100:
+        if num_decisions < min_decisions_warn:
+            LOGGER.warning(
+                "Suspiciously few decisions (%d) on instance %s (N=%d); done_reason=%s",
+                num_decisions, getattr(instance, "instance_name", "?"),
+                instance.num_customers, done_reason,
+            )
+
     j, breakdown, summary = env.score(weights)
     return EpisodeResult(
         env=env,
@@ -74,6 +93,8 @@ def run_episode(
         entropy_sum=entropy_sum,
         feasible=env.feasible_solution(),
         num_decisions=num_decisions,
+        done_reason=done_reason,
+        fleet_size=m,
     )
 
 

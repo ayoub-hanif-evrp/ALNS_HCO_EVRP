@@ -54,8 +54,11 @@ def validate_class(
     extra_margin: int = 5,
     selection_mode: str = "hierarchical",
     max_instances: int | None = None,
+    exclude_names: set[str] | None = None,
 ) -> dict:
     """Validate the policy on a list of eval-dataset indices (one class)."""
+    if exclude_names:
+        indices = [i for i in indices if eval_ds.names[i] not in exclude_names]
     if max_instances is not None:
         indices = indices[:max_instances]
     if not indices:
@@ -108,6 +111,7 @@ def validate(
     weights,
     *,
     classes: list[str] | None = None,
+    exclude_names: set[str] | None = None,
     **kwargs,
 ) -> dict:
     """Validate per class and compute an overall score across the given classes.
@@ -116,11 +120,19 @@ def validate(
     only classes with instances are present. ``overall`` averages the per-class
     metrics over ``classes`` (defaults to every class that has data).
     """
+    if exclude_names:
+        overlap = exclude_names & set(eval_ds.names)
+        if overlap:
+            raise RuntimeError(
+                f"Validation eval set overlaps fixed training instances: {sorted(overlap)}"
+            )
     per_class: dict[str, dict] = {}
     for cls, idxs in groups.items():
         if not idxs:
             continue
-        metrics = validate_class(eval_ds, idxs, policy, weights, **kwargs)
+        metrics = validate_class(
+            eval_ds, idxs, policy, weights, exclude_names=exclude_names, **kwargs
+        )
         if metrics:
             per_class[cls] = metrics
 

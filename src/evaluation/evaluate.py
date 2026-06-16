@@ -9,10 +9,16 @@ from types import SimpleNamespace
 
 import torch
 
-from src.data.evrptw_dataset import split_dataset
+from src.data.evrptw_dataset import EVRPTWDataset, split_dataset
 from src.data.instance_class import instance_class
 from src.data.instance_loader import load_capacity_from_config
 from src.training.curriculum import active_train_classes
+from src.training.fixed_mini import (
+    all_fixed_names,
+    assert_disjoint_train_eval,
+    build_fixed_mini_datasets,
+    resolve_fixed_train_instances,
+)
 from src.env.cost import CostWeights
 from src.evaluation.baselines import (
     NearestFeasiblePolicy,
@@ -74,15 +80,29 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
     LOGGER.info(f"Evaluation on device: {describe_device(device)}")
 
     ds_cfg = config["dataset"]
-    _train_ds, eval_ds = split_dataset(
-        ds_cfg["path"],
-        train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
-        seed=int(config.get("seed", 42)),
-        train_filter=ds_cfg.get("train_size_filter"),
-        eval_filter=ds_cfg.get("eval_size_filter"),
-        load_capacity=load_capacity_from_config(config),
-        ev_specs_path=ds_cfg.get("ev_specs_path"),
-    )
+    seed = int(config.get("seed", 42))
+    ccfg = config.get("curriculum") or {}
+    if str(ccfg.get("mode", "")).lower() == "fixed_mini":
+        full_ds = EVRPTWDataset(
+            ds_cfg["path"],
+            load_capacity=load_capacity_from_config(config),
+            ev_specs_path=ds_cfg.get("ev_specs_path"),
+        )
+        fixed_by_class = resolve_fixed_train_instances(full_ds.names, config, seed)
+        fixed_names = all_fixed_names(fixed_by_class)
+        _train_ds, eval_ds = build_fixed_mini_datasets(full_ds, fixed_names)
+        assert_disjoint_train_eval(fixed_names, eval_ds.names)
+        LOGGER.info(f"Fixed-mini eval: {len(eval_ds)} instances (excludes {len(fixed_names)} train)")
+    else:
+        _train_ds, eval_ds = split_dataset(
+            ds_cfg["path"],
+            train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
+            seed=seed,
+            train_filter=ds_cfg.get("train_size_filter"),
+            eval_filter=ds_cfg.get("eval_size_filter"),
+            load_capacity=load_capacity_from_config(config),
+            ev_specs_path=ds_cfg.get("ev_specs_path"),
+        )
     LOGGER.info(f"Evaluation instances: {len(eval_ds)}")
 
     eval_class_filter = set(active_train_classes(config))
