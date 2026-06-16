@@ -64,7 +64,7 @@ def validate_class(
     runner = _neural_runner(
         policy, weights, mode, device, n_samples, charging_portions, use_horizon, max_steps_factor
     )
-    costs, feas, dist, evs, charge, wait, unserved, viol = [], [], [], [], [], [], [], []
+    costs, feas, dist, evs, charge, price, wait, unserved, viol = [], [], [], [], [], [], [], [], []
     policy.eval()
     with torch.no_grad():
         for idx in indices:
@@ -76,6 +76,7 @@ def validate_class(
             dist.append(s.total_distance)
             evs.append(s.used_evs)
             charge.append(s.total_charging_time)
+            price.append(s.total_charging_price)
             wait.append(s.total_waiting_time)
             unserved.append(s.unserved_customers)
             viol.append(
@@ -93,6 +94,7 @@ def validate_class(
         "avg_distance": float(np.mean(dist)),
         "avg_used_evs": float(np.mean(evs)),
         "avg_charging_time": float(np.mean(charge)),
+        "avg_charging_price": float(np.mean(price)),
         "avg_waiting_time": float(np.mean(wait)),
         "avg_unserved": float(np.mean(unserved)),
         "avg_violation": float(np.mean(viol)),

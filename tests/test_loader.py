@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from src.data.evrptw_dataset import EVRPTWDataset, collate_instances
-from src.data.instance_loader import load_instance
+from src.data.instance_loader import apply_load_capacity, load_instance
 from tests.conftest import DATASET_PATH, SMALL_INSTANCE
 
 
@@ -53,6 +53,15 @@ def test_rechargeable_includes_depot_and_stations(small_instance):
 
 def test_m_min_positive(small_instance):
     assert small_instance.m_min >= 1
+
+
+def test_apply_load_capacity_rescales_demand_norm(small_instance):
+    inst = apply_load_capacity(small_instance, 100.0)
+    assert inst.vehicle.load_capacity == 100.0
+    for n in inst.nodes:
+        if n.demand > 0:
+            assert abs(n.demand_norm - n.demand / 100.0) < 1e-6
+    assert inst.m_min >= small_instance.m_min
 
 
 def test_to_tensors_types(small_instance):

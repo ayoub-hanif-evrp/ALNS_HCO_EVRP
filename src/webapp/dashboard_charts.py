@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from src.webapp.dashboard_data import COST_COLUMNS
+from src.webapp.dashboard_data import COST_COLUMNS, COST_OBJECTIVE_TERMS, COST_PENALTY_TERMS
 from src.webapp.plot_style import (
     CLASS_COLORS,
     CLASS_ORDER,
@@ -29,6 +29,16 @@ CHART_LAYOUT = dict(
 
 def _chart_layout(**overrides) -> dict:
     return {**CHART_LAYOUT, **overrides}
+
+
+def _chart_layout_embedded(**overrides) -> dict:
+    """External HTML title — no Plotly title; legend sits below the plot."""
+    layout = {**CHART_LAYOUT, **overrides}
+    layout["title"] = None
+    layout["showlegend"] = True
+    layout["legend"] = dict(orientation="h", yanchor="top", y=-0.28, x=0, font=dict(size=10))
+    layout["margin"] = overrides.get("margin", dict(t=8, b=62, l=52, r=20))
+    return layout
 
 
 def _x_series(df: pd.DataFrame) -> pd.Series:
@@ -347,6 +357,208 @@ def fig_cycle_bars(df: pd.DataFrame, col: str, *, title: str, y_label: str) -> g
     return fig
 
 
+def fig_cost_term(df: pd.DataFrame, spec: dict) -> go.Figure:
+    """Dedicated chart for one weighted cost-function term (+ optional raw quantity)."""
+    col = spec.get("col", "")
+    raw_col = spec.get("raw_col")
+    y_label = spec.get("ylabel", "Weighted")
+    raw_ylabel = spec.get("raw_ylabel", "Raw")
+
+    use_secondary = bool(raw_col and raw_col in df.columns)
+    right_margin = 56 if use_secondary else 20
+    fig = make_subplots(specs=[[{"secondary_y": use_secondary}]])
+    if df.empty or col not in df.columns:
+        fig.update_layout(**_chart_layout_embedded(margin=dict(t=8, b=40, l=52, r=right_margin)))
+        fig.add_annotation(
+            text="No data yet",
+            showarrow=False,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            font=dict(color="#94a3b8", size=12),
+        )
+        return fig
+
+    x = _x_series(df)
+    roll_col = _overall_rolling_col(col)
+    has_signal = df[col].abs().to_numpy().sum() > 1e-9
+
+    if has_signal:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df[col],
+                mode="markers",
+                name="Per step",
+                marker=dict(size=4, color=_marker_colors(df), opacity=0.3),
+            ),
+            secondary_y=False,
+        )
+    if roll_col in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df[roll_col],
+                mode="lines",
+                name="Weighted",
+                line=dict(color="#2563eb", width=2.5),
+            ),
+            secondary_y=False,
+        )
+    elif col in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df[col],
+                mode="lines",
+                name="Weighted",
+                line=dict(color="#16a34a", width=2),
+            ),
+            secondary_y=False,
+        )
+
+    if use_secondary:
+        raw_roll = _overall_rolling_col(str(raw_col))
+        raw_y = df[raw_roll] if raw_roll in df.columns else df[raw_col]
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=raw_y,
+                mode="lines",
+                name="Raw",
+                line=dict(color="#64748b", width=1.5, dash="dot"),
+            ),
+            secondary_y=True,
+        )
+
+    add_class_regions(fig, df)
+    fig.update_layout(
+        **_chart_layout_embedded(
+            xaxis_title="Iteration",
+            height=260,
+            margin=dict(t=8, b=58, l=52, r=right_margin),
+        )
+    )
+    fig.update_yaxes(title_text=y_label, secondary_y=False)
+    if use_secondary:
+        fig.update_yaxes(title_text=raw_ylabel, secondary_y=True, showgrid=False)
+    return fig
+
+
+def _cost_term_specs(terms: list[dict], *, wide: bool = True) -> list[dict]:
+    specs: list[dict] = []
+    for term in terms:
+        specs.append({
+            "type": "cost_term",
+            "col": term["col"],
+            "raw_col": term.get("raw_col"),
+            "title": str(term["short"]),
+            "ylabel": "Weighted",
+            "raw_ylabel": str(term.get("raw_ylabel") or "Raw"),
+            "wide": wide,
+            "term_key": term["key"],
+        })
+    return specs
+
+
+def _terms_by_keys(terms: list[dict], keys: list[str]) -> list[dict]:
+    by_key = {str(t["key"]): t for t in terms}
+    return [by_key[k] for k in keys if k in by_key]
+
+
+def _section_from_cost_terms(
+    section_id: str,
+    title: str,
+    subtitle: str,
+    term_keys: list[str],
+    terms_list: list[dict],
+    *,
+    wide: bool = True,
+) -> dict[str, Any]:
+    return {
+        "id": section_id,
+        "title": title,
+        "subtitle": subtitle,
+        "charts": _cost_term_specs(_terms_by_keys(terms_list, term_keys), wide=wide),
+    }
+
+
+def _build_cost_function_sections() -> list[dict[str, Any]]:
+    """One dashboard card (div) per cost-function theme — not one giant objective block."""
+    return [
+        {
+            "id": "cost_total",
+            "title": "Total objective J(π)",
+            "nav": "Total J",
+            "subtitle": "R(π) = −J / reward_scale during training. Lower cost is better.",
+            "charts": [
+                {
+                    "type": "rolling_band",
+                    "col": "cost",
+                    "mean_col": "rolling_cost_mean",
+                    "std_col": "",
+                    "title": "Total cost J",
+                    "desc": "Sum of all weighted objective terms + penalties",
+                    "ylabel": "J",
+                    "wide": True,
+                },
+                {
+                    "type": "rolling_band",
+                    "col": "raw_episode_return",
+                    "mean_col": "rolling_raw_return_mean",
+                    "std_col": "rolling_raw_return_std",
+                    "title": "Training reward (scaled)",
+                    "desc": "R = −J / reward_scale",
+                    "ylabel": "Reward",
+                    "classic": True,
+                    "wide": True,
+                },
+            ],
+        },
+        _section_from_cost_terms(
+            "cost_fleet_routing",
+            "Fleet & routing",
+            "λ-weighted fleet size, travel distance, and route duration.",
+            ["vehicle", "distance", "duration"],
+            COST_OBJECTIVE_TERMS,
+            wide=True,
+        ),
+        _section_from_cost_terms(
+            "cost_charging",
+            "Charging",
+            "Charging time and Hanif station energy price — separate from route distance.",
+            ["charging", "charging_price"],
+            COST_OBJECTIVE_TERMS,
+            wide=True,
+        ),
+        _section_from_cost_terms(
+            "cost_waiting",
+            "Waiting time",
+            "Customer waiting due to early arrival at time windows.",
+            ["waiting"],
+            COST_OBJECTIVE_TERMS,
+            wide=True,
+        ),
+        _section_from_cost_terms(
+            "pen_service",
+            "Service penalties",
+            "Unserved customers, duplicate visits, and global infeasibility — target zero.",
+            ["unserved", "duplicate", "infeasible"],
+            COST_PENALTY_TERMS,
+            wide=False,
+        ),
+        _section_from_cost_terms(
+            "pen_constraints",
+            "Constraint penalties",
+            "Time windows, battery, capacity, depot return, and reservations — target zero.",
+            ["late", "battery", "capacity", "depot", "reserved"],
+            COST_PENALTY_TERMS,
+            wide=False,
+        ),
+    ]
+
+
 def fig_reward_components(df: pd.DataFrame, plan: dict) -> go.Figure:
     del plan
     penalty_keys = [c for c in COST_COLUMNS if c.startswith("mean_pen_")]
@@ -462,7 +674,8 @@ def fig_cost_breakdown(df: pd.DataFrame, plan: dict) -> go.Figure:
         "mean_obj_vehicle": "Fleet",
         "mean_obj_distance": "Distance",
         "mean_obj_duration": "Duration",
-        "mean_obj_charging": "Charging",
+        "mean_obj_charging": "Charging time",
+        "mean_obj_charging_price": "Charging price",
         "mean_obj_waiting": "Waiting",
         "mean_pen_unserved": "Unserved",
         "mean_pen_late": "Lateness",
@@ -547,6 +760,8 @@ def fig_optimization_panel(df: pd.DataFrame, plan: dict) -> go.Figure:
 
 def build_chart_figure(df: pd.DataFrame, plan: dict, spec: dict[str, Any]) -> go.Figure | None:
     t = spec.get("type", "metric")
+    if t == "cost_term":
+        return fig_cost_term(df, spec)
     if t == "cost_breakdown":
         return fig_cost_breakdown(df, plan)
     if t == "reward_components":
@@ -611,51 +826,79 @@ def build_chart_figure(df: pd.DataFrame, plan: dict, spec: dict[str, Any]) -> go
 
 
 TRAINING_CHART_SECTIONS: list[dict[str, Any]] = [
+    *_build_cost_function_sections(),
     {
-        "id": "reward_reporting",
-        "title": "Reward & objective",
-        "subtitle": "Per-step reward with rolling mean and ±1 std band.",
+        "id": "coverage",
+        "title": "Solution quality",
+        "subtitle": "Customer coverage and feasibility — independent of cost weights.",
         "charts": [
+            {"type": "served_coverage", "title": "Customers served (%)", "wide": True},
             {
-                "type": "rolling_band",
-                "col": "raw_episode_return",
-                "mean_col": "rolling_raw_return_mean",
-                "std_col": "rolling_raw_return_std",
-                "title": "Training reward (scaled)",
-                "ylabel": "Reward",
-                "classic": True,
+                "type": "class_metric",
+                "col": "feasibility_rate",
+                "title": "Feasibility rate",
+                "desc": "Share of episodes with zero penalty terms",
+                "ylabel": "Rate",
+                "y_range": (0, 1.05),
                 "wide": True,
             },
             {
-                "type": "rolling_band",
-                "col": "cost",
-                "mean_col": "rolling_cost_mean",
-                "std_col": "",
-                "title": "Objective J (raw cost)",
-                "ylabel": "Cost J",
-                "wide": True,
-            },
-            {
-                "type": "reward_components",
-                "title": "Objective / penalty breakdown",
-                "wide": True,
+                "type": "class_metric",
+                "col": "served_ratio",
+                "title": "Served ratio",
+                "ylabel": "Ratio",
+                "y_range": (0, 1.05),
             },
         ],
     },
     {
-        "id": "per_class",
-        "title": "Per-class summary",
-        "subtitle": "Trailing-window mean by instance class (C / R / RC).",
+        "id": "fleet_ops",
+        "title": "Fleet utilization",
+        "subtitle": "Raw operational metrics — EV count, distance per customer, charging share.",
+        "charts": [
+            {
+                "type": "class_metric",
+                "col": "avg_used_evs",
+                "title": "Used EVs",
+                "ylabel": "Count",
+                "wide": True,
+            },
+            {
+                "type": "class_metric",
+                "col": "distance_per_customer",
+                "title": "Distance per customer",
+                "ylabel": "Distance",
+            },
+            {
+                "type": "class_metric",
+                "col": "charging_time_share",
+                "title": "Charging time share",
+                "ylabel": "Share",
+                "y_range": (0, 1.05),
+            },
+        ],
+    },
+    {
+        "id": "per_class_reward",
+        "title": "Per-class · reward & cost",
+        "subtitle": "Trailing-window mean by instance class (C · R · RC).",
         "charts": [
             {
                 "type": "per_class_bars",
-                "title": "Reward & cost by class",
+                "title": "Reward & total J by class",
                 "wide": True,
                 "metrics": [
                     ("reward", "Reward", None),
                     ("cost", "Cost J", None),
                 ],
             },
+        ],
+    },
+    {
+        "id": "per_class_coverage",
+        "title": "Per-class · coverage & feasibility",
+        "subtitle": "Trailing-window mean by instance class (C · R · RC).",
+        "charts": [
             {
                 "type": "per_class_bars",
                 "title": "Coverage & feasibility by class",
@@ -665,116 +908,18 @@ TRAINING_CHART_SECTIONS: list[dict[str, Any]] = [
                     ("feasibility_rate", "Feasible", "pct"),
                 ],
             },
-            {
-                "type": "class_bar",
-                "col": "avg_used_evs",
-                "title": "Mean vehicles used by class",
-                "ylabel": "EVs",
-                "wide": True,
-            },
-            {
-                "type": "class_bar",
-                "col": "avg_unserved",
-                "title": "Mean unserved customers by class",
-                "ylabel": "Customers",
-                "wide": True,
-            },
-            {
-                "type": "class_bar",
-                "col": "avg_distance",
-                "title": "Mean total distance by class",
-                "ylabel": "Distance",
-                "wide": True,
-            },
-            {
-                "type": "cycle_bars",
-                "col": "avg_used_evs",
-                "title": "Mean vehicles used per cycle",
-                "ylabel": "EVs",
-                "wide": True,
-            },
         ],
     },
     {
         "id": "optimization",
         "title": "Policy optimization",
-        "subtitle": "Continuous rolling trends — markers colored by class (C blue · R red · RC green).",
+        "subtitle": "REINFORCE diagnostics (not part of J). Background bands = curriculum class blocks.",
         "charts": [
             {"type": "optimization_panel", "title": "Optimization overview", "wide": True},
             {"type": "class_metric", "col": "loss", "title": "Total loss", "ylabel": "Loss", "wide": True},
-            {"type": "class_metric", "col": "policy_loss", "title": "Policy loss", "ylabel": "Loss", "wide": True},
-            {"type": "class_metric", "col": "entropy", "title": "Entropy", "ylabel": "nats", "wide": True},
-            {"type": "class_metric", "col": "grad_norm", "title": "Gradient norm", "ylabel": "‖∇‖", "wide": True},
-        ],
-    },
-    {
-        "id": "overview",
-        "title": "Customer coverage",
-        "subtitle": "Served customers per iteration, colored by class.",
-        "charts": [
-            {"type": "served_coverage", "title": "Customers served (%)", "wide": True},
-            {
-                "type": "rolling_band",
-                "col": "served_ratio",
-                "mean_col": "rolling_served_ratio_mean",
-                "std_col": "",
-                "title": "Served ratio",
-                "ylabel": "Ratio",
-                "y_range": (0, 1.05),
-                "wide": True,
-            },
-        ],
-    },
-    {
-        "id": "costs",
-        "title": "Operational costs",
-        "subtitle": "Cost components over training (background bands = class blocks).",
-        "charts": [{"type": "cost_breakdown", "title": "Cost breakdown", "wide": True}],
-    },
-    {
-        "id": "energy",
-        "title": "Energy & charging",
-        "subtitle": "Per-class rolling trends.",
-        "charts": [
-            {"type": "class_metric", "col": "avg_charging_time", "title": "Charging time", "ylabel": "Time"},
-            {
-                "type": "class_metric",
-                "col": "charging_time_share",
-                "title": "Charging share",
-                "ylabel": "Share",
-                "y_range": (0, 1.05),
-            },
-            {"type": "class_metric", "col": "mean_pen_battery", "title": "Battery penalty", "ylabel": "Cost"},
-        ],
-    },
-    {
-        "id": "constraints",
-        "title": "Constraints",
-        "subtitle": "Violation penalties by class.",
-        "charts": [
-            {"type": "class_metric", "col": "capacity_violations", "title": "Capacity penalty", "ylabel": "Cost"},
-            {"type": "class_metric", "col": "battery_violations", "title": "Battery penalty", "ylabel": "Cost"},
-            {"type": "class_metric", "col": "mean_pen_reserved", "title": "Reserved penalty", "ylabel": "Cost"},
-        ],
-    },
-    {
-        "id": "time_windows",
-        "title": "Time windows",
-        "subtitle": "Lateness and waiting by class.",
-        "charts": [
-            {"type": "class_metric", "col": "mean_pen_late", "title": "Lateness penalty", "ylabel": "Cost"},
-            {"type": "class_metric", "col": "mean_obj_waiting", "title": "Waiting cost", "ylabel": "Cost"},
-        ],
-    },
-    {
-        "id": "fleet",
-        "title": "Fleet & routing",
-        "subtitle": "Vehicles, distance and unserved — class-colored.",
-        "charts": [
-            {"type": "class_metric", "col": "avg_used_evs", "title": "Vehicles used", "ylabel": "EVs", "wide": True},
-            {"type": "class_metric", "col": "avg_unserved", "title": "Unserved customers", "ylabel": "Count"},
-            {"type": "class_metric", "col": "avg_distance", "title": "Total distance", "ylabel": "Distance"},
-            {"type": "class_metric", "col": "distance_per_customer", "title": "Distance / customer", "ylabel": "Distance"},
+            {"type": "class_metric", "col": "policy_loss", "title": "Policy loss", "ylabel": "Loss"},
+            {"type": "class_metric", "col": "entropy", "title": "Entropy", "ylabel": "nats"},
+            {"type": "class_metric", "col": "grad_norm", "title": "Gradient norm", "ylabel": "‖∇‖"},
         ],
     },
 ]
@@ -786,6 +931,7 @@ def section_by_id() -> dict[str, dict[str, Any]]:
 
 _WIDE_CHART_TYPES = frozenset({
     "cost_breakdown",
+    "cost_term",
     "optimization_panel",
     "reward_components",
     "served_coverage",

@@ -1,0 +1,16 @@
+{
+  "instance_name": "r202C5",
+  "num_nodes": 9,
+  "num_customers": 5,
+  "num_charging_stations": 3,
+  "depot_has_charging": true,
+  "planning_horizon": 1000.0,
+  "battery_capacity": 60.63,
+  "load_capacity": 100.0,
+  "energy_consumption_rate": 1.0,
+  "inverse_charging_rate": 0.49,
+  "speed": 1.0,
+  "validation_passed": true,
+  "validation_errors": [],
+  "reachability_warning_count": 0
+}

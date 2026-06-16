@@ -10,6 +10,7 @@ def test_feasible_solution_has_no_penalties():
         total_distance=100.0,
         total_duration=500.0,
         total_charging_time=20.0,
+        total_charging_price=15.0,
         total_waiting_time=10.0,
     )
     weights = CostWeights()
@@ -22,9 +23,11 @@ def test_feasible_solution_has_no_penalties():
         + weights.lambda_distance * 100.0
         + weights.lambda_duration * 500.0
         + weights.lambda_charging * 20.0
+        + weights.lambda_charging_price * 15.0
         + weights.lambda_waiting * 10.0
     )
     assert abs(j - expected) < 1e-6
+    assert breakdown["obj_charging_price"] == weights.lambda_charging_price * 15.0
 
 
 def test_unserved_customers_penalized():

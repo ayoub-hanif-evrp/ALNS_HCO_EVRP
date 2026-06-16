@@ -66,6 +66,35 @@ def check_loader(instance) -> CheckResult:
     )
 
 
+def check_vehicle_params(instance) -> CheckResult:
+    """Verify EV battery/load capacity and demand normalization."""
+    vp = instance.vehicle
+    cap_ok = vp.battery_capacity > 0 and vp.load_capacity > 0
+    norm_ok = True
+    bad_norm = 0
+    for idx in instance.customer_indices:
+        node = instance.nodes[idx]
+        expected = node.demand / vp.load_capacity
+        if abs(node.demand_norm - expected) > 1e-5:
+            norm_ok = False
+            bad_norm += 1
+    rate_detail = ""
+    if instance.station_charging_rate is not None:
+        rates = instance.station_charging_rate[instance.charging_station_indices]
+        rates = rates[~np.isnan(rates)]
+        if len(rates):
+            rate_detail = (
+                f", station_rates=[{float(rates.min()):.3f},{float(rates.max()):.3f}]"
+            )
+    return _ok(
+        "vehicle_params",
+        cap_ok and norm_ok,
+        f"battery={vp.battery_capacity}, load={vp.load_capacity}, h={vp.energy_consumption_rate}"
+        f"{rate_detail}, demand_norm_ok={norm_ok}"
+        + (f", mismatches={bad_norm}" if bad_norm else ""),
+    )
+
+
 def check_matrices(instance) -> CheckResult:
     d, t, e = instance.distance_matrix, instance.travel_time_matrix, instance.energy_matrix
     n = instance.num_nodes
@@ -284,6 +313,7 @@ def check_all_evs_return(instance) -> CheckResult:
 
 ALL_CHECKS = [
     check_loader,
+    check_vehicle_params,
     check_matrices,
     check_unit_consistency,
     check_served_mask,

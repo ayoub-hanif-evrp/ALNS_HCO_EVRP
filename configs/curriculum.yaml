@@ -14,6 +14,7 @@ dataset:
   eval_size_filter: null
 
 problem:
+  load_capacity: 100.0          # C — tighter routes, more EVs, less TW overload per trip
   allow_partial_charging: true
   charging_portions: [0.25, 0.50, 0.75, 1.00]
   station_reusable: true
@@ -22,7 +23,7 @@ problem:
 
 fleet_search:
   enabled: true
-  extra_margin: 5            # validation/eval search m in [m_min, m_min + 5]
+  extra_margin: 6            # validation/eval search m in [m_min, m_min + 6] (higher after C=100)
   selection_mode: hierarchical
 
 model:
@@ -58,9 +59,9 @@ curriculum:
   cycles: 5
   shuffle_within_class: false
   extra_margin_by_class:
-    C: 2
-    R: 2
-    RC: 5
+    C: 4
+    R: 4
+    RC: 6
 
 decoding:
   mode: sampling

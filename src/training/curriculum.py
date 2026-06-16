@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from src.data.instance_class import instance_class
+from src.data.instance_class import CLASSES, instance_class
 from src.training.rollout import run_episode
 
 
@@ -236,3 +236,235 @@ def cyclic_total_steps(
 def extra_margin_for_class(cfg: dict, instance_class: str, default: int = 2) -> int:
     by_class = (cfg.get("curriculum") or {}).get("extra_margin_by_class") or {}
     return int(by_class.get(instance_class.upper(), default))
+
+
+def _cycles_for_class(
+    cls: str,
+    *,
+    cycles_small: int,
+    cycles_full: int,
+    cycles_by_class: dict | None,
+) -> tuple[int, int]:
+    """Resolve small/full cycle counts for a class (optional per-class overrides)."""
+    overrides = (cycles_by_class or {}).get(cls) or (cycles_by_class or {}).get(cls.upper())
+    if overrides:
+        return int(overrides.get("small", cycles_small)), int(overrides.get("full", cycles_full))
+    return int(cycles_small), int(cycles_full)
+
+
+def _append_size_tier_steps(
+    schedule: list[dict],
+    *,
+    names: list[str],
+    cls: str,
+    indices: list[int],
+    tier: str,
+    cycles: int,
+    tier_label: str,
+    shuffle_within_tier: bool,
+    rng: random.Random,
+) -> None:
+    if not indices:
+        return
+    tier_indices = list(indices)
+    if shuffle_within_tier:
+        rng.shuffle(tier_indices)
+    for cycle in range(1, cycles + 1):
+        for step_in_cycle, idx in enumerate(tier_indices, start=1):
+            schedule.append(
+                {
+                    "instance_idx": idx,
+                    "instance_class": cls,
+                    "size_tier": tier,
+                    "cycle": cycle,
+                    "tier_label": tier_label,
+                    "step_in_cycle": step_in_cycle,
+                    "steps_per_cycle": len(tier_indices),
+                }
+            )
+
+
+def build_class_size_schedule(
+    names: list[str],
+    train_groups: dict[str, list[int]],
+    instance_class: str,
+    *,
+    cycles_small: int = 3,
+    cycles_full: int = 5,
+    shuffle_within_tier: bool = False,
+    rng: random.Random | None = None,
+) -> list[dict]:
+    """One class: all small instances (C5/C10/C15), then all full (_21)."""
+    from src.data.instance_class import split_size_tiers
+
+    cls = instance_class.upper()
+    indices = list(train_groups.get(cls, []))
+    if not indices:
+        raise ValueError(f"{cls} size schedule is empty — no {cls} training instances.")
+
+    rng = rng or random.Random(0)
+    small, full = split_size_tiers(names, indices)
+    schedule: list[dict] = []
+    for tier, tier_indices, cycles, tier_label in (
+        ("small", small, int(cycles_small), f"{cls}_small"),
+        ("full", full, int(cycles_full), f"{cls}_full"),
+    ):
+        _append_size_tier_steps(
+            schedule,
+            names=names,
+            cls=cls,
+            indices=tier_indices,
+            tier=tier,
+            cycles=cycles,
+            tier_label=tier_label,
+            shuffle_within_tier=shuffle_within_tier,
+            rng=rng,
+        )
+    if not schedule:
+        raise ValueError(f"{cls} size schedule is empty after tier split.")
+    return schedule
+
+
+def build_progressive_schedule(
+    names: list[str],
+    train_groups: dict[str, list[int]],
+    *,
+    class_order: list[str] | None = None,
+    cycles_small: int = 3,
+    cycles_full: int = 3,
+    cycles_by_class: dict | None = None,
+    shuffle_within_tier: bool = False,
+    rng: random.Random | None = None,
+) -> list[dict]:
+    """Progressive curriculum: for each class, small instances then full.
+
+    Default order C → RC → R (easiest to hardest). Each entry is one training
+    iteration (one instance, one REINFORCE update).
+    """
+    from src.data.instance_class import split_size_tiers
+
+    order = [c.upper() for c in (class_order or ["C", "RC", "R"])]
+    rng = rng or random.Random(0)
+    schedule: list[dict] = []
+
+    for cls in order:
+        indices = list(train_groups.get(cls, []))
+        if not indices:
+            continue
+        c_small, c_full = _cycles_for_class(
+            cls,
+            cycles_small=cycles_small,
+            cycles_full=cycles_full,
+            cycles_by_class=cycles_by_class,
+        )
+        small, full = split_size_tiers(names, indices)
+        for tier, tier_indices, cycles, tier_label in (
+            ("small", small, c_small, f"{cls}_small"),
+            ("full", full, c_full, f"{cls}_full"),
+        ):
+            _append_size_tier_steps(
+                schedule,
+                names=names,
+                cls=cls,
+                indices=tier_indices,
+                tier=tier,
+                cycles=cycles,
+                tier_label=tier_label,
+                shuffle_within_tier=shuffle_within_tier,
+                rng=rng,
+            )
+
+    if not schedule:
+        raise ValueError("Progressive schedule is empty — no training instances in class_order.")
+    return schedule
+
+
+def progressive_blocks(
+    schedule: list[dict],
+    class_order: list[str] | None = None,
+) -> list[dict]:
+    """Split a progressive schedule into per-class blocks with small/full tiers.
+
+    Returns a list of dicts:
+        {"class": "C", "small": [...steps...], "full": [...steps...]}
+    """
+    order = [c.upper() for c in (class_order or [])]
+    if not order:
+        seen: list[str] = []
+        for step in schedule:
+            cls = str(step.get("instance_class", "")).upper()
+            if cls and cls not in seen:
+                seen.append(cls)
+        order = seen
+
+    blocks: list[dict] = []
+    for cls in order:
+        cls_steps = [s for s in schedule if str(s.get("instance_class", "")).upper() == cls]
+        if not cls_steps:
+            continue
+        blocks.append({
+            "class": cls,
+            "small": [s for s in cls_steps if s.get("size_tier") == "small"],
+            "full": [s for s in cls_steps if s.get("size_tier") == "full"],
+        })
+    return blocks
+
+
+def build_rc_size_schedule(
+    names: list[str],
+    train_groups: dict[str, list[int]],
+    *,
+    cycles_small: int = 3,
+    cycles_full: int = 5,
+    shuffle_within_tier: bool = False,
+    rng: random.Random | None = None,
+) -> list[dict]:
+    """RC-only curriculum: repeat all small instances, then all full instances."""
+    return build_progressive_schedule(
+        names,
+        train_groups,
+        class_order=["RC"],
+        cycles_small=cycles_small,
+        cycles_full=cycles_full,
+        shuffle_within_tier=shuffle_within_tier,
+        rng=rng,
+    )
+
+
+def progressive_total_steps(
+    names: list[str],
+    train_groups: dict[str, list[int]],
+    *,
+    class_order: list[str] | None = None,
+    cycles_small: int = 3,
+    cycles_full: int = 3,
+    cycles_by_class: dict | None = None,
+) -> int:
+    """Expected iteration count for a progressive schedule (without shuffling)."""
+    from src.data.instance_class import split_size_tiers
+
+    order = [c.upper() for c in (class_order or ["C", "RC", "R"])]
+    total = 0
+    for cls in order:
+        indices = train_groups.get(cls, [])
+        if not indices:
+            continue
+        c_small, c_full = _cycles_for_class(
+            cls,
+            cycles_small=cycles_small,
+            cycles_full=cycles_full,
+            cycles_by_class=cycles_by_class,
+        )
+        small, full = split_size_tiers(names, indices)
+        total += len(small) * c_small + len(full) * c_full
+    return total
+
+
+def active_train_classes(cfg: dict) -> list[str]:
+    """Classes used for training / validation (defaults to all three)."""
+    ccfg = cfg.get("curriculum") or {}
+    classes = ccfg.get("train_classes") or ccfg.get("class_order") or list(CLASSES)
+    from src.data.instance_class import class_filter_for
+
+    filtered = sorted(class_filter_for(classes))
+    return filtered or list(CLASSES)

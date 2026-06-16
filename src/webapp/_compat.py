@@ -6,11 +6,16 @@ calls ``pkgutil.find_loader`` at import time, which raises AttributeError.
 
 Importing this module *before* NiceGUI restores those helpers as thin wrappers
 around ``importlib.util.find_spec`` without modifying any installed package.
+
+Also patches a noisy Windows asyncio issue where abrupt client disconnects
+(e.g. browser refresh) raise ``ConnectionResetError`` inside
+``_ProactorBasePipeTransport._call_connection_lost``.
 """
 from __future__ import annotations
 
 import importlib.util
 import pkgutil
+import sys
 
 
 def _install_pkgutil_shims() -> None:
@@ -34,4 +39,25 @@ def _install_pkgutil_shims() -> None:
         pkgutil.get_loader = get_loader  # type: ignore[attr-defined]
 
 
+def _suppress_windows_connection_reset_noise() -> None:
+    """Ignore benign ConnectionResetError on Windows Proactor disconnect callbacks."""
+    if sys.platform != "win32":
+        return
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+    except ImportError:
+        return
+
+    _orig = _ProactorBasePipeTransport._call_connection_lost
+
+    def _call_connection_lost(self, exc):  # type: ignore[no-untyped-def]
+        try:
+            _orig(self, exc)
+        except ConnectionResetError:
+            pass
+
+    _ProactorBasePipeTransport._call_connection_lost = _call_connection_lost  # type: ignore[method-assign]
+
+
 _install_pkgutil_shims()
+_suppress_windows_connection_reset_noise()

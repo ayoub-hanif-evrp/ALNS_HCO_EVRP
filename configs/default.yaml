@@ -12,6 +12,7 @@ dataset:
   eval_size_filter: null
 
 problem:
+  load_capacity: 100.0
   allow_partial_charging: true
   charging_portions: [0.25, 0.50, 0.75, 1.00]
   station_reusable: true
@@ -20,7 +21,7 @@ problem:
 
 fleet_search:
   enabled: true
-  extra_margin: 5
+  extra_margin: 6
   selection_mode: hierarchical  # hierarchical | scalar
 
 model:
@@ -56,6 +57,7 @@ cost:
   lambda_distance: 1.0
   lambda_duration: 0.1
   lambda_charging: 0.5
+  lambda_charging_price: 1.0
   lambda_waiting: 0.1
   penalty_unserved: 10000.0
   penalty_duplicate: 10000.0

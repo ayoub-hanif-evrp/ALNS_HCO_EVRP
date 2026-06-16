@@ -11,12 +11,13 @@ import pandas as pd
 STALE_AFTER_SECONDS = 20.0
 ROLLING_WINDOW = 10
 
-# Weighted objective / penalty columns (same role as cost_* in the reference dashboard).
+# Weighted objective / penalty columns logged during training (matches compute_cost breakdown).
 COST_COLUMNS = [
     "mean_obj_vehicle",
     "mean_obj_distance",
     "mean_obj_duration",
     "mean_obj_charging",
+    "mean_obj_charging_price",
     "mean_obj_waiting",
     "mean_pen_unserved",
     "mean_pen_late",
@@ -26,6 +27,153 @@ COST_COLUMNS = [
     "mean_pen_reserved",
     "mean_pen_duplicate",
     "mean_pen_infeasible",
+]
+
+# One entry per term in J(π) — used for dedicated dashboard charts and KPI tiles.
+COST_OBJECTIVE_TERMS: list[dict[str, str | None]] = [
+    {
+        "key": "vehicle",
+        "col": "mean_obj_vehicle",
+        "raw_col": "avg_used_evs",
+        "label": "Fleet · λ_v × used EVs",
+        "short": "Fleet",
+        "formula": "λ_vehicle × number of used EVs",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Used EVs",
+    },
+    {
+        "key": "distance",
+        "col": "mean_obj_distance",
+        "raw_col": "avg_distance",
+        "label": "Distance · λ_d × total distance",
+        "short": "Distance",
+        "formula": "λ_distance × route distance",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Total distance",
+    },
+    {
+        "key": "duration",
+        "col": "mean_obj_duration",
+        "raw_col": "avg_duration",
+        "label": "Duration · λ_t × route time",
+        "short": "Duration",
+        "formula": "λ_duration × sum of EV completion times",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Total duration",
+    },
+    {
+        "key": "charging",
+        "col": "mean_obj_charging",
+        "raw_col": "avg_charging_time",
+        "label": "Charging time · λ_c × charge time",
+        "short": "Charging time",
+        "formula": "λ_charging × total charging time",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Charging time",
+    },
+    {
+        "key": "charging_price",
+        "col": "mean_obj_charging_price",
+        "raw_col": "avg_charging_price",
+        "label": "Charging price · λ_p × energy cost",
+        "short": "Charging price",
+        "formula": "λ_charging_price × Hanif station price × charged energy",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Charging price",
+    },
+    {
+        "key": "waiting",
+        "col": "mean_obj_waiting",
+        "raw_col": "avg_waiting_time",
+        "label": "Waiting · λ_w × waiting time",
+        "short": "Waiting",
+        "formula": "λ_waiting × customer waiting time",
+        "ylabel": "Weighted term",
+        "raw_ylabel": "Waiting time",
+    },
+]
+
+COST_PENALTY_TERMS: list[dict[str, str | None]] = [
+    {
+        "key": "unserved",
+        "col": "mean_pen_unserved",
+        "raw_col": "avg_unserved",
+        "label": "Unserved customers",
+        "short": "Unserved",
+        "formula": "penalty_unserved × count of unserved customers",
+        "ylabel": "Penalty",
+        "raw_ylabel": "Unserved count",
+    },
+    {
+        "key": "late",
+        "col": "mean_pen_late",
+        "raw_col": None,
+        "label": "Time-window lateness",
+        "short": "Lateness",
+        "formula": "penalty_late × total lateness",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "battery",
+        "col": "mean_pen_battery",
+        "raw_col": None,
+        "label": "Battery violation",
+        "short": "Battery",
+        "formula": "penalty_battery × battery shortfall",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "capacity",
+        "col": "mean_pen_capacity",
+        "raw_col": None,
+        "label": "Load capacity violation",
+        "short": "Capacity",
+        "formula": "penalty_capacity × capacity overload",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "depot",
+        "col": "mean_pen_depot",
+        "raw_col": None,
+        "label": "Depot return violation",
+        "short": "Depot",
+        "formula": "penalty_depot × EVs not returning to depot",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "reserved",
+        "col": "mean_pen_reserved",
+        "raw_col": None,
+        "label": "Reserved customer unfinished",
+        "short": "Reserved",
+        "formula": "penalty_reserved × unfinished reservations",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "duplicate",
+        "col": "mean_pen_duplicate",
+        "raw_col": None,
+        "label": "Duplicate customer visit",
+        "short": "Duplicate",
+        "formula": "penalty_duplicate × duplicate visits",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
+    {
+        "key": "infeasible",
+        "col": "mean_pen_infeasible",
+        "raw_col": None,
+        "label": "Global infeasibility flag",
+        "short": "Infeasible",
+        "formula": "penalty_infeasible × infeasible solution flag",
+        "ylabel": "Penalty",
+        "raw_ylabel": None,
+    },
 ]
 
 
@@ -179,84 +327,106 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
         d = d.sort_values("epoch", na_position="last")
         d = d.drop_duplicates(subset=["epoch"], keep="last")
     d = d.reset_index(drop=True)
-    d["episode_index"] = range(1, len(d) + 1)
+
+    idx = d.index
+    extras: dict[str, pd.Series] = {}
+    extras["episode_index"] = pd.Series(range(1, len(d) + 1), index=idx)
     if "epoch" in d.columns:
-        d["training_update"] = d["epoch"]
+        extras["training_update"] = d["epoch"]
 
     w = max(1, min(window, len(d)))
 
-    def _roll_mean(col: str, out_name: str) -> None:
+    def _resolve_col(col: str) -> pd.Series | None:
         if col in d.columns:
-            d[out_name] = d[col].rolling(window=w, min_periods=1).mean()
+            return d[col]
+        if col in extras:
+            return extras[col]
+        return None
+
+    def _roll_mean(col: str, out_name: str) -> None:
+        series = _resolve_col(col)
+        if series is not None:
+            extras[out_name] = series.rolling(window=w, min_periods=1).mean()
 
     def _roll_std(col: str, out_name: str) -> None:
-        if col in d.columns:
-            d[out_name] = d[col].rolling(window=w, min_periods=1).std().fillna(0.0)
+        series = _resolve_col(col)
+        if series is not None:
+            extras[out_name] = series.rolling(window=w, min_periods=1).std().fillna(0.0)
 
-    # Reference-compatible aliases.
+    # Reference-compatible aliases (batched — avoids fragmented frame warnings).
     if "served_rate" in d.columns:
-        d["served_ratio"] = d["served_rate"]
+        extras["served_ratio"] = d["served_rate"]
     if "feasibility_rate" in d.columns:
-        d["mission_complete_rate"] = d["feasibility_rate"]
-        d["infeasibility_rate"] = 1.0 - d["feasibility_rate"]
+        extras["mission_complete_rate"] = d["feasibility_rate"]
+        extras["infeasibility_rate"] = 1.0 - d["feasibility_rate"]
     if "reward" in d.columns:
-        d["raw_episode_return"] = d["reward"]
-        d["ppo_effective_return"] = d["reward"]
+        extras["raw_episode_return"] = d["reward"]
+        extras["ppo_effective_return"] = d["reward"]
     if "advantage" in d.columns:
-        d["phase_relative_return"] = d["advantage"]
+        extras["phase_relative_return"] = d["advantage"]
     if "mean_pen_late" in d.columns:
-        d["cost_tardiness"] = d["mean_pen_late"]
-        d["total_tardiness"] = d["mean_pen_late"]
+        extras["cost_tardiness"] = d["mean_pen_late"]
+        extras["total_tardiness"] = d["mean_pen_late"]
     if "avg_waiting_time" in d.columns:
-        d["total_early_waiting"] = d["avg_waiting_time"]
+        extras["total_early_waiting"] = d["avg_waiting_time"]
     if "avg_charging_time" in d.columns:
-        d["avg_charging_duration"] = d["avg_charging_time"]
-        d["charging_visits"] = (d["avg_charging_time"] > 1e-6).astype(float)
+        extras["avg_charging_duration"] = d["avg_charging_time"]
+        extras["charging_visits"] = (d["avg_charging_time"] > 1e-6).astype(float)
     if "distance_per_ev" in d.columns:
-        d["avg_distance_per_ev"] = d["distance_per_ev"]
+        extras["avg_distance_per_ev"] = d["distance_per_ev"]
     if "mean_pen_capacity" in d.columns:
-        d["capacity_violations"] = d["mean_pen_capacity"]
+        extras["capacity_violations"] = d["mean_pen_capacity"]
     if "mean_pen_battery" in d.columns:
-        d["battery_violations"] = d["mean_pen_battery"]
+        extras["battery_violations"] = d["mean_pen_battery"]
     if "mean_pen_duplicate" in d.columns:
-        d["duplicate_prevented"] = d["mean_pen_duplicate"]
+        extras["duplicate_prevented"] = d["mean_pen_duplicate"]
     if "mean_pen_depot" in d.columns:
-        d["depot_returns"] = d["mean_pen_depot"]
+        extras["depot_returns"] = d["mean_pen_depot"]
     if "avg_unserved" in d.columns:
-        d["cap_hit_rate"] = (d["avg_unserved"] > 0.5).astype(float)
+        extras["cap_hit_rate"] = (d["avg_unserved"] > 0.5).astype(float)
     if "phase" in d.columns and "training_phase_id" not in d.columns:
-        d["training_phase_id"] = d["phase"]
+        extras["training_phase_id"] = d["phase"]
     if "phase_name" in d.columns:
-        d["training_phase_name"] = d["phase_name"]
+        extras["training_phase_name"] = d["phase_name"]
 
     # Canonical class column for consistent chart colors (C / R / RC).
     if "instance_class" in d.columns:
-        d["instance_class"] = d["instance_class"].astype(str).str.upper()
+        instance_class = d["instance_class"].astype(str).str.upper()
+    elif "training_phase_id" in extras:
+        inv = {v: k for k, v in {"C": 1, "R": 2, "RC": 3}.items()}
+        instance_class = extras["training_phase_id"].map(lambda x: inv.get(int(x), "?"))
     elif "training_phase_id" in d.columns:
         inv = {v: k for k, v in {"C": 1, "R": 2, "RC": 3}.items()}
-        d["instance_class"] = d["training_phase_id"].map(lambda x: inv.get(int(x), "?"))
+        instance_class = d["training_phase_id"].map(lambda x: inv.get(int(x), "?"))
+    elif "phase" in d.columns:
+        inv = {v: k for k, v in {"C": 1, "R": 2, "RC": 3}.items()}
+        instance_class = d["phase"].map(lambda x: inv.get(int(x), "?"))
     else:
-        d["instance_class"] = "?"
+        instance_class = pd.Series("?", index=idx, dtype=object)
+    extras["instance_class"] = instance_class
 
     from src.webapp.plot_style import CLASS_STAGE_ID
 
-    d["class_stage_id"] = d["instance_class"].map(lambda c: CLASS_STAGE_ID.get(str(c).upper(), 0))
+    extras["class_stage_id"] = instance_class.map(lambda c: CLASS_STAGE_ID.get(str(c).upper(), 0))
 
     w_cls = max(3, min(window, 15))
 
     def _roll_by_class(col: str, stat: str = "mean") -> None:
-        if col not in d.columns:
+        series = _resolve_col(col)
+        if series is None:
             return
-        for cls in d["instance_class"].unique():
+        for cls in instance_class.unique():
             cls = str(cls).upper()
             if cls not in ("C", "R", "RC"):
                 continue
-            mask = d["instance_class"] == cls
-            roll = d.loc[mask, col].rolling(window=min(w_cls, mask.sum()), min_periods=1)
+            mask = instance_class == cls
+            roll = series.loc[mask].rolling(window=min(w_cls, int(mask.sum())), min_periods=1)
+            out = pd.Series(float("nan"), index=idx, dtype=float)
             if stat == "mean":
-                d.loc[mask, f"rolling_{col}_{cls}"] = roll.mean()
+                out.loc[mask] = roll.mean().to_numpy()
             else:
-                d.loc[mask, f"rolling_{col}_{cls}"] = roll.std().fillna(0.0)
+                out.loc[mask] = roll.std().fillna(0.0).to_numpy()
+            extras[f"rolling_{col}_{cls}"] = out
 
     class_roll_cols = [
         "reward",
@@ -288,21 +458,27 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
         _roll_by_class(col)
 
     # Per-class latest snapshot (for bar charts).
+    served = extras.get("served_ratio")
     for cls in ("C", "R", "RC"):
-        g = d[d["instance_class"] == cls]
-        if g.empty:
+        mask = instance_class == cls
+        if not mask.any():
             continue
-        tail = g.tail(min(w_cls, len(g)))
-        d[f"latest_mean_reward_{cls}"] = float(tail["reward"].mean()) if "reward" in tail else float("nan")
-        d[f"latest_mean_cost_{cls}"] = float(tail["cost"].mean()) if "cost" in tail else float("nan")
-        d[f"latest_mean_served_{cls}"] = (
-            float(tail["served_ratio"].mean()) if "served_ratio" in tail else float("nan")
+        tail = d.loc[mask].tail(min(w_cls, int(mask.sum())))
+        extras[f"latest_mean_reward_{cls}"] = pd.Series(
+            float(tail["reward"].mean()) if "reward" in tail else float("nan"), index=idx
         )
-        d[f"latest_mean_evs_{cls}"] = (
-            float(tail["avg_used_evs"].mean()) if "avg_used_evs" in tail else float("nan")
+        extras[f"latest_mean_cost_{cls}"] = pd.Series(
+            float(tail["cost"].mean()) if "cost" in tail else float("nan"), index=idx
         )
-        d[f"latest_mean_feas_{cls}"] = (
-            float(tail["feasibility_rate"].mean()) if "feasibility_rate" in tail else float("nan")
+        extras[f"latest_mean_served_{cls}"] = pd.Series(
+            float(served.loc[tail.index].mean()) if served is not None else float("nan"),
+            index=idx,
+        )
+        extras[f"latest_mean_evs_{cls}"] = pd.Series(
+            float(tail["avg_used_evs"].mean()) if "avg_used_evs" in tail else float("nan"), index=idx
+        )
+        extras[f"latest_mean_feas_{cls}"] = pd.Series(
+            float(tail["feasibility_rate"].mean()) if "feasibility_rate" in tail else float("nan"), index=idx
         )
 
     _roll_mean("reward", "rolling_raw_return_mean")
@@ -327,25 +503,28 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
         "grad_norm",
         "learning_rate",
         "avg_distance",
+        "avg_duration",
+        "avg_charging_price",
         "distance_per_customer",
         "avg_charging_time",
         "charging_time_share",
-        "mean_pen_battery",
-        "mean_pen_late",
-        "mean_obj_waiting",
-        "mean_pen_capacity",
-        "mean_pen_reserved",
-        "capacity_violations",
-        "battery_violations",
+        "avg_waiting_time",
+        *COST_COLUMNS,
     ]
     for col in global_roll_cols:
         _roll_mean(col, f"rolling_{col}_mean")
 
     if "reward" in d.columns and "best_reward" not in d.columns:
-        d["best_reward"] = d["reward"].cummax()
+        extras["best_reward"] = d["reward"].cummax()
     if "cost" in d.columns:
-        d["cost_best"] = d["cost"].cummin()
+        extras["cost_best"] = d["cost"].cummin()
 
+    # Overwrite existing columns in-place; concat only net-new columns (avoids duplicate labels).
+    overlap = {k: extras.pop(k) for k in list(extras.keys()) if k in d.columns}
+    if overlap:
+        d = d.assign(**overlap)
+    if extras:
+        d = pd.concat([d, pd.DataFrame(extras, index=idx)], axis=1)
     return d
 
 

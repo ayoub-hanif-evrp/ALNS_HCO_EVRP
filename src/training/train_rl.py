@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from src.data.evrptw_dataset import split_dataset
+from src.data.instance_loader import load_capacity_from_config
 from src.env.cost import CostWeights, training_reward
 from src.models.policy import TransformerEVRPTWPolicy
 from src.training.baseline import GreedyRolloutBaseline, MovingAverageBaseline
@@ -43,6 +44,8 @@ def train(config: dict) -> dict:
         seed=int(config.get("seed", 42)),
         train_filter=ds_cfg.get("train_size_filter"),
         eval_filter=ds_cfg.get("eval_size_filter"),
+        load_capacity=load_capacity_from_config(config),
+        ev_specs_path=ds_cfg.get("ev_specs_path"),
     )
     LOGGER.info(f"Training instances: {len(train_ds)}")
 
@@ -100,7 +103,7 @@ def train(config: dict) -> dict:
 
         optimizer.zero_grad()
         raw_costs, rewards, feas_flags, used_evs_list = [], [], [], []
-        dist_list, charge_list, wait_list, viol_list = [], [], [], []
+        dist_list, charge_list, price_list, wait_list, viol_list = [], [], [], [], []
         unserved_list, duration_list = [], []
         served_rate_list, customers_list = [], []
         breakdowns: list[dict] = []
@@ -129,6 +132,7 @@ def train(config: dict) -> dict:
             used_evs_list.append(result.summary.used_evs)
             dist_list.append(result.summary.total_distance)
             charge_list.append(result.summary.total_charging_time)
+            price_list.append(result.summary.total_charging_price)
             wait_list.append(result.summary.total_waiting_time)
             unserved_list.append(result.summary.unserved_customers)
             duration_list.append(result.summary.total_duration)
@@ -174,6 +178,7 @@ def train(config: dict) -> dict:
         mean_evs = float(np.mean(used_evs_list))
         mean_served = float(np.mean(served_rate_list))
         mean_charge = float(np.mean(charge_list))
+        mean_price = float(np.mean(price_list))
         mean_wait = float(np.mean(wait_list))
         mean_active = mean_dist + mean_charge + mean_wait
         mean_feas = float(np.mean(feas_flags))
@@ -202,6 +207,7 @@ def train(config: dict) -> dict:
             "avg_distance": mean_dist,
             "avg_duration": float(np.mean(duration_list)),
             "avg_charging_time": mean_charge,
+            "avg_charging_price": mean_price,
             "avg_waiting_time": mean_wait,
             "avg_unserved": float(np.mean(unserved_list)),
             "avg_violation": float(np.mean(viol_list)),

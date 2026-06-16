@@ -1,0 +1,10 @@
+id,string_id,original_type,node_type,x,y,demand,ready_time,due_time,service_time,is_depot,is_customer,is_charging_station,x_norm,y_norm,demand_norm,ready_time_norm,due_time_norm,service_time_norm,co_located_with_depot
+0,D0,d,depot,35.0,35.0,0.0,0.0,230.0,0.0,True,False,False,0.546875,0.546875,0.0,0.0,1.0,0.0,
+1,S0,f,charging_station,35.0,35.0,0.0,0.0,230.0,0.0,False,False,True,0.546875,0.546875,0.0,0.0,1.0,0.0,True
+2,S1,f,charging_station,64.0,37.0,0.0,0.0,230.0,0.0,False,False,True,1.0,0.578125,0.0,0.0,1.0,0.0,
+3,S13,f,charging_station,21.0,22.0,0.0,0.0,230.0,0.0,False,False,True,0.328125,0.34375,0.0,0.0,1.0,0.0,
+4,C91,c,customer,15.0,19.0,1.0,77.0,107.0,10.0,False,True,False,0.234375,0.296875,0.01,0.3347826086956522,0.4652173913043478,0.0434782608695652,
+5,C28,c,customer,41.0,37.0,16.0,183.0,213.0,10.0,False,True,False,0.640625,0.578125,0.16,0.7956521739130434,0.9260869565217392,0.0434782608695652,
+6,C75,c,customer,49.0,11.0,18.0,49.0,79.0,10.0,False,True,False,0.765625,0.171875,0.18,0.2130434782608695,0.3434782608695652,0.0434782608695652,
+7,C78,c,customer,61.0,52.0,3.0,158.0,188.0,10.0,False,True,False,0.953125,0.8125,0.03,0.6869565217391305,0.8173913043478261,0.0434782608695652,
+8,C95,c,customer,25.0,24.0,20.0,130.0,160.0,10.0,False,True,False,0.390625,0.375,0.2,0.5652173913043478,0.6956521739130435,0.0434782608695652,

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import time
 from pathlib import Path
 
@@ -25,15 +26,20 @@ import numpy as np
 import torch
 
 from src.data.evrptw_dataset import split_dataset
+from src.data.instance_loader import load_capacity_from_config, summarize_vehicle_params
 from src.data.instance_class import group_indices_by_class
 from src.env.cost import CostWeights, training_reward
 from src.training.baseline import GreedyRolloutBaseline, MovingAverageBaseline
 from src.training.curriculum import (
     Phase,
+    active_train_classes,
     build_cyclic_schedule,
+    build_progressive_schedule,
+    build_rc_size_schedule,
     cyclic_total_steps,
     extra_margin_for_class,
     phases_from_config,
+    progressive_blocks,
     sample_balanced_batch,
     sample_hard_batch,
     sample_phase_m,
@@ -106,6 +112,30 @@ class CheckpointManager:
     def save_last(self):
         _save_checkpoint(self.policy, self.config, self.dir / "last.pt")
 
+    def save_phase_checkpoint(self, cls: str, global_epoch: int, phase_name: str) -> Path:
+        """Persist best weights for a curriculum class block (anti-forgetting anchor)."""
+        cls = cls.upper()
+        src = self.dir / f"best_{cls}.pt"
+        dst = self.dir / f"phase_{cls}_best.pt"
+        if src.exists():
+            shutil.copy2(src, dst)
+        else:
+            _save_checkpoint(self.policy, self.config, dst)
+        self.history[f"phase_{cls}_best"] = {
+            "global_epoch": global_epoch,
+            "phase": phase_name,
+            "path": str(dst),
+            "source": str(src) if src.exists() else "current_policy",
+        }
+        return dst
+
+
+def _load_checkpoint_into_policy(policy, checkpoint_path: Path, device) -> None:
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    policy.load_state_dict(ckpt["model_state"])
+    policy.to(device)
+    policy.train()
+
 
 def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False) -> dict:
     set_seed(int(config.get("seed", 42)))
@@ -117,13 +147,46 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     train_ds, eval_ds = split_dataset(
         ds_cfg["path"], train_ratio=float(ds_cfg.get("train_ratio", 0.8)), seed=seed,
         train_filter=ds_cfg.get("train_size_filter"), eval_filter=ds_cfg.get("eval_size_filter"),
+        load_capacity=load_capacity_from_config(config),
+        ev_specs_path=ds_cfg.get("ev_specs_path"),
     )
     train_groups = group_indices_by_class(train_ds.names)
     eval_groups = group_indices_by_class(eval_ds.names)
+    val_classes = active_train_classes(config)
+    train_groups = {c: train_groups.get(c, []) for c in val_classes}
+    eval_groups = {c: eval_groups.get(c, []) for c in val_classes}
     LOGGER.info(
-        "Train by class: " + ", ".join(f"{c}={len(train_groups[c])}" for c in train_groups)
-        + " | Eval by class: " + ", ".join(f"{c}={len(eval_groups[c])}" for c in eval_groups)
+        "Train by class: " + ", ".join(f"{c}={len(train_groups.get(c, []))}" for c in val_classes)
+        + " | Eval by class: " + ", ".join(f"{c}={len(eval_groups.get(c, []))}" for c in val_classes)
     )
+    load_override = load_capacity_from_config(config)
+    if load_override is not None:
+        LOGGER.warning(
+            "problem.load_capacity=%s overrides per-instance values from summary.json — "
+            "leave null for Hanif (series 1=200, C2=700, R2/RC2=1000).",
+            load_override,
+        )
+    else:
+        LOGGER.info(
+            "EV params from summary.json: %s",
+            summarize_vehicle_params(ds_cfg["path"], train_ds.names + eval_ds.names),
+        )
+    import time as _time
+    _t0 = _time.time()
+    _probe = train_ds[0]
+    _load_s = _time.time() - _t0
+    LOGGER.info(
+        "Dataset loader: %s | first instance %s (N=%d) loaded in %.2fs",
+        "hanif_txt (SLOW — re-run convert_hanif_dataset.py)" if train_ds.hanif_mode else "converted_npz (fast)",
+        _probe.instance_name,
+        _probe.num_nodes,
+        _load_s,
+    )
+    if _probe.num_customers >= 500 and str(device) == "cpu":
+        LOGGER.warning(
+            "Hanif 1000-customer instances on CPU are slow (~1–3 min/step) due to graph size, "
+            "not file loading. Use baseline=moving_average (not greedy_rollout) or GPU if available."
+        )
 
     charging_portions = config["problem"]["charging_portions"]
     weights = CostWeights.from_config(config["cost"])
@@ -194,11 +257,84 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     rng = random.Random(seed)
 
     ccfg = config.get("curriculum") or {}
-    cyclic_mode = str(ccfg.get("mode", "phases")).lower() == "cyclic"
-    phases = phases_from_config(ccfg if not cyclic_mode else None)
+    mode = str(ccfg.get("mode", "phases")).lower()
+    cyclic_mode = mode == "cyclic"
+    rc_size_mode = mode == "rc_size"
+    progressive_mode = mode == "progressive"
+    size_curriculum_mode = rc_size_mode or progressive_mode
+    phases = phases_from_config(
+        ccfg if not cyclic_mode and not size_curriculum_mode else None
+    )
     schedule_meta: dict = {}
+    early_stop_patience = int(tcfg.get("early_stop_patience", 0))
+    early_stop_metric = str(tcfg.get("early_stop_metric", "score")).lower()
+    served_progress_bonus = float(tcfg.get("served_progress_bonus", 0.0))
+    best_val_score = float("inf")
+    best_val_feasibility = -1.0
+    val_no_improve = 0
+    size_steps: list[dict] = []
+    reload_phase_checkpoint = bool(ccfg.get("reload_phase_checkpoint", False))
+    min_class_feasibility = {
+        str(k).upper(): float(v)
+        for k, v in (ccfg.get("min_class_feasibility") or {}).items()
+    }
+    gate_max_retries = int(ccfg.get("gate_max_retries", 2))
 
-    if cyclic_mode:
+    if progressive_mode:
+        class_order = [c.upper() for c in ccfg.get("class_order", ["C", "RC", "R"])]
+        cycles_small = int(ccfg.get("cycles_small", 4))
+        cycles_full = int(ccfg.get("cycles_full", 3))
+        cycles_by_class = ccfg.get("cycles_by_class")
+        size_steps = build_progressive_schedule(
+            train_ds.names,
+            train_groups,
+            class_order=class_order,
+            cycles_small=cycles_small,
+            cycles_full=cycles_full,
+            cycles_by_class=cycles_by_class,
+            shuffle_within_tier=bool(ccfg.get("shuffle_within_class", False)),
+            rng=rng,
+        )
+        schedule_meta = {
+            "mode": "progressive",
+            "class_order": class_order,
+            "train_classes": val_classes,
+            "cycles_small": cycles_small,
+            "cycles_full": cycles_full,
+            "cycles_by_class": cycles_by_class,
+            "reload_phase_checkpoint": reload_phase_checkpoint,
+            "min_class_feasibility": min_class_feasibility,
+            "gate_max_retries": gate_max_retries,
+            "total_epochs": len(size_steps),
+        }
+        LOGGER.info(
+            f"Progressive curriculum: {' → '.join(class_order)} "
+            f"(small×{cycles_small}, full×{cycles_full}) "
+            f"= {len(size_steps)} iterations"
+        )
+    elif rc_size_mode:
+        cycles_small = int(ccfg.get("cycles_small", 3))
+        cycles_full = int(ccfg.get("cycles_full", 5))
+        size_steps = build_rc_size_schedule(
+            train_ds.names,
+            train_groups,
+            cycles_small=cycles_small,
+            cycles_full=cycles_full,
+            shuffle_within_tier=bool(ccfg.get("shuffle_within_class", False)),
+            rng=rng,
+        )
+        schedule_meta = {
+            "mode": "rc_size",
+            "train_classes": val_classes,
+            "cycles_small": cycles_small,
+            "cycles_full": cycles_full,
+            "total_epochs": len(size_steps),
+        }
+        LOGGER.info(
+            f"RC size curriculum: small×{cycles_small} + full×{cycles_full} "
+            f"= {len(size_steps)} iterations"
+        )
+    elif cyclic_mode:
         class_order = [c.upper() for c in ccfg.get("class_order", ["C", "R", "RC"])]
         cycles = int(ccfg.get("cycles", 5))
         cyclic_steps = build_cyclic_schedule(
@@ -231,10 +367,10 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     _CLASS_PHASE_ID = {"C": 1, "R": 2, "RC": 3}
 
     def _run_validation(step_ctx, ge: int) -> dict:
-        classes = step_ctx.classes if hasattr(step_ctx, "classes") and step_ctx.classes else ["C", "R", "RC"]
+        nonlocal best_val_score, best_val_feasibility, val_no_improve
         val = validate(
             eval_ds, eval_groups, policy, weights,
-            classes=classes, mode=val_decoding, device=device,
+            classes=val_classes, mode=val_decoding, device=device,
             n_samples=val_n_samples, charging_portions=charging_portions,
             use_horizon=use_horizon, max_steps_factor=max_steps_factor,
             extra_margin=val_extra_margin, selection_mode=selection_mode,
@@ -263,7 +399,89 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
             f"| feas {ov.get('feasibility_rate', 0):.2f}"
             + (f" | saved {saved}" if saved else "")
         )
+        if early_stop_patience > 0:
+            if early_stop_metric == "feasibility":
+                feas = float(ov.get("feasibility_rate", -1.0))
+                if feas > best_val_feasibility + 1e-6:
+                    best_val_feasibility = feas
+                    val_no_improve = 0
+                else:
+                    val_no_improve += 1
+            else:
+                score = float(ov.get("score", float("inf")))
+                if score < best_val_score - 1e-6:
+                    best_val_score = score
+                    val_no_improve = 0
+                else:
+                    val_no_improve += 1
         return val
+
+    def _reset_early_stop() -> None:
+        nonlocal best_val_score, best_val_feasibility, val_no_improve
+        best_val_score = float("inf")
+        best_val_feasibility = -1.0
+        val_no_improve = 0
+
+    def _should_early_stop() -> bool:
+        return early_stop_patience > 0 and val_no_improve >= early_stop_patience
+
+    def _class_feasibility(val: dict, cls: str) -> float:
+        metrics = val.get(cls.upper()) or {}
+        return float(metrics.get("feasibility_rate", -1.0))
+
+    def _run_training_steps(steps: list[dict], block_label: str, stop_flag: list[bool]) -> None:
+        nonlocal global_epoch
+        if not steps:
+            return
+        size_phase = Phase(0, block_label, val_classes, 0)
+        for step in steps:
+            if stop_flag[0]:
+                return
+            cls = step["instance_class"]
+            idx = step["instance_idx"]
+            margin = extra_margin_for_class(config, cls)
+            tier = step.get("size_tier", "full")
+            step_phase = Phase(
+                _CLASS_PHASE_ID.get(cls, 0),
+                f"{step.get('tier_label', cls)}_cycle{step['cycle']}",
+                [cls],
+                0,
+                extra_margin=margin,
+            )
+            record = _train_step(
+                policy, optimizer, train_ds, [idx], weights, device,
+                charging_portions, use_horizon, max_steps_factor, step_phase,
+                rng, baseline_kind, greedy_baseline, ma_baseline,
+                entropy_coef, grad_clip, reward_scale, normalize_advantage,
+                served_progress_bonus=served_progress_bonus,
+            )
+            record["epoch"] = global_epoch
+            record["phase"] = step_phase.index
+            record["phase_name"] = step_phase.name
+            record["cycle"] = step["cycle"]
+            record["size_tier"] = tier
+            record["instance_class"] = cls
+            record["instance_idx"] = idx
+            record["instance_name"] = train_ds.names[idx]
+            record["step_in_cycle"] = step["step_in_cycle"]
+            record["block_label"] = block_label
+            _log_and_store(record)
+
+            if global_epoch % int(tcfg.get("log_every", 1)) == 0:
+                LOGGER.info(
+                    f"{block_label} | {tier} cycle {step['cycle']} {cls} e{global_epoch:4d} | "
+                    f"{train_ds.names[idx]} | reward {record['reward']:8.2f} "
+                    f"| feas {record['feasibility_rate']:.2f} "
+                    f"| served {record['served_rate_pct']:.0f}%"
+                )
+
+            if validate_every > 0 and (global_epoch + 1) % validate_every == 0:
+                _run_validation(size_phase, global_epoch)
+                if _should_early_stop():
+                    LOGGER.info(f"Early stop at epoch {global_epoch} (no val improvement)")
+                    stop_flag[0] = True
+                    return
+            global_epoch += 1
 
     def _log_and_store(record: dict) -> None:
         train_logger.log(record)
@@ -272,8 +490,128 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         run_train_csv.log(record)
         train_records.append(record)
 
+    # ---------------- Size curriculum (RC-only or progressive C→RC→R) ----------------
+    if size_curriculum_mode:
+        stop_flag = [False]
+
+        if progressive_mode:
+            blocks = progressive_blocks(size_steps, class_order=schedule_meta.get("class_order"))
+            prev_phase_ckpt: Path | None = None
+
+            for block_idx, block in enumerate(blocks):
+                if stop_flag[0]:
+                    break
+                cls = block["class"]
+                block_label = f"progressive_{cls}"
+                LOGGER.info(f"=== Progressive block {block_idx + 1}/{len(blocks)}: {cls} ===")
+
+                if reload_phase_checkpoint and prev_phase_ckpt is not None and prev_phase_ckpt.exists():
+                    LOGGER.info(f"Reloading phase checkpoint before {cls}: {prev_phase_ckpt}")
+                    _load_checkpoint_into_policy(policy, prev_phase_ckpt, device)
+
+                _reset_early_stop()
+                _run_training_steps(block["small"], f"{block_label}_small", stop_flag)
+                if stop_flag[0]:
+                    break
+
+                gate_threshold = min_class_feasibility.get(cls)
+                if gate_threshold is not None and block["full"]:
+                    val = _run_validation(Phase(_CLASS_PHASE_ID.get(cls, 0), f"{cls}_gate", [cls], 0), global_epoch - 1)
+                    gate_attempts = 0
+                    while _class_feasibility(val, cls) < gate_threshold and gate_attempts < gate_max_retries:
+                        gate_attempts += 1
+                        LOGGER.info(
+                            f"{cls} validation feas {_class_feasibility(val, cls):.2f} "
+                            f"< gate {gate_threshold:.2f}; extra small cycle "
+                            f"{gate_attempts}/{gate_max_retries}"
+                        )
+                        extra_small = [
+                            {**s, "cycle": s["cycle"] + 1000 + gate_attempts}
+                            for s in block["small"]
+                        ]
+                        _run_training_steps(extra_small, f"{block_label}_small_gate{gate_attempts}", stop_flag)
+                        if stop_flag[0]:
+                            break
+                        val = _run_validation(
+                            Phase(_CLASS_PHASE_ID.get(cls, 0), f"{cls}_gate", [cls], 0),
+                            global_epoch - 1,
+                        )
+                    if _class_feasibility(val, cls) < gate_threshold:
+                        LOGGER.warning(
+                            f"{cls} gate not met ({_class_feasibility(val, cls):.2f} "
+                            f"< {gate_threshold:.2f}); proceeding to full tier anyway"
+                        )
+                    else:
+                        LOGGER.info(
+                            f"{cls} gate passed: validation feas "
+                            f"{_class_feasibility(val, cls):.2f} >= {gate_threshold:.2f}"
+                        )
+
+                if stop_flag[0]:
+                    break
+                _reset_early_stop()
+                _run_training_steps(block["full"], f"{block_label}_full", stop_flag)
+                if stop_flag[0]:
+                    break
+
+                phase_path = ckpt_mgr.save_phase_checkpoint(cls, global_epoch - 1, block_label)
+                LOGGER.info(f"Saved phase checkpoint for {cls}: {phase_path}")
+                prev_phase_ckpt = phase_path
+
+            if not stop_flag[0]:
+                _run_validation(Phase(0, "progressive", val_classes, 0), global_epoch - 1)
+        else:
+            size_phase = Phase(0, "rc_size", val_classes, 0)
+            for step in size_steps:
+                cls = step["instance_class"]
+                idx = step["instance_idx"]
+                margin = extra_margin_for_class(config, cls)
+                tier = step.get("size_tier", "full")
+                step_phase = Phase(
+                    _CLASS_PHASE_ID.get(cls, 0),
+                    f"{step.get('tier_label', cls)}_cycle{step['cycle']}",
+                    [cls],
+                    0,
+                    extra_margin=margin,
+                )
+                record = _train_step(
+                    policy, optimizer, train_ds, [idx], weights, device,
+                    charging_portions, use_horizon, max_steps_factor, step_phase,
+                    rng, baseline_kind, greedy_baseline, ma_baseline,
+                    entropy_coef, grad_clip, reward_scale, normalize_advantage,
+                    served_progress_bonus=served_progress_bonus,
+                )
+                record["epoch"] = global_epoch
+                record["phase"] = step_phase.index
+                record["phase_name"] = step_phase.name
+                record["cycle"] = step["cycle"]
+                record["size_tier"] = tier
+                record["instance_class"] = cls
+                record["instance_idx"] = idx
+                record["instance_name"] = train_ds.names[idx]
+                record["step_in_cycle"] = step["step_in_cycle"]
+                _log_and_store(record)
+
+                if global_epoch % int(tcfg.get("log_every", 1)) == 0:
+                    LOGGER.info(
+                        f"{tier} cycle {step['cycle']} {cls} e{global_epoch:4d} | "
+                        f"{train_ds.names[idx]} | reward {record['reward']:8.2f} "
+                        f"| feas {record['feasibility_rate']:.2f} "
+                        f"| served {record['served_rate_pct']:.0f}%"
+                    )
+
+                if validate_every > 0 and (global_epoch + 1) % validate_every == 0:
+                    _run_validation(size_phase, global_epoch)
+                    if _should_early_stop():
+                        LOGGER.info(f"Early stop at epoch {global_epoch} (no val improvement)")
+                        break
+                global_epoch += 1
+            else:
+                _run_validation(size_phase, global_epoch - 1)
+        ckpt_mgr.save_last()
+
     # ---------------- Cyclic training (C → R → RC, repeat) ----------------
-    if cyclic_mode:
+    elif cyclic_mode:
         cyclic_phase = Phase(0, "cyclic", ["C", "R", "RC"], 0)
         for step in cyclic_steps:
             cls = step["instance_class"]
@@ -291,6 +629,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
                 charging_portions, use_horizon, max_steps_factor, step_phase,
                 rng, baseline_kind, greedy_baseline, ma_baseline,
                 entropy_coef, grad_clip, reward_scale, normalize_advantage,
+                served_progress_bonus=served_progress_bonus,
             )
             record["epoch"] = global_epoch
             record["phase"] = step_phase.index
@@ -311,9 +650,13 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
 
             if validate_every > 0 and (global_epoch + 1) % validate_every == 0:
                 _run_validation(cyclic_phase, global_epoch)
+                if _should_early_stop():
+                    LOGGER.info(f"Early stop at epoch {global_epoch} (no val improvement)")
+                    break
             global_epoch += 1
 
-        _run_validation(cyclic_phase, global_epoch - 1)
+        else:
+            _run_validation(cyclic_phase, global_epoch - 1)
         ckpt_mgr.save_last()
 
     # ---------------- Phase-based training (legacy) ----------------
@@ -396,13 +739,14 @@ def _train_step(
     policy, optimizer, train_ds, batch_idx, weights, device, charging_portions,
     use_horizon, max_steps_factor, phase, rng, baseline_kind, greedy_baseline,
     ma_baseline, entropy_coef, grad_clip, reward_scale, normalize_advantage,
+    served_progress_bonus: float = 0.0,
 ) -> dict:
     """One REINFORCE update on a sampled batch; return the metrics record."""
     policy.train()
     optimizer.zero_grad()
 
     raw_costs, rewards, feas_flags = [], [], []
-    used_evs_list, dist_list, charge_list, wait_list = [], [], [], []
+    used_evs_list, dist_list, charge_list, price_list, wait_list = [], [], [], [], []
     viol_list, unserved_list, duration_list = [], [], []
     served_rate_list, customers_list = [], []
     breakdowns: list[dict] = []
@@ -417,7 +761,11 @@ def _train_step(
             max_steps_factor=max_steps_factor,
         )
         raw_j = float(result.objective)
+        n_cust = max(int(instance.num_customers), 1)
+        served_rate = 1.0 - result.summary.unserved_customers / n_cust
         reward = training_reward(raw_j, reward_scale)
+        if served_progress_bonus > 0:
+            reward += served_progress_bonus * served_rate
 
         if baseline_kind == "greedy_rollout":
             b = greedy_baseline.reward(instance, policy, m, device)
@@ -433,12 +781,12 @@ def _train_step(
         used_evs_list.append(result.summary.used_evs)
         dist_list.append(result.summary.total_distance)
         charge_list.append(result.summary.total_charging_time)
+        price_list.append(result.summary.total_charging_price)
         wait_list.append(result.summary.total_waiting_time)
         unserved_list.append(result.summary.unserved_customers)
         duration_list.append(result.summary.total_duration)
-        n_cust = max(int(instance.num_customers), 1)
         customers_list.append(n_cust)
-        served_rate_list.append(1.0 - result.summary.unserved_customers / n_cust)
+        served_rate_list.append(served_rate)
         viol_list.append(
             result.summary.total_battery_violation + result.summary.total_capacity_violation
             + result.summary.total_lateness + result.summary.unserved_customers
@@ -463,6 +811,7 @@ def _train_step(
     mean_dist = float(np.mean(dist_list))
     mean_evs = float(np.mean(used_evs_list))
     mean_charge = float(np.mean(charge_list))
+    mean_price = float(np.mean(price_list))
     mean_wait = float(np.mean(wait_list))
     mean_active = mean_dist + mean_charge + mean_wait
     mean_feas = float(np.mean(feas_flags))
@@ -490,6 +839,7 @@ def _train_step(
         "avg_distance": mean_dist,
         "avg_duration": float(np.mean(duration_list)),
         "avg_charging_time": mean_charge,
+        "avg_charging_price": mean_price,
         "avg_waiting_time": mean_wait,
         "avg_unserved": float(np.mean(unserved_list)),
         "avg_violation": float(np.mean(viol_list)),

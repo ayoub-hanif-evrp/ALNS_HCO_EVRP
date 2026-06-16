@@ -66,6 +66,98 @@ def test_cyclic_schedule_order_and_length():
     assert sched[6]["instance_idx"] == 0  # second cycle starts again with C
 
 
+def test_rc_size_schedule():
+    from src.data.instance_class import group_indices_by_class
+    from src.training.curriculum import build_rc_size_schedule
+
+    names = [
+        "rc108C5", "rc201C10", "rc108_21", "rc201_21",
+    ]
+    groups = group_indices_by_class(names)
+    sched = build_rc_size_schedule(names, groups, cycles_small=2, cycles_full=1, rng=random.Random(0))
+    # small: idx 0,1 × 2 cycles = 4; full: idx 2,3 × 1 = 2 → total 6
+    assert len(sched) == 6
+    assert all(s["instance_class"] == "RC" for s in sched)
+    assert sched[0]["size_tier"] == "small"
+    assert sched[-1]["size_tier"] == "full"
+
+
+def test_progressive_schedule_order_and_length():
+    from src.data.instance_class import group_indices_by_class
+    from src.training.curriculum import build_progressive_schedule, progressive_total_steps
+
+    names = [
+        "c101C5", "c101_21",
+        "rc108C5", "rc108_21",
+        "r201C10", "r201_21",
+    ]
+    groups = group_indices_by_class(names)
+    sched = build_progressive_schedule(
+        names,
+        groups,
+        class_order=["C", "RC", "R"],
+        cycles_small=2,
+        cycles_full=1,
+        rng=random.Random(0),
+    )
+    expected = progressive_total_steps(
+        names, groups, class_order=["C", "RC", "R"], cycles_small=2, cycles_full=1,
+    )
+    assert len(sched) == expected == 9
+    assert [s["tier_label"] for s in sched] == [
+        "C_small", "C_small",
+        "C_full",
+        "RC_small", "RC_small",
+        "RC_full",
+        "R_small", "R_small",
+        "R_full",
+    ]
+    assert sched[0]["instance_class"] == "C" and sched[-1]["instance_class"] == "R"
+
+
+def test_class_size_schedule():
+    from src.data.instance_class import group_indices_by_class
+    from src.training.curriculum import build_class_size_schedule
+
+    names = ["c101C5", "c103C10", "c101_21"]
+    groups = group_indices_by_class(names)
+    sched = build_class_size_schedule(names, groups, "C", cycles_small=2, cycles_full=1, rng=random.Random(0))
+    assert len(sched) == 5  # 2 small × 2 + 1 full × 1
+    assert all(s["instance_class"] == "C" for s in sched)
+
+
+def test_progressive_blocks():
+    from src.data.instance_class import group_indices_by_class
+    from src.training.curriculum import build_progressive_schedule, progressive_blocks
+
+    names = [
+        "c101C5", "c101_21",
+        "rc108C5", "rc108_21",
+        "r201C10", "r201_21",
+    ]
+    groups = group_indices_by_class(names)
+    sched = build_progressive_schedule(
+        names,
+        groups,
+        class_order=["C", "RC", "R"],
+        cycles_small=2,
+        cycles_full=1,
+        rng=random.Random(0),
+    )
+    blocks = progressive_blocks(sched, class_order=["C", "RC", "R"])
+    assert len(blocks) == 3
+    assert blocks[0]["class"] == "C"
+    assert len(blocks[0]["small"]) == 2
+    assert len(blocks[0]["full"]) == 1
+
+    hanif_names = ["C1_10_1", "C2_10_1", "RC1_10_1", "RC2_10_1"]
+    hanif_groups = group_indices_by_class(hanif_names)
+    hanif_sched = build_progressive_schedule(
+        hanif_names, hanif_groups, class_order=["C", "RC"], cycles_small=1, cycles_full=1, rng=random.Random(0),
+    )
+    assert len(hanif_sched) == 4
+
+
 def test_phase0_checks_pass(dataset_path):
     from src.training.phase0_checks import pick_check_instance
 

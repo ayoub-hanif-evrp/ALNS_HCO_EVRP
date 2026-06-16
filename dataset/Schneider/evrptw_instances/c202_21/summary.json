@@ -1,0 +1,16 @@
+{
+  "instance_name": "c202_21",
+  "num_nodes": 122,
+  "num_customers": 100,
+  "num_charging_stations": 21,
+  "depot_has_charging": true,
+  "planning_horizon": 3390.0,
+  "battery_capacity": 118.31,
+  "load_capacity": 100.0,
+  "energy_consumption_rate": 1.0,
+  "inverse_charging_rate": 2.28,
+  "speed": 1.0,
+  "validation_passed": true,
+  "validation_errors": [],
+  "reachability_warning_count": 0
+}

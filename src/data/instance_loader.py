@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +82,8 @@ class EVRPTWInstance:
     planning_horizon: float
     depot_has_charging: bool = False
     max_abs_coordinate: float = 1.0
+    station_charging_rate: np.ndarray | None = None
+    station_price_per_energy: np.ndarray | None = None
 
     # --- convenience properties ---
     @property
@@ -167,7 +169,106 @@ def _coerce_bool(value) -> bool:
     return bool(value)
 
 
-def load_instance(instance_dir: str | Path) -> EVRPTWInstance:
+def load_capacity_from_config(config: dict) -> float | None:
+    """Optional override from ``problem.load_capacity`` in YAML config."""
+    raw = (config.get("problem") or {}).get("load_capacity")
+    if raw is None:
+        return None
+    return float(raw)
+
+
+def read_instance_summary(instance_dir: str | Path) -> dict | None:
+    """Read ``summary.json`` for a converted instance folder, if present."""
+    summary_path = Path(instance_dir) / "summary.json"
+    if not summary_path.exists():
+        return None
+    return json.loads(summary_path.read_text(encoding="utf-8"))
+
+
+def _validate_summary_vehicle_params(summary: dict, vp: dict, instance_name: str) -> None:
+    """Ensure on-disk ``summary.json`` matches ``evrp_instance.json`` vehicle params."""
+    for key in ("battery_capacity", "load_capacity"):
+        if key not in summary:
+            continue
+        expected = float(summary[key])
+        actual = float(vp[key])
+        if abs(expected - actual) > 1e-6:
+            raise ValueError(
+                f"{instance_name}: {key} in summary.json ({expected}) "
+                f"does not match evrp_instance.json ({actual})"
+            )
+
+
+def summarize_vehicle_params(dataset_path: str | Path, names: list[str]) -> str:
+    """Summarize per-instance EV params recorded in ``summary.json`` files."""
+    dataset_path = Path(dataset_path)
+    load_counts: dict[float, int] = {}
+    battery_values: set[float] = set()
+    for name in names:
+        summary = read_instance_summary(dataset_path / name)
+        if summary is None:
+            continue
+        load = float(summary["load_capacity"])
+        load_counts[load] = load_counts.get(load, 0) + 1
+        battery_values.add(float(summary["battery_capacity"]))
+    load_part = ", ".join(f"C={int(k) if k == int(k) else k}×{v}" for k, v in sorted(load_counts.items()))
+    if len(battery_values) == 1:
+        battery_part = f"battery={next(iter(battery_values))}"
+    else:
+        battery_part = f"batteries={sorted(battery_values)}"
+    return f"{battery_part}; load capacities: {load_part or 'unknown'}"
+
+
+def expected_lognormal_mean(mu: float, sigma: float) -> float:
+    """Expected value E[X] for X ~ LogNormal(mu, sigma) (Hanif station price)."""
+    return float(np.exp(mu + 0.5 * sigma ** 2))
+
+
+def _load_station_arrays(
+    instance_dir: Path,
+    num_nodes: int,
+    depot_index: int,
+    depot_has_charging: bool,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Load per-node charging rate and expected price/energy from ``stations.csv``."""
+    stations_path = instance_dir / "stations.csv"
+    if not stations_path.exists():
+        return None, None
+    st_df = pd.read_csv(stations_path)
+    rates = np.full(num_nodes, np.nan, dtype=np.float32)
+    prices = np.full(num_nodes, np.nan, dtype=np.float32)
+    for _, row in st_df.iterrows():
+        nid = int(row["node_id"])
+        rates[nid] = float(row["charging_rate"])
+        prices[nid] = expected_lognormal_mean(float(row["price_mu"]), float(row["price_sigma"]))
+    if depot_has_charging:
+        if np.isnan(rates[depot_index]):
+            median_rate = float(np.nanmedian(rates))
+            if not np.isnan(median_rate):
+                rates[depot_index] = median_rate
+        if np.isnan(prices[depot_index]):
+            median_price = float(np.nanmedian(prices))
+            if not np.isnan(median_price):
+                prices[depot_index] = median_price
+    return rates, prices
+
+
+def apply_load_capacity(instance: EVRPTWInstance, load_capacity: float) -> EVRPTWInstance:
+    """Re-scale vehicle load capacity and refresh ``demand_norm`` node features."""
+    cap = float(load_capacity)
+    if cap <= 0:
+        raise ValueError("load_capacity must be positive")
+    if abs(instance.vehicle.load_capacity - cap) < 1e-9:
+        return instance
+    instance.nodes = [
+        replace(n, demand_norm=n.demand / cap)
+        for n in instance.nodes
+    ]
+    instance.vehicle = replace(instance.vehicle, load_capacity=cap)
+    return instance
+
+
+def load_instance(instance_dir: str | Path, *, load_capacity: float | None = None) -> EVRPTWInstance:
     """Load a single converted instance from its folder."""
     instance_dir = Path(instance_dir)
     json_path = instance_dir / "evrp_instance.json"
@@ -181,6 +282,10 @@ def load_instance(instance_dir: str | Path) -> EVRPTWInstance:
     meta = data["metadata"]
     vp = data["vehicle_parameters"]
     index_sets = data["index_sets"]
+
+    summary = read_instance_summary(instance_dir)
+    if summary is not None:
+        _validate_summary_vehicle_params(summary, vp, str(meta["instance_name"]))
 
     # Prefer nodes.csv for normalized features; fall back to JSON nodes.
     nodes: list[Node] = []
@@ -208,10 +313,16 @@ def load_instance(instance_dir: str | Path) -> EVRPTWInstance:
         speed=float(vp["speed"]),
     )
 
-    return EVRPTWInstance(
+    depot_index = int(index_sets["depot_index"])
+    depot_has_charging = bool(meta.get("depot_has_charging", False))
+    station_rates, station_prices = _load_station_arrays(
+        instance_dir, len(nodes), depot_index, depot_has_charging,
+    )
+
+    instance = EVRPTWInstance(
         instance_name=meta["instance_name"],
         nodes=nodes,
-        depot_index=int(index_sets["depot_index"]),
+        depot_index=depot_index,
         customer_indices=[int(i) for i in index_sets["customer_indices"]],
         charging_station_indices=[int(i) for i in index_sets["charging_station_indices"]],
         rechargeable_indices=[int(i) for i in index_sets["rechargeable_indices"]],
@@ -220,9 +331,14 @@ def load_instance(instance_dir: str | Path) -> EVRPTWInstance:
         energy_matrix=energy_matrix,
         vehicle=vehicle,
         planning_horizon=float(meta["planning_horizon"]),
-        depot_has_charging=bool(meta.get("depot_has_charging", False)),
+        depot_has_charging=depot_has_charging,
         max_abs_coordinate=float(meta.get("max_abs_coordinate", 1.0)) or 1.0,
+        station_charging_rate=station_rates,
+        station_price_per_energy=station_prices,
     )
+    if load_capacity is not None:
+        apply_load_capacity(instance, load_capacity)
+    return instance
 
 
 def _node_from_row(row: pd.Series, vp: dict, meta: dict) -> Node:

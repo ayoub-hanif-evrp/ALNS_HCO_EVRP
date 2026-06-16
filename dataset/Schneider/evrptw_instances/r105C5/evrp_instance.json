@@ -1,0 +1,189 @@
+{
+  "metadata": {
+    "instance_name": "r105C5",
+    "problem_type": "E-VRPTW",
+    "source_folder": "dataset/vrptw_instances",
+    "converted_folder": "dataset/evrptw_instances",
+    "source_format": "Schneider-style VRPTW/fuel notation",
+    "converted_to": "EVRP energy notation",
+    "num_depots": 1,
+    "num_customers": 5,
+    "num_charging_stations": 3,
+    "depot_has_charging": true,
+    "planning_horizon": 230.0,
+    "max_abs_coordinate": 64.0
+  },
+  "vehicle_parameters": {
+    "battery_capacity": 60.63,
+    "load_capacity": 100.0,
+    "energy_consumption_rate": 1.0,
+    "inverse_charging_rate": 0.49,
+    "speed": 1.0
+  },
+  "raw_parameter_mapping": {
+    "Q": "Vehicle fuel tank capacity -> battery_capacity",
+    "C": "Vehicle load capacity -> load_capacity",
+    "r": "fuel consumption rate -> energy_consumption_rate",
+    "g": "inverse refueling rate -> inverse_charging_rate",
+    "v": "average Velocity -> speed"
+  },
+  "index_sets": {
+    "depot_index": 0,
+    "customer_indices": [
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "charging_station_indices": [
+      1,
+      2,
+      3
+    ],
+    "rechargeable_indices": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "nodes": [
+    {
+      "id": 0,
+      "string_id": "D0",
+      "original_type": "d",
+      "node_type": "depot",
+      "x": 35.0,
+      "y": 35.0,
+      "demand": 0.0,
+      "ready_time": 0.0,
+      "due_time": 230.0,
+      "service_time": 0.0,
+      "is_depot": true,
+      "is_customer": false,
+      "is_charging_station": false
+    },
+    {
+      "id": 1,
+      "string_id": "S0",
+      "original_type": "f",
+      "node_type": "charging_station",
+      "x": 35.0,
+      "y": 35.0,
+      "demand": 0.0,
+      "ready_time": 0.0,
+      "due_time": 230.0,
+      "service_time": 0.0,
+      "is_depot": false,
+      "is_customer": false,
+      "is_charging_station": true,
+      "co_located_with_depot": true
+    },
+    {
+      "id": 2,
+      "string_id": "S1",
+      "original_type": "f",
+      "node_type": "charging_station",
+      "x": 64.0,
+      "y": 37.0,
+      "demand": 0.0,
+      "ready_time": 0.0,
+      "due_time": 230.0,
+      "service_time": 0.0,
+      "is_depot": false,
+      "is_customer": false,
+      "is_charging_station": true
+    },
+    {
+      "id": 3,
+      "string_id": "S13",
+      "original_type": "f",
+      "node_type": "charging_station",
+      "x": 21.0,
+      "y": 22.0,
+      "demand": 0.0,
+      "ready_time": 0.0,
+      "due_time": 230.0,
+      "service_time": 0.0,
+      "is_depot": false,
+      "is_customer": false,
+      "is_charging_station": true
+    },
+    {
+      "id": 4,
+      "string_id": "C91",
+      "original_type": "c",
+      "node_type": "customer",
+      "x": 15.0,
+      "y": 19.0,
+      "demand": 1.0,
+      "ready_time": 77.0,
+      "due_time": 107.0,
+      "service_time": 10.0,
+      "is_depot": false,
+      "is_customer": true,
+      "is_charging_station": false
+    },
+    {
+      "id": 5,
+      "string_id": "C28",
+      "original_type": "c",
+      "node_type": "customer",
+      "x": 41.0,
+      "y": 37.0,
+      "demand": 16.0,
+      "ready_time": 183.0,
+      "due_time": 213.0,
+      "service_time": 10.0,
+      "is_depot": false,
+      "is_customer": true,
+      "is_charging_station": false
+    },
+    {
+      "id": 6,
+      "string_id": "C75",
+      "original_type": "c",
+      "node_type": "customer",
+      "x": 49.0,
+      "y": 11.0,
+      "demand": 18.0,
+      "ready_time": 49.0,
+      "due_time": 79.0,
+      "service_time": 10.0,
+      "is_depot": false,
+      "is_customer": true,
+      "is_charging_station": false
+    },
+    {
+      "id": 7,
+      "string_id": "C78",
+      "original_type": "c",
+      "node_type": "customer",
+      "x": 61.0,
+      "y": 52.0,
+      "demand": 3.0,
+      "ready_time": 158.0,
+      "due_time": 188.0,
+      "service_time": 10.0,
+      "is_depot": false,
+      "is_customer": true,
+      "is_charging_station": false
+    },
+    {
+      "id": 8,
+      "string_id": "C95",
+      "original_type": "c",
+      "node_type": "customer",
+      "x": 25.0,
+      "y": 24.0,
+      "demand": 20.0,
+      "ready_time": 130.0,
+      "due_time": 160.0,
+      "service_time": 10.0,
+      "is_depot": false,
+      "is_customer": true,
+      "is_charging_station": false
+    }
+  ]
+}

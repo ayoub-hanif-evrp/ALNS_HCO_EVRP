@@ -10,6 +10,9 @@ from types import SimpleNamespace
 import torch
 
 from src.data.evrptw_dataset import split_dataset
+from src.data.instance_class import instance_class
+from src.data.instance_loader import load_capacity_from_config
+from src.training.curriculum import active_train_classes
 from src.env.cost import CostWeights
 from src.evaluation.baselines import (
     NearestFeasiblePolicy,
@@ -75,8 +78,20 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
         seed=int(config.get("seed", 42)),
         train_filter=ds_cfg.get("train_size_filter"),
         eval_filter=ds_cfg.get("eval_size_filter"),
+        load_capacity=load_capacity_from_config(config),
+        ev_specs_path=ds_cfg.get("ev_specs_path"),
     )
     LOGGER.info(f"Evaluation instances: {len(eval_ds)}")
+
+    eval_class_filter = set(active_train_classes(config))
+    eval_indices = [
+        i for i in range(len(eval_ds))
+        if instance_class(eval_ds.names[i]) in eval_class_filter
+    ]
+    if eval_class_filter and len(eval_indices) < len(eval_ds):
+        LOGGER.info(f"Eval class filter {sorted(eval_class_filter)}: {len(eval_indices)} instances")
+    if not eval_indices:
+        eval_indices = list(range(len(eval_ds)))
 
     weights = CostWeights.from_config(config["cost"])
     charging_portions = config["problem"]["charging_portions"]
@@ -116,7 +131,7 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
     save_figures = bool(ecfg.get("save_figures", True))
 
     rows: list[dict] = []
-    for i in range(len(eval_ds)):
+    for i in eval_indices:
         instance = eval_ds[i]
         for method_name, runner in methods.items():
             t0 = time.time()

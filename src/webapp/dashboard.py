@@ -18,28 +18,14 @@ from src.webapp.dashboard_data import (
     progress_from_metrics,
     training_plan_from_config,
 )
-from src.webapp.plot_style import CLASS_COLORS, CLASS_ORDER, STAGE_COLORS
+from src.webapp.plot_style import STAGE_COLORS
 
-_PAGE = "w-full max-w-[1280px] mx-auto px-6"
+_PAGE = "w-full max-w-[1400px] mx-auto px-6"
 _SECTION = "w-full rounded-xl border border-slate-200 bg-white shadow-sm mb-5"
 _SECTION_HEAD = "px-5 py-3 border-b border-slate-100 bg-slate-50"
 _SECTION_BODY = "p-4"
 _TILE = "rounded-lg border border-slate-100 bg-white p-3"
 _ACCENTS = ["#2563eb", "#7c3aed", "#059669", "#d97706", "#dc2626", "#0891b2", "#4f46e5"]
-
-
-def _fmt_pct(val) -> str:
-    try:
-        return f"{100.0 * float(val):.1f}%"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _fmt_num(val, digits: int = 3) -> str:
-    try:
-        return f"{float(val):.{digits}f}"
-    except (TypeError, ValueError):
-        return "—"
 
 
 def _field(label: str, value: str, *, mono: bool = False) -> None:
@@ -49,19 +35,14 @@ def _field(label: str, value: str, *, mono: bool = False) -> None:
     )
 
 
-def _kpi(label: str, value: str) -> None:
-    with ui.column().classes(
-        "flex-1 min-w-[7rem] items-center py-2 px-1 border-r border-slate-100 last:border-0"
-    ):
-        ui.label(label).classes("text-[10px] uppercase tracking-wide text-slate-400 text-center")
-        ui.label(value).classes("text-base font-semibold text-slate-900")
-
-
 def _section_has_data(df, charts: list) -> bool:
     for c in charts:
         t = c.get("type", "metric")
-        if t in ("cost_breakdown", "reward_components", "served_coverage", "optimization_panel"):
-            return True
+        if t in ("cost_breakdown", "reward_components", "served_coverage", "optimization_panel", "cost_term"):
+            if t == "cost_term" and c.get("col") in df.columns:
+                return True
+            if t != "cost_term":
+                return True
         if t == "per_class_bars":
             metrics = c.get("metrics") or []
             if any(m[0] in df.columns for m in metrics):
@@ -92,15 +73,40 @@ def _plot_chart(df, plan: dict, spec: dict) -> None:
     if fig is None:
         return
     title = spec.get("title", spec.get("col", "Chart"))
-    desc = spec.get("desc")
+    desc = spec.get("desc") if spec.get("type") != "cost_term" else None
     with ui.element("div").classes("chart-slot").style("width: 100%; min-width: 0;"):
         with ui.column().classes(_TILE).style("width: 100%; box-sizing: border-box;"):
-            ui.label(title).classes("text-sm font-medium text-slate-700 mb-1")
+            ui.label(title).classes("text-sm font-semibold text-slate-800 mb-2")
             if desc:
                 ui.label(desc).classes("text-xs text-slate-400 mb-2")
             ui.plotly(_plotly_payload(fig)).classes("w-full").style(
                 "width: 100%; display: block; min-width: 0;"
             )
+
+
+def _render_section_card(
+    section: dict,
+    df,
+    plan: dict,
+    *,
+    accent: str,
+) -> None:
+    """One themed block: outer div + white card header + chart grid (same pattern as Policy optimization)."""
+    section_id = section.get("id", "section")
+    with ui.element("div").classes("dashboard-section w-full scroll-mt-24").props(
+        f'id="section-{section_id}"'
+    ):
+        with ui.card().classes(_SECTION + " section-card"):
+            with ui.row().classes(_SECTION_HEAD + " items-center gap-3"):
+                ui.element("div").classes("w-1.5 h-9 rounded-full shrink-0").style(
+                    f"background:{accent}"
+                )
+                with ui.column().classes("gap-0"):
+                    ui.label(section["title"]).classes("text-base font-semibold text-slate-800")
+                    if section.get("subtitle"):
+                        ui.label(section["subtitle"]).classes("text-xs text-slate-500")
+            with ui.column().classes(_SECTION_BODY).style("width: 100%;"):
+                _render_charts(df, plan, section.get("charts", []))
 
 
 def _render_charts(df, plan: dict, charts: list) -> None:
@@ -113,6 +119,15 @@ def _render_charts(df, plan: dict, charts: list) -> None:
         with ui.element("div").classes("grid grid-cols-1 lg:grid-cols-2 gap-4 w-full"):
             for spec in compact:
                 _plot_chart(df, plan, spec)
+
+
+def _section_nav_link(section: dict) -> None:
+    sid = section.get("id", "")
+    label = section.get("nav") or section.get("title", sid)
+    ui.link(label, f"#section-{sid}").classes(
+        "text-xs font-medium text-slate-600 hover:text-blue-600 px-2.5 py-1 rounded-full "
+        "border border-slate-200 bg-white hover:border-blue-200 whitespace-nowrap"
+    )
 
 
 def create_dashboard(
@@ -136,12 +151,15 @@ def create_dashboard(
               .chart-slot { width: 100% !important; min-width: 0 !important; }
               .chart-slot .js-plotly-plot, .chart-slot .plotly-graph-div { width: 100% !important; }
               .js-plotly-plot .modebar { display: none !important; }
+              .dashboard-section { margin-bottom: 1.25rem; }
+              .dashboard-section .section-card { margin-bottom: 0 !important; }
+              .section-nav { position: sticky; top: 0; z-index: 20; background: #f1f5f9;
+                             padding: 0.75rem 0; margin-bottom: 0.5rem; }
             </style>
             """
         )
 
         status_panel = ui.column().classes(_PAGE + " pt-4")
-        reward_kpi_panel = ui.column().classes(_PAGE)
         charts_panel = ui.column().classes(_PAGE + " pb-12")
 
         def refresh() -> None:
@@ -204,76 +222,12 @@ def create_dashboard(
                                 ui.label(f"{order} · 1 instance = 1 iteration").classes(
                                     "text-xs text-slate-500"
                                 )
-                            _field("Algorithm", "REINFORCE + greedy baseline")
+                            _field("Algorithm", "REINFORCE + baseline")
                             ui.label("outputs/results/training_metrics.csv").classes(
                                 "text-[10px] font-mono text-slate-400 mt-1"
                             )
 
-            # ---- Reward KPIs (top, right after status) ----
-            reward_kpi_panel.clear()
-            if not df.empty:
-                last = df.iloc[-1]
-
-                def pick(roll: str, raw: str):
-                    if roll in df.columns:
-                        v = last.get(roll)
-                        if v is not None and v == v:
-                            return v
-                    return last.get(raw)
-
-                with reward_kpi_panel:
-                    with ui.card().classes(_SECTION):
-                        ui.label("Reward & optimization · latest step").classes(
-                            "text-xs font-bold text-slate-400 px-5 pt-4"
-                        )
-                        with ui.row().classes("w-full flex-wrap justify-around pb-2"):
-                            _kpi("Reward", _fmt_num(pick("rolling_raw_return_mean", "reward"), 2))
-                            _kpi("Cost J", _fmt_num(last.get("cost"), 1))
-                            _kpi("Loss", _fmt_num(last.get("loss"), 3))
-                            _kpi("Policy loss", _fmt_num(last.get("policy_loss"), 3))
-                            _kpi("Advantage", _fmt_num(last.get("advantage"), 3))
-                            _kpi("Entropy", _fmt_num(last.get("entropy"), 3))
-                            _kpi("Grad norm", _fmt_num(last.get("grad_norm"), 3))
-                            _kpi("LR", _fmt_num(last.get("learning_rate"), 6))
-                            _kpi("Served", _fmt_pct(pick("rolling_served_ratio_mean", "served_ratio")))
-
-                # Per-class snapshot (trailing window)
-                if "instance_class" in df.columns:
-                    w = min(10, max(3, len(df) // 3))
-                    with reward_kpi_panel:
-                        with ui.card().classes(_SECTION):
-                            ui.label("Per-class snapshot · trailing window mean").classes(
-                                "text-xs font-bold text-slate-400 px-5 pt-4"
-                            )
-                            with ui.row().classes("w-full flex-wrap gap-3 px-4 pb-4"):
-                                for cls in CLASS_ORDER:
-                                    g = df[df["instance_class"] == cls].tail(w)
-                                    if g.empty:
-                                        continue
-                                    color = CLASS_COLORS.get(cls, "#64748b")
-                                    with ui.column().classes(
-                                        "flex-1 min-w-[10rem] rounded-lg border border-slate-100 p-3"
-                                    ).style(f"border-top: 3px solid {color}"):
-                                        ui.label(cls).classes("text-sm font-bold").style(
-                                            f"color:{color}"
-                                        )
-                                        ui.label(f"Reward {_fmt_num(g['reward'].mean(), 2)}").classes(
-                                            "text-xs text-slate-600"
-                                        )
-                                        if "cost" in g.columns:
-                                            ui.label(f"Cost J {_fmt_num(g['cost'].mean(), 1)}").classes(
-                                                "text-xs text-slate-600"
-                                            )
-                                        if "served_ratio" in g.columns:
-                                            ui.label(
-                                                f"Served {_fmt_pct(g['served_ratio'].mean())}"
-                                            ).classes("text-xs text-slate-600")
-                                        if "avg_used_evs" in g.columns:
-                                            ui.label(
-                                                f"EVs {_fmt_num(g['avg_used_evs'].mean(), 1)}"
-                                            ).classes("text-xs text-slate-600")
-
-            # ---- Charts (flat sections, no dropdowns) ----
+            # ---- Charts ----
             charts_panel.clear()
             with charts_panel:
                 if df.empty:
@@ -284,28 +238,24 @@ def create_dashboard(
                         ).classes("text-xs font-mono text-slate-400 mt-2")
                     return
 
-                for n, section in enumerate(TRAINING_CHART_SECTIONS, 1):
-                    charts = section.get("charts", [])
-                    if not _section_has_data(df, charts):
-                        continue
+                visible_sections = [
+                    s for s in TRAINING_CHART_SECTIONS
+                    if _section_has_data(df, s.get("charts", []))
+                ]
+
+                with ui.element("div").classes("section-nav w-full"):
+                    ui.label("Sections").classes("text-[10px] uppercase tracking-wide text-slate-400 mb-2")
+                    with ui.row().classes("flex-wrap gap-2 w-full"):
+                        for section in visible_sections:
+                            _section_nav_link(section)
+
+                for n, section in enumerate(visible_sections, 1):
                     accent = _ACCENTS[(n - 1) % len(_ACCENTS)]
-                    with ui.card().classes(_SECTION):
-                        with ui.row().classes(_SECTION_HEAD + " items-center gap-3"):
-                            ui.element("div").classes("w-1.5 h-9 rounded-full shrink-0").style(
-                                f"background:{accent}"
-                            )
-                            with ui.column().classes("gap-0"):
-                                ui.label(section["title"]).classes(
-                                    "text-base font-semibold text-slate-800"
-                                )
-                                if section.get("subtitle"):
-                                    ui.label(section["subtitle"]).classes("text-xs text-slate-500")
-                        with ui.column().classes(_SECTION_BODY).style("width: 100%;"):
-                            _render_charts(df, plan, charts)
+                    _render_section_card(section, df, plan, accent=accent)
 
         with ui.header().classes("bg-white border-b border-slate-200 text-slate-800"):
             with ui.row().classes(
-                "w-full max-w-[1280px] mx-auto px-6 py-3 items-center justify-between"
+                "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
                     ui.label("E-VRPTW Transformer · Training monitor").classes("text-lg font-bold")
@@ -314,8 +264,8 @@ def create_dashboard(
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")
             ui.label(
-                "Reward metrics first · C → R → RC cyclic schedule · 1 instance = 1 iteration"
-            ).classes("text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1280px] mx-auto block")
+                "Grouped sections · one card per theme · jump links above charts"
+            ).classes("text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1400px] mx-auto block")
 
         poll = ui.timer(3.0, refresh)
         poll.active = True

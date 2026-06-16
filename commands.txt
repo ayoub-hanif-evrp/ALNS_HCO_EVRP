@@ -54,6 +54,27 @@ python main_train.py --config configs/curriculum.yaml --phase0-only
 #   Phase 4:  30 epochs on hard cases   (50% hard + 50% normal)
 python main_train.py --config configs/curriculum.yaml --curriculum
 
+# RC-only size curriculum (small RC C5/C10/C15 → full RC _21):
+python main_train.py --config configs/curriculum_rc.yaml --curriculum
+
+# Schneider dataset (legacy Solomon/Schneider conversion):
+#   dataset/Schneider/evrptw_instances
+
+# Hanif EVRPTW (variant B relaxed TW) — convert once, then train on C + R + RC:
+python scripts/convert_hanif_dataset.py
+python main_train.py --config configs/curriculum_hanif.yaml --curriculum
+python main_evaluate.py --config configs/curriculum_hanif.yaml --checkpoint outputs/checkpoints/best.pt
+python main_dashboard.py --config configs/curriculum_hanif.yaml
+
+# Schneider dataset (legacy):
+python main_train.py --config configs/curriculum_c_rc.yaml --curriculum
+python main_evaluate.py --config configs/curriculum_c_rc.yaml --checkpoint outputs/checkpoints/best.pt
+python main_dashboard.py --config configs/curriculum_c_rc.yaml
+
+# Full progressive curriculum (C → RC → R):
+python main_train.py --config configs/curriculum_progressive.yaml --curriculum
+python main_dashboard.py --config configs/curriculum_progressive.yaml
+
 # (Equivalent: a config with a 'curriculum:' block auto-runs curriculum mode.)
 python main_train.py --config configs/curriculum.yaml
 
@@ -62,7 +83,7 @@ python main_train.py --config configs/curriculum.yaml --curriculum --force
 
 # Checkpoints saved by the curriculum:
 #   best.pt / best_overall.pt, best_C.pt, best_R.pt, best_RC.pt,
-#   best_feasibility.pt, last.pt
+#   best_feasibility.pt, phase_C_best.pt, phase_RC_best.pt, last.pt
 # Validation score used for "best": cost + 10000 * (1 - feasibility_rate)
 
 

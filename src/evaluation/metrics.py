@@ -36,6 +36,7 @@ def build_result_row(
         "total_duration": round(summary.total_duration, 4),
         "total_waiting_time": round(summary.total_waiting_time, 4),
         "total_charging_time": round(summary.total_charging_time, 4),
+        "total_charging_price": round(summary.total_charging_price, 4),
         "number_of_station_visits": station_visits,
         "number_of_unserved_customers": summary.unserved_customers,
         "number_of_reserved_unfinished_customers": summary.unresolved_reserved_customers,
@@ -69,6 +70,7 @@ def build_routes(instance, env: EVRPTWEnv) -> dict:
             "duration": round(duration, 4),
             "waiting_time": round(ev.total_waiting_time, 4),
             "charging_time": round(ev.total_charging_time, 4),
+            "charging_price": round(ev.total_charging_price, 4),
             "finished_at_depot": ev.finished and ev.current_node == instance.depot_index,
         })
     return {

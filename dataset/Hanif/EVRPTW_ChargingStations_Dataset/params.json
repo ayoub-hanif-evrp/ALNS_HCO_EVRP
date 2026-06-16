@@ -1,0 +1,18 @@
+{
+  "num_stations": 333,
+  "d_sep": 10.0,
+  "r_min": 0.5,
+  "r_max": 2.0,
+  "p_min": 0.1,
+  "p_max": 1.0,
+  "w_min": 1.0,
+  "w_max": 30.0,
+  "cv_price": 0.2,
+  "cv_wait": 0.3,
+  "K": 5,
+  "R_factor": 0.1,
+  "R_near": 300,
+  "R_medium": 500,
+  "R_far": 800,
+  "seed": 42
+}

@@ -19,3 +19,7 @@ outputs/logs/train_log.jsonl
 
 # Per-run archives can be regenerated; keep the repo lean.
 outputs/runs/
+
+# Pre-converted Hanif NPZ cache (~1GB); regenerate with:
+#   python scripts/convert_hanif_dataset.py
+dataset/converted_hanif_data/
