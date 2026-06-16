@@ -128,6 +128,8 @@ Progressive curriculum **C → RC → R** on 1000-customer instances:
 python main_train.py --config configs/curriculum_hanif.yaml --curriculum
 ```
 
+`curriculum_hanif.yaml` sets `validate_during_training: false` — training runs straight through the curriculum with no gate checks or fleet-size validation pauses. Evaluate afterward with `main_evaluate.py` (see §6).
+
 Equivalent alias:
 
 ```powershell
@@ -151,12 +153,11 @@ python main_train.py --config configs/curriculum_hanif.yaml --curriculum --force
 
 #### Checkpoints saved during curriculum
 
-- `best.pt`, `best_overall.pt`
-- `best_C.pt`, `best_R.pt`, `best_RC.pt`
-- `best_feasibility.pt`
-- `phase_*_best.pt`, `last.pt`
+- `last.pt` — final weights after training (use this when validation is disabled)
+- `phase_*_best.pt` — end of each progressive class block (C, RC, R)
+- With `validate_during_training: true`: also `best.pt`, `best_C.pt`, `best_R.pt`, `best_RC.pt`, `best_feasibility.pt`
 
-Validation score: `cost + 10000 × (1 − feasibility_rate)`
+Validation score (when enabled): `cost + 10000 × (1 − feasibility_rate)`
 
 ---
 
@@ -203,10 +204,10 @@ Greedy decode + fleet-size search + baselines:
 python main_evaluate.py --config configs/curriculum_hanif.yaml
 ```
 
-Specific checkpoint:
+Specific checkpoint (after train-only run, use `last.pt`):
 
 ```powershell
-python main_evaluate.py --config configs/curriculum_hanif.yaml --checkpoint outputs/checkpoints/best.pt
+python main_evaluate.py --config configs/curriculum_hanif.yaml --checkpoint outputs/checkpoints/last.pt
 ```
 
 Force CPU:

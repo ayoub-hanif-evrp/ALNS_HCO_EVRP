@@ -230,6 +230,7 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
     batch_size = int(tcfg["batch_size"])
+    validate_during_training = bool(tcfg.get("validate_during_training", True))
     validate_every = int(tcfg.get("validate_every", 10))
     val_decoding = config["evaluation"].get("decoding", "greedy")
     val_n_samples = int(config["evaluation"].get("multi_sample_n", 16))
@@ -281,6 +282,15 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
         for k, v in (ccfg.get("min_class_feasibility") or {}).items()
     }
     gate_max_retries = int(ccfg.get("gate_max_retries", 2))
+
+    if not validate_during_training:
+        validate_every = 0
+        min_class_feasibility = {}
+        early_stop_patience = 0
+        LOGGER.info(
+            "Validation during training is disabled — training only. "
+            "Run main_evaluate.py on outputs/checkpoints/last.pt when done."
+        )
 
     if progressive_mode:
         class_order = [c.upper() for c in ccfg.get("class_order", ["C", "RC", "R"])]
@@ -369,6 +379,8 @@ def train_curriculum(config: dict, run_phase0: bool = True, force: bool = False)
     _CLASS_PHASE_ID = {"C": 1, "R": 2, "RC": 3}
 
     def _run_validation(step_ctx, ge: int) -> dict:
+        if not validate_during_training:
+            return {}
         nonlocal best_val_score, best_val_feasibility, val_no_improve
         val = validate(
             eval_ds, eval_groups, policy, weights,

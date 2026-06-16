@@ -49,9 +49,10 @@ training:
   served_progress_bonus: 50.0
   early_stop_patience: 8
   early_stop_metric: feasibility
-  validate_every: 20
+  validate_during_training: false  # train only; evaluate with main_evaluate.py
+  validate_every: 0
   val_max_per_class: 2
-  run_final_eval: true
+  run_final_eval: false
   log_every: 1
 
 curriculum:
@@ -72,8 +73,8 @@ curriculum:
       full: 2
   shuffle_within_class: false
   reload_phase_checkpoint: true
-  min_class_feasibility:
-    C: 0.25
+  # min_class_feasibility gates require validate_during_training: true
+  min_class_feasibility: {}
   gate_max_retries: 2
   extra_margin_by_class:
     C: 10

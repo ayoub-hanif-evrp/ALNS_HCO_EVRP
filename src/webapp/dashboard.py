@@ -6,7 +6,7 @@ from . import _compat  # noqa: F401
 
 from pathlib import Path
 
-from nicegui import ui
+from nicegui import context, ui
 
 from src.webapp.dashboard_charts import TRAINING_CHART_SECTIONS, build_chart_figure, is_wide_chart
 from src.webapp.dashboard_data import (
@@ -130,6 +130,14 @@ def _section_nav_link(section: dict) -> None:
     )
 
 
+def _client_connected(*containers) -> bool:
+    """True when the browser tab is still connected (avoid clear() after disconnect)."""
+    client = context.client
+    if client is None or not client.has_socket_connection:
+        return False
+    return all(not c.is_deleted for c in containers)
+
+
 def create_dashboard(
     log_path: str | Path,
     *,
@@ -163,6 +171,9 @@ def create_dashboard(
         charts_panel = ui.column().classes(_PAGE + " pb-12")
 
         def refresh() -> None:
+            if not _client_connected(status_panel, charts_panel):
+                poll.active = False
+                return
             cfg = load_run_config(outputs_root, config_path)
             status = load_status(log_path, cfg)
             meta = load_run_meta(outputs_root)
@@ -270,4 +281,5 @@ def create_dashboard(
         poll = ui.timer(3.0, refresh)
         poll.active = True
         auto.on("update:model-value", lambda e: setattr(poll, "active", bool(e.value)))
+        context.client.on_disconnect(lambda: setattr(poll, "active", False))
         ui.timer(0.1, refresh, once=True)
