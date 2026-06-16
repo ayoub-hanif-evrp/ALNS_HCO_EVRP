@@ -1,4 +1,4 @@
-# Python
+# Python caches and local virtualenvs (root only — do not match src/env/)
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -6,20 +6,11 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-env/
+/env/
 
 # OS / editor
 .DS_Store
 Thumbs.db
 
-# Training artifacts: keep results, figures and the key checkpoints,
-# but skip the noisy intermediate per-epoch checkpoints and live log.
+# Optional: skip intermediate per-epoch checkpoints only
 outputs/checkpoints/epoch_*.pt
-outputs/logs/train_log.jsonl
-
-# Per-run archives can be regenerated; keep the repo lean.
-outputs/runs/
-
-# Pre-converted Hanif NPZ cache (~1GB); regenerate with:
-#   python scripts/convert_hanif_dataset.py
-dataset/converted_hanif_data/
