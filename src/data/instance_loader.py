@@ -220,7 +220,7 @@ def summarize_vehicle_params(dataset_path: str | Path, names: list[str]) -> str:
 
 
 def expected_lognormal_mean(mu: float, sigma: float) -> float:
-    """Expected value E[X] for X ~ LogNormal(mu, sigma) (Hanif station price)."""
+    """Expected value E[X] for X ~ LogNormal(mu, sigma) (station price)."""
     return float(np.exp(mu + 0.5 * sigma ** 2))
 
 

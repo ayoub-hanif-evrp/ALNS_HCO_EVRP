@@ -32,21 +32,37 @@ model:
   feedforward_dim: 768    # was 512 (4× embedding_dim)
   dropout: 0.1
   use_ev_communication: true
+  edge_features: [distance, travel_time, energy]
+  edge_bias_hidden_dim: 64
+  edge_bias_per_head: true
 
 training:
-  method: reinforce
+  method: actor_critic
   epochs: 100
   batch_size: 8
   learning_rate: 0.0001
   entropy_coef: 0.01
   grad_clip: 1.0
-  baseline: moving_average
-  baseline_beta: 0.9
-  reward_scale: 1000.0       # R_train = -J / reward_scale (keeps gradients stable)
-  normalize_advantage: true   # batch z-score of advantages before policy loss
-  use_fleet_search: false  # training uses fixed m = m_min for speed
+  reward_scale: 1000.0
+  use_fleet_search: false
   checkpoint_every: 10
   log_every: 1
+
+rl:
+  gamma: 1.0
+  critic_coef: 0.5
+  q_critic_coef: 0.5
+  critic_learning_rate: 0.0001
+  gae_lambda: 0.95
+  counterfactual_mix: 0.5
+  potential_eta_served: 5.0
+  potential_eta_remaining_demand: 2.0
+  potential_eta_battery_risk: 3.0
+  potential_eta_time_risk: 3.0
+  battery_safe_ratio: 0.2
+  pomo_K: 4
+  pomo_mix_rho: 0.1
+  normalize_advantages: true
 
 decoding:
   mode: sampling  # greedy | sampling | multi_sample
@@ -72,6 +88,8 @@ cost:
 evaluation:
   decoding: greedy
   multi_sample_n: 16
+  local_search:
+    max_iterations: 50
   save_routes: true
   save_figures: true
 

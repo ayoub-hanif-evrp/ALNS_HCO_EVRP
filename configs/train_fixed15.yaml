@@ -8,27 +8,38 @@ device: cuda
 deterministic: false
 
 dataset:
-  path: dataset/converted_hanif_data
+  path: dataset/Schneider/evrptw_instances
   # Leave empty to auto-pick first 5 per class (sorted by name); or list exact names:
   fixed_train_instances: {}
 
 training:
-  method: reinforce
-  algorithm: masked_reinforce
-  baseline: moving_average
-  baseline_beta: 0.9
+  method: actor_critic
   learning_rate: 0.0001
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
   reward_scale: 1000.0
-  normalize_advantage: true
-  served_progress_bonus: 50.0
   validate_during_training: false
   validate_every: 0
   run_final_eval: false
   log_every: 1
   min_decisions_warn: 10
+
+rl:
+  gamma: 1.0
+  critic_coef: 0.5
+  q_critic_coef: 0.5
+  critic_learning_rate: 0.0001
+  gae_lambda: 0.95
+  counterfactual_mix: 0.5
+  potential_eta_served: 5.0
+  potential_eta_remaining_demand: 2.0
+  potential_eta_battery_risk: 3.0
+  potential_eta_time_risk: 3.0
+  battery_safe_ratio: 0.2
+  pomo_K: 4
+  pomo_mix_rho: 0.1
+  normalize_advantages: true
 
 curriculum:
   mode: fixed_mini
@@ -51,6 +62,9 @@ model:
   feedforward_dim: 768
   dropout: 0.1
   use_ev_communication: true
+  edge_features: [distance, travel_time, energy]
+  edge_bias_hidden_dim: 64
+  edge_bias_per_head: true
 
 decoding:
   mode: sampling

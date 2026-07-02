@@ -73,6 +73,7 @@ class CsvLogger:
         self.path.write_text("", encoding="utf-8")
 
     def log(self, record: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         for key in record:
             if key not in self._fieldnames:
                 self._fieldnames.append(key)

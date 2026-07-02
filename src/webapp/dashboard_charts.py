@@ -9,12 +9,20 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from src.webapp.dashboard_data import COST_COLUMNS, COST_OBJECTIVE_TERMS, COST_PENALTY_TERMS
+from src.webapp.dashboard_data import (
+    COST_COLUMNS,
+    COST_OBJECTIVE_TERMS,
+    COST_PENALTY_TERMS,
+    cycle_aggregate_df,
+    cycle_column,
+)
 from src.webapp.plot_style import (
     CLASS_COLORS,
     CLASS_ORDER,
     COMPONENT_COLORS,
+    CURRICULUM_STAGE_COLORS,
     OVERALL_LINE_COLOR,
+    curriculum_stage_color,
 )
 
 CHART_LAYOUT = dict(
@@ -60,6 +68,597 @@ def _marker_colors(df: pd.DataFrame) -> list[str]:
     return [CLASS_COLORS.get(str(c).upper(), "#64748b") for c in df[col]]
 
 
+def _x_epoch(df: pd.DataFrame) -> pd.Series:
+    if "epoch" in df.columns:
+        return df["epoch"]
+    return _x_series(df)
+
+
+def _overall_rolling_col(col: str) -> str:
+    """Prepared global rolling-mean column for a metric."""
+    aliases = {
+        "raw_episode_return": "rolling_raw_return_mean",
+        "reward": "rolling_raw_return_mean",
+        "served_rate": "rolling_served_ratio_mean",
+        "served_ratio": "rolling_served_ratio_mean",
+    }
+    if col in aliases:
+        return aliases[col]
+    return f"rolling_{col}_mean"
+
+
+def _rolling_series(df: pd.DataFrame, col: str, plan: dict) -> pd.Series | None:
+    """Rolling mean for ``col``, with on-the-fly fallback when not precomputed."""
+    if col not in df.columns:
+        return None
+    roll_col = _overall_rolling_col(col)
+    if roll_col in df.columns:
+        return df[roll_col].astype(float)
+    alt = f"rolling_{col}_mean"
+    if alt in df.columns:
+        return df[alt].astype(float)
+    w = max(1, int(plan.get("ma_window") or 20))
+    return df[col].astype(float).rolling(window=w, min_periods=1).mean()
+
+
+def add_pass_boundaries(fig: go.Figure, df: pd.DataFrame, *, max_x: float | None = None) -> None:
+    """Light vertical lines at training-pass boundaries (no colored bands)."""
+    if df.empty or "training_cycle" not in df.columns:
+        return
+    mx = max_x if max_x is not None else float(_x_epoch(df).max())
+    x = _x_epoch(df).to_numpy()
+    cycles = df["training_cycle"].astype(int).to_numpy()
+    for i in range(1, len(cycles)):
+        if cycles[i] != cycles[i - 1]:
+            boundary = float(x[i]) - 0.5
+            if 0 < boundary <= mx + 0.5:
+                fig.add_vline(
+                    x=boundary,
+                    line_dash="dot",
+                    line_color="#cbd5e1",
+                    line_width=1,
+                    opacity=0.8,
+                )
+
+
+def add_training_regions(fig: go.Figure, df: pd.DataFrame, plan: dict, *, max_x: float | None = None) -> None:
+    if plan.get("training_mode") == "flat" and "training_cycle" in df.columns:
+        add_pass_boundaries(fig, df, max_x=max_x)
+    else:
+        add_chart_regions(fig, df, max_x=max_x)
+
+
+def fig_series_ma(
+    df: pd.DataFrame,
+    col: str,
+    plan: dict,
+    *,
+    title: str,
+    ylabel: str,
+    y_range: tuple[float, float] | None = None,
+) -> go.Figure:
+    fig = go.Figure()
+    if df.empty or col not in df.columns:
+        fig.update_layout(**_chart_layout())
+        fig.add_annotation(text="No data", showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        return fig
+    x = _x_epoch(df)
+    y = df[col].astype(float)
+    ma = _rolling_series(df, col, plan)
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=y, mode="markers", name="Per epoch",
+            marker=dict(size=4, color="#94a3b8", opacity=0.45),
+        )
+    )
+    if ma is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=ma, mode="lines", name="Moving average",
+                line=dict(color="#2563eb", width=2.5),
+            )
+        )
+    add_training_regions(fig, df, plan)
+    layout = _chart_layout_embedded(xaxis_title="Training epoch", yaxis_title=ylabel)
+    if y_range:
+        layout["yaxis"] = dict(range=list(y_range))
+    fig.update_layout(**layout)
+    return fig
+
+
+def fig_feasibility_ma(df: pd.DataFrame, plan: dict, *, title: str) -> go.Figure:
+    col = "feasibility_rate"
+    fig = go.Figure()
+    if df.empty or col not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    x = _x_epoch(df)
+    roll = "rolling_feasibility_rate_mean"
+    if roll in df.columns:
+        y = df[roll]
+    else:
+        w = max(1, int(plan.get("ma_window") or 20))
+        y = df[col].astype(float).rolling(window=w, min_periods=1).mean()
+    fig.add_trace(
+        go.Scatter(x=x, y=y, mode="lines", name="Feasibility MA", line=dict(color="#16a34a", width=2.5))
+    )
+    add_training_regions(fig, df, plan)
+    fig.update_layout(
+        **_chart_layout_embedded(
+            xaxis_title="Training epoch",
+            yaxis_title="Feasibility rate",
+            yaxis=dict(range=[-0.05, 1.05]),
+        )
+    )
+    return fig
+
+
+def fig_multi_series_ma(
+    df: pd.DataFrame,
+    series: list[tuple[str, str]],
+    plan: dict,
+    *,
+    title: str,
+    ylabel: str,
+) -> go.Figure:
+    fig = go.Figure()
+    avail = [(c, l) for c, l in series if c in df.columns and df[c].notna().any()]
+    if df.empty or not avail:
+        fig.update_layout(**_chart_layout())
+        fig.add_annotation(text="No data", showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        return fig
+    x = _x_epoch(df)
+    colors = ["#dc2626", "#d97706", "#16a34a", "#7c3aed", "#0891b2", "#64748b"]
+    for i, (col, label) in enumerate(avail):
+        ma = _rolling_series(df, col, plan)
+        y = ma if ma is not None else df[col].astype(float)
+        fig.add_trace(
+            go.Scatter(x=x, y=y, mode="lines", name=label, line=dict(color=colors[i % len(colors)], width=2))
+        )
+    add_training_regions(fig, df, plan)
+    fig.update_layout(**_chart_layout_embedded(xaxis_title="Training epoch", yaxis_title=ylabel))
+    return fig
+
+
+def fig_cycle_multi_lines(
+    df: pd.DataFrame,
+    cols: list[tuple[str, str]],
+    plan: dict,
+    *,
+    title: str,
+    ylabel: str,
+) -> go.Figure:
+    del plan
+    cyc = cycle_aggregate_df(df)
+    avail = [(c, l) for c, l in cols if c in cyc.columns]
+    fig = go.Figure()
+    if cyc.empty or not avail:
+        fig.update_layout(**_chart_layout())
+        return fig
+    colors = ["#2563eb", "#16a34a", "#d97706", "#7c3aed"]
+    for i, (col, label) in enumerate(avail):
+        fig.add_trace(
+            go.Scatter(
+                x=cyc["cycle"], y=cyc[col], mode="lines+markers", name=label,
+                line=dict(color=colors[i % len(colors)], width=2),
+            )
+        )
+    fig.update_layout(**_chart_layout_embedded(xaxis_title="Training cycle", yaxis_title=ylabel))
+    return fig
+
+
+def fig_heatmap_instance_cycle(
+    df: pd.DataFrame,
+    value_col: str,
+    plan: dict,
+    *,
+    title: str,
+) -> go.Figure:
+    del plan
+    fig = go.Figure()
+    if df.empty or value_col not in df.columns or "instance_name" not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    work = df.copy()
+    work["_cycle"] = cycle_column(work)
+    pivot = work.pivot_table(index="instance_name", columns="_cycle", values=value_col, aggfunc="mean")
+    if pivot.empty:
+        fig.update_layout(**_chart_layout())
+        return fig
+    pivot = pivot.sort_index()
+    fig.add_trace(
+        go.Heatmap(
+            z=pivot.to_numpy(dtype=float),
+            x=[str(c) for c in pivot.columns],
+            y=list(pivot.index),
+            colorscale="YlOrRd_r",
+            colorbar=dict(title=value_col),
+        )
+    )
+    fig.update_layout(
+        **_chart_layout(
+            title=title,
+            xaxis_title="Training cycle",
+            yaxis_title="Instance",
+            height=max(360, 18 * len(pivot)),
+        )
+    )
+    return fig
+
+
+def fig_final_cycle_instance_bar(df: pd.DataFrame, cost_col: str, plan: dict, *, title: str) -> go.Figure:
+    del plan
+    fig = go.Figure()
+    if df.empty or cost_col not in df.columns or "instance_name" not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    cycles = cycle_column(df)
+    last_cycle = int(cycles.max())
+    final = df[cycles == last_cycle]
+    if final.empty:
+        fig.update_layout(**_chart_layout())
+        return fig
+    inst_mean = final.groupby("instance_name")[cost_col].mean().sort_values(ascending=True)
+    fig.add_trace(
+        go.Bar(
+            x=inst_mean.to_numpy(),
+            y=list(inst_mean.index),
+            orientation="h",
+            marker_color="#dc2626",
+        )
+    )
+    fig.update_layout(
+        **_chart_layout_embedded(
+            xaxis_title="Mean objective",
+            yaxis_title="Instance",
+            height=max(360, 18 * len(inst_mean)),
+        )
+    )
+    return fig
+
+
+def _violation_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("unserved_customers", "unserved"),
+        ("avg_battery_violation", "battery"),
+        ("avg_lateness", "time window"),
+        ("avg_capacity_violation", "capacity"),
+        ("avg_depot_violation", "depot return"),
+        ("avg_duplicate_visits", "duplicate"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series[:6]
+
+
+def _loss_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("actor_loss", "actor"),
+        ("critic_loss", "critic"),
+        ("total_loss", "total"),
+        ("q_critic_loss", "Q critic"),
+        ("loss", "combined"),
+    ]:
+        if col in df.columns and df[col].astype(float).abs().sum() > 0:
+            series.append((col, label))
+    return series
+
+
+def _stability_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("grad_norm", "grad norm"),
+        ("learning_rate", "learning rate"),
+        ("cuda_max_mem_allocated_mb", "peak GPU MB"),
+        ("cuda_mem_allocated_mb", "GPU allocated MB"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series
+
+
+def _objective_component_specs(df: pd.DataFrame) -> list[dict[str, Any]]:
+    pairs = [
+        ("avg_distance", "distance"),
+        ("avg_duration", "duration"),
+        ("avg_charging_time", "charging time"),
+        ("avg_charging_price", "charging cost"),
+        ("avg_waiting_time", "waiting time"),
+    ]
+    avail = [(c, l) for c, l in pairs if c in df.columns]
+    if len(avail) < 2:
+        return []
+    scales = [float(df[c].astype(float).std()) for c, _ in avail]
+    if max(scales) > 10 * max(min(scales), 1e-9):
+        specs: list[dict[str, Any]] = []
+        dd = [(c, l) for c, l in avail if c in ("avg_distance", "avg_duration")]
+        cw = [(c, l) for c, l in avail if c not in ("avg_distance", "avg_duration")]
+        if dd:
+            specs.append({
+                "type": "multi_series_ma",
+                "series": dd,
+                "title": "Distance and duration",
+                "ylabel": "Value",
+                "wide": True,
+            })
+        if cw:
+            specs.append({
+                "type": "multi_series_ma",
+                "series": cw,
+                "title": "Charging and waiting",
+                "ylabel": "Value",
+                "wide": True,
+            })
+        return specs
+    return [{
+        "type": "multi_series_ma",
+        "series": avail,
+        "title": "Objective components",
+        "ylabel": "Value",
+        "wide": True,
+    }]
+
+
+def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
+    """Live monitor sections grouped by domain (solution, network, EVRP, MARL, schedule)."""
+    cost_col = "cost" if "cost" in df.columns else ("mean_J" if "mean_J" in df.columns else None)
+    viol = _violation_series(df)
+    losses = _loss_series(df)
+    gpu_cols = [(c, l) for c, l in [
+        ("cuda_max_mem_allocated_mb", "peak GPU MB"),
+        ("cuda_mem_allocated_mb", "GPU allocated MB"),
+    ] if c in df.columns and df[c].notna().any()]
+
+    sections: list[dict[str, Any]] = [
+        {
+            "id": "solution_quality",
+            "title": "Solution quality",
+            "nav": "Solution",
+            "subtitle": "EVRP objective cost and scaled training reward — is the policy improving solutions?",
+            "charts": [
+                *([{
+                    "type": "series_ma",
+                    "col": cost_col,
+                    "title": "Training objective over epochs",
+                    "desc": "Final objective cost per epoch with moving average.",
+                    "ylabel": "Objective J",
+                    "wide": True,
+                }] if cost_col else []),
+                {
+                    "type": "series_ma",
+                    "col": "reward",
+                    "title": "Episode return over epochs",
+                    "desc": "Actor-critic learning signal (scaled reward) with moving average.",
+                    "ylabel": "Episode return",
+                    "wide": True,
+                },
+            ],
+        },
+        {
+            "id": "network_training",
+            "title": "Neural network training",
+            "nav": "Network",
+            "subtitle": "Actor-critic optimization — losses, exploration, critic fit, gradients, learning rate.",
+            "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": losses,
+                    "title": "Actor-critic losses",
+                    "desc": "Actor, critic, and total loss over training epochs.",
+                    "ylabel": "Loss",
+                    "wide": True,
+                }] if losses else []),
+                {
+                    "type": "series_ma",
+                    "col": "entropy",
+                    "title": "Policy entropy",
+                    "desc": "Exploration — entropy should not collapse too early.",
+                    "ylabel": "Entropy",
+                },
+                {
+                    "type": "series_ma",
+                    "col": "critic_explained_variance",
+                    "title": "Critic explained variance",
+                    "desc": "How well the critic predicts returns.",
+                    "ylabel": "Explained variance",
+                },
+                {
+                    "type": "series_ma",
+                    "col": "advantage",
+                    "title": "Advantage magnitude",
+                    "desc": "Mean advantage signal driving policy updates.",
+                    "ylabel": "Advantage",
+                },
+                {
+                    "type": "series_ma",
+                    "col": "grad_norm",
+                    "title": "Gradient norm",
+                    "desc": "Gradient magnitude before clipping — instability indicator.",
+                    "ylabel": "‖∇‖",
+                },
+                {
+                    "type": "series_ma",
+                    "col": "learning_rate",
+                    "title": "Learning rate",
+                    "desc": "Optimizer learning rate schedule.",
+                    "ylabel": "LR",
+                },
+                *([{
+                    "type": "multi_series_ma",
+                    "series": gpu_cols,
+                    "title": "GPU memory",
+                    "desc": "CUDA memory usage during training.",
+                    "ylabel": "MB",
+                    "wide": True,
+                }] if gpu_cols else []),
+            ],
+        },
+        {
+            "id": "feasibility",
+            "title": "EVRP feasibility & constraints",
+            "nav": "Feasibility",
+            "subtitle": "Whether solutions respect time windows, battery, capacity, and serve all customers.",
+            "charts": [
+                {
+                    "type": "feasibility_ma",
+                    "title": "Feasibility moving average",
+                    "desc": "Share of feasible training episodes (smoothed).",
+                    "wide": True,
+                },
+                {
+                    "type": "series_ma",
+                    "col": "served_rate",
+                    "title": "Served-customer ratio",
+                    "desc": "Fraction of customers served per episode.",
+                    "ylabel": "Served ratio",
+                    "y_range": (0, 1.05),
+                    "wide": True,
+                },
+                *([{
+                    "type": "multi_series_ma",
+                    "series": viol,
+                    "title": "Constraint violations",
+                    "desc": "Unserved, battery, time window, capacity, depot, duplicate visits.",
+                    "ylabel": "Violation magnitude",
+                    "wide": True,
+                }] if viol else []),
+            ],
+        },
+        {
+            "id": "operations",
+            "title": "Fleet & routing operations",
+            "nav": "Operations",
+            "subtitle": "Fleet size, travel, charging, and waiting — operational EVRP behavior.",
+            "charts": [
+                {
+                    "type": "series_ma",
+                    "col": "avg_used_evs",
+                    "title": "Number of used EVs",
+                    "desc": "Fleet size used per training episode.",
+                    "ylabel": "Used EVs",
+                    "wide": True,
+                },
+                *_objective_component_specs(df),
+                {
+                    "type": "series_ma",
+                    "col": "charging_station_visits",
+                    "title": "Charging-station visits",
+                    "desc": "Station visits per training episode.",
+                    "ylabel": "Visits",
+                },
+                *([{
+                    "type": "multi_series_ma",
+                    "series": charge_effort,
+                    "title": "Charging effort",
+                    "desc": "Total charging time and monetary charging cost.",
+                    "ylabel": "Value",
+                }] if (charge_effort := [
+                    (c, l) for c, l in [
+                        ("avg_charging_time", "charging time"),
+                        ("avg_charging_price", "charging cost"),
+                    ] if c in df.columns
+                ]) else []),
+                {
+                    "type": "series_ma",
+                    "col": "min_remaining_battery",
+                    "title": "Minimum battery level",
+                    "desc": "Minimum remaining battery at episode end.",
+                    "ylabel": "Battery level",
+                },
+            ],
+        },
+        {
+            "id": "marl",
+            "title": "Multi-agent MARL",
+            "nav": "MARL",
+            "subtitle": "Coordination across EV agents and action-mask restrictiveness.",
+            "charts": [
+                {
+                    "type": "series_ma",
+                    "col": "route_balance_cv",
+                    "title": "Fleet route balance",
+                    "desc": "std(route distance per EV) / mean — lower means better load sharing.",
+                    "ylabel": "Route balance (CV)",
+                    "wide": True,
+                },
+                {
+                    "type": "series_ma",
+                    "col": "feasible_action_ratio",
+                    "title": "Feasible action ratio",
+                    "desc": "Average fraction of nodes with at least one feasible action per step.",
+                    "ylabel": "Ratio",
+                    "y_range": (0, 1.05),
+                    "wide": True,
+                },
+            ],
+        },
+        {
+            "id": "cycles",
+            "title": "Training schedule (per cycle)",
+            "nav": "Cycles",
+            "subtitle": f"One cycle = all {plan.get('n_train_instances', 20)} training instances once "
+                          f"({plan.get('passes', 20)} cycles total). Dotted lines mark pass boundaries on epoch charts.",
+            "charts": [
+                {
+                    "type": "cycle_lines",
+                    "cols": [("cost", "mean objective")],
+                    "title": "Cycle-level objective",
+                    "ylabel": "Mean objective",
+                    "wide": True,
+                },
+                {
+                    "type": "cycle_lines",
+                    "cols": [("feasibility_rate", "feasibility"), ("served_rate", "served ratio")],
+                    "title": "Cycle-level feasibility & served ratio",
+                    "ylabel": "Rate",
+                    "wide": True,
+                },
+                {
+                    "type": "cycle_lines",
+                    "cols": [
+                        ("avg_violation", "total violation"),
+                        ("unserved_customers", "unserved"),
+                        ("avg_battery_violation", "battery"),
+                        ("avg_lateness", "time window"),
+                    ],
+                    "title": "Cycle-level violations",
+                    "ylabel": "Mean violation",
+                    "wide": True,
+                },
+                *([{
+                    "type": "heatmap",
+                    "col": cost_col,
+                    "title": "Per-instance objective across cycles",
+                    "wide": True,
+                }] if cost_col else []),
+                {
+                    "type": "heatmap",
+                    "col": "feasibility_rate",
+                    "title": "Per-instance feasibility across cycles",
+                    "wide": True,
+                },
+                *([{
+                    "type": "final_cycle_bar",
+                    "col": cost_col,
+                    "title": "Final-cycle objective by instance",
+                    "desc": "Hardest training instances in the last pass.",
+                    "wide": True,
+                }] if cost_col else []),
+            ],
+        },
+    ]
+    return sections
+
+
+def get_training_chart_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
+    """Pick live dashboard sections for the active training mode."""
+    if plan.get("training_mode") == "flat":
+        return build_flat_training_sections(df, plan)
+    return TRAINING_CHART_SECTIONS
+
+
 def class_contiguous_regions(df: pd.DataFrame) -> list[tuple[float, float, str]]:
     """Return (x0, x1, class) for each contiguous class block in iteration order."""
     if df.empty or "instance_class" not in df.columns:
@@ -92,6 +691,92 @@ def add_class_regions(fig: go.Figure, df: pd.DataFrame, *, max_x: float | None =
         )
 
 
+def _curriculum_stage_col(df: pd.DataFrame) -> str | None:
+    if "curriculum_stage" in df.columns and df["curriculum_stage"].notna().any():
+        return "curriculum_stage"
+    if "phase_name" in df.columns and df["phase_name"].notna().any():
+        return "phase_name"
+    return None
+
+
+def curriculum_contiguous_regions(df: pd.DataFrame) -> list[tuple[float, float, str, int]]:
+    """Return (x0, x1, stage_name, stage_index) for each curriculum block."""
+    col = _curriculum_stage_col(df)
+    if col is None or df.empty:
+        return []
+    x = _x_series(df).to_numpy()
+    stages = df[col].astype(str).to_numpy()
+    regions: list[tuple[float, float, str, int]] = []
+    start = 0
+    stage_idx = 1
+    for i in range(1, len(stages) + 1):
+        if i == len(stages) or stages[i] != stages[start]:
+            regions.append((float(x[start]) - 0.5, float(x[i - 1]) + 0.5, stages[start], stage_idx))
+            start = i
+            stage_idx += 1
+    return regions
+
+
+def add_curriculum_stage_regions(
+    fig: go.Figure,
+    df: pd.DataFrame,
+    *,
+    max_x: float | None = None,
+    show_legend: bool = True,
+) -> None:
+    """Shade curriculum stages with distinct colors and boundary lines."""
+    mx = max_x if max_x is not None else float(_x_series(df).max())
+    seen_legend: set[str] = set()
+    for x0, x1, stage_name, stage_idx in curriculum_contiguous_regions(df):
+        if x0 > mx + 1:
+            break
+        color = curriculum_stage_color(stage_name, stage_idx)
+        fig.add_vrect(
+            x0=x0,
+            x1=min(x1, mx + 0.5),
+            fillcolor=color,
+            opacity=0.12,
+            layer="below",
+            line_width=0,
+        )
+        if x0 > 0.5:
+            fig.add_vline(x=x0 + 0.5, line_dash="dash", line_color=color, line_width=1.5, opacity=0.65)
+        if show_legend and stage_name not in seen_legend:
+            seen_legend.add(stage_name)
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=stage_name.replace("_", " "),
+                    marker=dict(size=10, color=color, symbol="square"),
+                )
+            )
+
+
+def add_chart_regions(fig: go.Figure, df: pd.DataFrame, *, max_x: float | None = None) -> None:
+    """Prefer curriculum-stage shading when logged; else class C/R/RC bands."""
+    if _curriculum_stage_col(df) is not None:
+        add_curriculum_stage_regions(fig, df, max_x=max_x)
+    else:
+        add_class_regions(fig, df, max_x=max_x)
+
+
+def _stage_marker_colors(df: pd.DataFrame) -> list[str]:
+    col = _curriculum_stage_col(df)
+    if col is None:
+        return _marker_colors(df)
+    colors: list[str] = []
+    stage_ids: dict[str, int] = {}
+    next_id = 1
+    for name in df[col].astype(str):
+        if name not in stage_ids:
+            stage_ids[name] = next_id
+            next_id += 1
+        colors.append(curriculum_stage_color(name, stage_ids[name]))
+    return colors
+
+
 def _add_class_markers(fig: go.Figure, df: pd.DataFrame, col: str) -> None:
     """Faint per-step markers colored by instance class (no connecting line)."""
     if df.empty or col not in df.columns:
@@ -102,7 +787,7 @@ def _add_class_markers(fig: go.Figure, df: pd.DataFrame, col: str) -> None:
             y=df[col],
             mode="markers",
             name="Per step",
-            marker=dict(size=5, color=_marker_colors(df), opacity=0.35),
+            marker=dict(size=5, color=_stage_marker_colors(df), opacity=0.35),
             hovertemplate="Step %{x}<br>%{y:.4g}<extra></extra>",
             showlegend=True,
         )
@@ -141,7 +826,7 @@ def fig_class_time_series(
             )
         )
 
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     layout = _chart_layout(
         title=title,
         xaxis_title="Iteration",
@@ -153,17 +838,6 @@ def fig_class_time_series(
         layout["yaxis"] = dict(type="log")
     fig.update_layout(**layout)
     return fig
-
-
-def _overall_rolling_col(col: str) -> str:
-    """Prepared global rolling-mean column for a metric."""
-    aliases = {
-        "raw_episode_return": "rolling_raw_return_mean",
-        "reward": "rolling_raw_return_mean",
-    }
-    if col in aliases:
-        return aliases[col]
-    return f"rolling_{col}_mean"
 
 
 def fig_metric_with_rolling_band(
@@ -248,7 +922,7 @@ def fig_metric_with_rolling_band(
                 )
             )
 
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     layout = _chart_layout(title=title, xaxis_title="Iteration", yaxis_title=y_label)
     if y_range:
         layout["yaxis"] = dict(range=list(y_range))
@@ -391,7 +1065,7 @@ def fig_cost_term(df: pd.DataFrame, spec: dict) -> go.Figure:
                 y=df[col],
                 mode="markers",
                 name="Per step",
-                marker=dict(size=4, color=_marker_colors(df), opacity=0.3),
+                marker=dict(size=4, color=_stage_marker_colors(df), opacity=0.3),
             ),
             secondary_y=False,
         )
@@ -432,7 +1106,7 @@ def fig_cost_term(df: pd.DataFrame, spec: dict) -> go.Figure:
             secondary_y=True,
         )
 
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     fig.update_layout(
         **_chart_layout_embedded(
             xaxis_title="Iteration",
@@ -527,7 +1201,7 @@ def _build_cost_function_sections() -> list[dict[str, Any]]:
         _section_from_cost_terms(
             "cost_charging",
             "Charging",
-            "Charging time and Hanif station energy price — separate from route distance.",
+            "Charging time and station energy price — separate from route distance.",
             ["charging", "charging_price"],
             COST_OBJECTIVE_TERMS,
             wide=True,
@@ -614,7 +1288,7 @@ def fig_reward_components(df: pd.DataFrame, plan: dict) -> go.Figure:
             secondary_y=True,
         )
 
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     fig.update_layout(**_chart_layout(height=400, xaxis_title="Iteration"))
     fig.update_yaxes(title_text="Penalties", secondary_y=False)
     fig.update_yaxes(title_text="Objective / J", secondary_y=True, showgrid=False)
@@ -635,7 +1309,7 @@ def fig_served_coverage_pct(df: pd.DataFrame, plan: dict, *, title: str) -> go.F
             y=pct,
             mode="markers",
             name="Per step",
-            marker=dict(size=6, color=_marker_colors(df), opacity=0.4),
+            marker=dict(size=6, color=_stage_marker_colors(df), opacity=0.4),
         )
     )
     if "rolling_served_ratio_mean" in df.columns:
@@ -649,7 +1323,7 @@ def fig_served_coverage_pct(df: pd.DataFrame, plan: dict, *, title: str) -> go.F
             )
         )
 
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     fig.add_hline(y=100.0, line_dash="dot", line_color="#cbd5e1")
     fig.update_layout(
         **_chart_layout(
@@ -697,7 +1371,7 @@ def fig_cost_breakdown(df: pd.DataFrame, plan: dict) -> go.Figure:
                 line=dict(color=COMPONENT_COLORS[i % len(COMPONENT_COLORS)], width=1.5),
             )
         )
-    add_class_regions(fig, df)
+    add_chart_regions(fig, df)
     fig.update_layout(
         **_chart_layout(xaxis_title="Iteration", yaxis_title="Weighted cost", height=360)
     )
@@ -760,6 +1434,46 @@ def fig_optimization_panel(df: pd.DataFrame, plan: dict) -> go.Figure:
 
 def build_chart_figure(df: pd.DataFrame, plan: dict, spec: dict[str, Any]) -> go.Figure | None:
     t = spec.get("type", "metric")
+    if t == "series_ma":
+        col = spec.get("col", "")
+        if not col or col not in df.columns:
+            return None
+        return fig_series_ma(
+            df, col, plan,
+            title=spec.get("title", col),
+            ylabel=spec.get("ylabel", col),
+            y_range=spec.get("y_range"),
+        )
+    if t == "feasibility_ma":
+        return fig_feasibility_ma(df, plan, title=spec.get("title", "Feasibility"))
+    if t == "multi_series_ma":
+        series = spec.get("series") or []
+        if not series:
+            return None
+        return fig_multi_series_ma(
+            df, series, plan,
+            title=spec.get("title", ""),
+            ylabel=spec.get("ylabel", ""),
+        )
+    if t == "cycle_lines":
+        cols = spec.get("cols") or []
+        if not cols:
+            return None
+        return fig_cycle_multi_lines(
+            df, cols, plan,
+            title=spec.get("title", ""),
+            ylabel=spec.get("ylabel", ""),
+        )
+    if t == "heatmap":
+        col = spec.get("col", "")
+        if not col or col not in df.columns:
+            return None
+        return fig_heatmap_instance_cycle(df, col, plan, title=spec.get("title", col))
+    if t == "final_cycle_bar":
+        col = spec.get("col", "")
+        if not col or col not in df.columns:
+            return None
+        return fig_final_cycle_instance_bar(df, col, plan, title=spec.get("title", col))
     if t == "cost_term":
         return fig_cost_term(df, spec)
     if t == "cost_breakdown":
@@ -913,7 +1627,7 @@ TRAINING_CHART_SECTIONS: list[dict[str, Any]] = [
     {
         "id": "optimization",
         "title": "Policy optimization",
-        "subtitle": "REINFORCE diagnostics (not part of J). Background bands = curriculum class blocks.",
+        "subtitle": "Actor-critic diagnostics. Background bands = curriculum stage (colored) or class block.",
         "charts": [
             {"type": "optimization_panel", "title": "Optimization overview", "wide": True},
             {"type": "class_metric", "col": "loss", "title": "Total loss", "ylabel": "Loss", "wide": True},
@@ -940,6 +1654,12 @@ _WIDE_CHART_TYPES = frozenset({
     "class_bar",
     "cycle_bars",
     "class_metric",
+    "series_ma",
+    "feasibility_ma",
+    "multi_series_ma",
+    "cycle_lines",
+    "heatmap",
+    "final_cycle_bar",
 })
 
 

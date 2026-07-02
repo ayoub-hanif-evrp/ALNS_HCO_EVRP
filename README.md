@@ -2,7 +2,7 @@
 
 Research-grade reinforcement learning solver for the **Electric Vehicle Routing Problem with Time Windows and Recharging Stations (E-VRPTW)**.
 
-The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses masked **REINFORCE** with curriculum learning over instance classes **C**, **R**, and **RC**.
+The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses **centralized actor-critic** (step rewards, GAE, counterfactual Q, POMO) with curriculum learning over instance classes **C**, **R**, and **RC**.
 
 ## Features
 
@@ -30,7 +30,7 @@ Transformer_MARL_EVRP/
 │   ├── data/                 # Loaders, Hanif parser/converter, dataset splits
 │   ├── env/                  # EVRPTW environment, masks, cost function
 │   ├── models/               # Transformer policy
-│   ├── training/             # REINFORCE, curriculum, validation, Phase 0
+│   ├── training/             # Actor-critic, curriculum, validation, Phase 0
 │   ├── evaluation/           # Fleet search, baselines, metrics
 │   └── webapp/               # Live dashboard
 ├── tests/
@@ -97,11 +97,17 @@ This writes `dataset/converted_hanif_data/` (60 instances, 1000 customers each, 
 python -m pytest tests/ -v
 ```
 
-### 3. Train with progressive curriculum
+### 3. Train (C-only Hanif curriculum)
 
 ```powershell
 python main_train.py
 ```
+
+Training uses **only class C** clustered Hanif instances. Within class C, the curriculum tiers are **C1_*** (easier) and **C2_*** (harder) — both contain **1000 customers**; the `_10_` in names is Homberger grouping, not customer count.
+
+Stages: **C1 pretrain → C2 full → C1+C2 mixed (30/70) → hard C fine-tuning**.
+
+Validation is reported separately for **C1**, **C2**, and **all C** (raw reward drops at C1→C2 transitions are expected).
 
 **Terminal 2** — live dashboard:
 
@@ -123,9 +129,23 @@ See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which pa
 
 | Config | Purpose |
 |--------|---------|
-| `configs/train.yaml` | **Primary** — Hanif full curriculum; edit this file |
-| `configs/default.yaml` | Flat REINFORCE (legacy / small tests) |
-| Other `configs/curriculum_*.yaml` | Alternate curriculum presets (optional) |
+| `configs/train.yaml` | **Primary** — C-only Hanif curriculum (C1→C2→mixed→hard), actor-critic |
+| `configs/train_fixed15.yaml` | Fixed 15-instance curriculum |
+| `configs/default.yaml` | Flat actor-critic (legacy small tests) |
+
+### Training algorithm
+
+All training uses **centralized actor-critic**:
+
+- Step-wise decomposed rewards aligned with EVRPTW objective
+- GAE advantage estimation
+- Counterfactual Q critic for multi-EV credit assignment
+- POMO-style multi-rollout baseline (K=4 by default)
+- Potential-based reward shaping
+- Edge-aware Transformer encoder (distance / travel time / energy biases)
+- Local search repair at evaluation (2-opt distance polish)
+
+Tune hyperparameters under `rl:` and `model:` in `configs/train.yaml`.
 
 ## Datasets
 
@@ -166,7 +186,7 @@ Use the **Sections** jump bar to scroll to each block.
 - **GPU (`device: cuda`)** is the default — run `python scripts/check_gpu.py` first.
 - On **CPU** (CPU-only PyTorch), expect **~45–90 s per training iteration**.
 - On **GPU**, expect **much faster** steps (often 5–20× vs CPU, depending on VRAM/GPU).
-- Use `baseline: moving_average` (Hanif default); `greedy_rollout` roughly doubles step time.
+- POMO uses K=4 rollouts per step by default (`rl.pomo_K`); increase only if VRAM allows.
 - `deterministic: false` (default) enables cuDNN autotune for faster GPU training.
 
 ## Phase 0 checks

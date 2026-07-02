@@ -1,18 +1,7 @@
 """Curriculum training orchestrator for the Multi-Agent Transformer E-VRPTW solver.
 
-Pipeline:
-    Phase 0  — environment & mask sanity checks (no learning)
-    Phase 1  — 50 epochs on C
-    Phase 2  — 70 epochs on C + R
-    Phase 3  — 100 epochs on C + R + RC
-    Phase 4  — 30 epochs fine-tuning on hard cases
-Total: 250 training epochs after Phase 0.
-
-Masked REINFORCE with a greedy-rollout baseline. Fleet size is sampled during
-training and fully searched during validation. Checkpoints are kept for the best
-overall / per-class / feasibility models plus the last epoch, using the score
-
-    score = validation_cost + 10000 * (1 - feasibility_rate).
+Uses centralized actor-critic training with step-wise decomposed rewards and GAE.
+Optional: counterfactual Q critic (top-k/sampled/chunked), POMO, edge-aware encoder.
 """
 from __future__ import annotations
 
@@ -28,8 +17,9 @@ import torch
 from src.data.evrptw_dataset import EVRPTWDataset, split_dataset
 from src.data.instance_loader import load_capacity_from_config, summarize_vehicle_params
 from src.data.instance_class import group_indices_by_class
-from src.env.cost import CostWeights, training_reward
-from src.training.baseline import GreedyRolloutBaseline, MovingAverageBaseline
+from src.env.cost import CostWeights
+from src.training.ac_train import actor_critic_train_step, build_critics, critic_parameters
+from src.training.actor_critic import RLConfig
 from src.training.curriculum import (
     Phase,
     active_train_classes,
@@ -51,7 +41,6 @@ from src.training.phase0_checks import (
     pick_check_instance,
     run_phase0_checks,
 )
-from src.training.rollout import run_episode
 from src.training.fixed_mini import (
     MANIFEST_FILENAME,
     all_fixed_names,
@@ -87,14 +76,22 @@ CHECKPOINT_KEYS = ("overall", "C", "R", "RC", "feasibility")
 class CheckpointManager:
     """Track and persist best-by-criterion checkpoints plus the last epoch."""
 
-    def __init__(self, policy, config, ckpt_dir: Path):
+    def __init__(self, policy, config, ckpt_dir: Path, value_critic=None, q_critic=None):
         self.policy = policy
         self.config = config
         self.dir = ckpt_dir
+        self.value_critic = value_critic
+        self.q_critic = q_critic
         self.dir.mkdir(parents=True, exist_ok=True)
         self.best_score = {k: float("inf") for k in ("overall", "C", "R", "RC")}
         self.best_feasibility = -1.0
         self.history: dict[str, dict] = {}
+
+    def _save(self, path: Path, training_meta: dict | None = None) -> None:
+        _save_checkpoint(
+            self.policy, self.config, path, training_meta,
+            value_critic=self.value_critic, q_critic=self.q_critic,
+        )
 
     def update(self, val: dict, global_epoch: int, phase_name: str) -> list[str]:
         saved = []
@@ -103,12 +100,12 @@ class CheckpointManager:
             if not metrics:
                 continue
             score = metrics["score"]
-            if score < self.best_score[key]:
+            if score < self.best_score.get(key, float("inf")):
                 self.best_score[key] = score
                 path = self.dir / f"best_{key}.pt"
-                _save_checkpoint(self.policy, self.config, path)
+                self._save(path)
                 if key == "overall":
-                    _save_checkpoint(self.policy, self.config, self.dir / "best.pt")
+                    self._save(self.dir / "best.pt")
                 self.history[f"best_{key}"] = {
                     "global_epoch": global_epoch, "phase": phase_name, **metrics
                 }
@@ -117,7 +114,7 @@ class CheckpointManager:
         feas = overall.get("feasibility_rate", -1.0)
         if feas > self.best_feasibility:
             self.best_feasibility = feas
-            _save_checkpoint(self.policy, self.config, self.dir / "best_feasibility.pt")
+            self._save(self.dir / "best_feasibility.pt")
             self.history["best_feasibility"] = {
                 "global_epoch": global_epoch, "phase": phase_name, **overall
             }
@@ -126,7 +123,7 @@ class CheckpointManager:
 
     def save_last(self, training_meta: dict | None = None):
         meta = training_meta if training_meta is not None else getattr(self, "training_meta", None)
-        _save_checkpoint(self.policy, self.config, self.dir / "last.pt", meta)
+        self._save(self.dir / "last.pt", meta)
 
     def save_phase_checkpoint(self, cls: str, global_epoch: int, phase_name: str) -> Path:
         """Persist best weights for a curriculum class block (anti-forgetting anchor)."""
@@ -136,7 +133,7 @@ class CheckpointManager:
         if src.exists():
             shutil.copy2(src, dst)
         else:
-            _save_checkpoint(self.policy, self.config, dst)
+            self._save(dst)
         self.history[f"phase_{cls}_best"] = {
             "global_epoch": global_epoch,
             "phase": phase_name,
@@ -179,7 +176,6 @@ def train_curriculum(
         full_ds = EVRPTWDataset(
             ds_cfg["path"],
             load_capacity=load_capacity_from_config(config),
-            ev_specs_path=ds_cfg.get("ev_specs_path"),
         )
         if resume_checkpoint:
             ckpt_meta = load_checkpoint_training_meta(resume_checkpoint)
@@ -201,8 +197,9 @@ def train_curriculum(
         train_ds, eval_ds = split_dataset(
             ds_cfg["path"], train_ratio=float(ds_cfg.get("train_ratio", 0.8)), seed=seed,
             train_filter=ds_cfg.get("train_size_filter"), eval_filter=ds_cfg.get("eval_size_filter"),
+            train_instances=ds_cfg.get("train_instances"),
+            eval_instances=ds_cfg.get("eval_instances"),
             load_capacity=load_capacity_from_config(config),
-            ev_specs_path=ds_cfg.get("ev_specs_path"),
         )
 
     train_groups = group_indices_by_class(train_ds.names)
@@ -210,6 +207,7 @@ def train_curriculum(
     val_classes = active_train_classes(config)
     train_groups = {c: train_groups.get(c, []) for c in val_classes}
     eval_groups = {c: eval_groups.get(c, []) for c in val_classes}
+
     if fixed_mini_mode:
         eval_groups = filter_eval_groups(eval_groups, eval_ds.names, fixed_name_set)
         assert_disjoint_train_eval(fixed_name_set, eval_ds.names)
@@ -220,8 +218,7 @@ def train_curriculum(
     load_override = load_capacity_from_config(config)
     if load_override is not None:
         LOGGER.warning(
-            "problem.load_capacity=%s overrides per-instance values from summary.json — "
-            "leave null for Hanif (series 1=200, C2=700, R2/RC2=1000).",
+            "problem.load_capacity=%s overrides per-instance values from summary.json.",
             load_override,
         )
     else:
@@ -234,16 +231,15 @@ def train_curriculum(
     _probe = train_ds[0]
     _load_s = _time.time() - _t0
     LOGGER.info(
-        "Dataset loader: %s | first instance %s (N=%d) loaded in %.2fs",
-        "hanif_txt (SLOW — re-run convert_hanif_dataset.py)" if train_ds.hanif_mode else "converted_npz (fast)",
+        "Dataset loader: Schneider folders | first instance %s (N=%d) loaded in %.2fs",
         _probe.instance_name,
         _probe.num_nodes,
         _load_s,
     )
     if _probe.num_customers >= 500 and device.type == "cpu":
         LOGGER.warning(
-            "Hanif 1000-customer instances on CPU are slow (~45–90 s/step). "
-            "Config uses device=%s but PyTorch sees no CUDA — run: python scripts/check_gpu.py",
+            "Large instances on CPU are slow. Config uses device=%s but PyTorch sees no CUDA — "
+            "run: python scripts/check_gpu.py",
             config.get("device", "auto"),
         )
 
@@ -312,37 +308,55 @@ def train_curriculum(
     # ---------------- Training setup ----------------
     tcfg = config["training"]
     policy = build_policy(config, charging_portions).to(device)
+    resume_ckpt: dict | None = None
     if resume_checkpoint:
-        ckpt = _load_checkpoint_into_policy(policy, Path(resume_checkpoint), device)
-        ckpt_meta = ckpt.get("training_meta") or {}
-        if ckpt_meta.get("baseline_value") is not None:
-            ma_baseline_pre = float(ckpt_meta["baseline_value"])
-        else:
-            ma_baseline_pre = None
-    else:
-        ma_baseline_pre = None
+        resume_ckpt = _load_checkpoint_into_policy(policy, Path(resume_checkpoint), device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=float(tcfg["learning_rate"]))
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
     batch_size = int(tcfg["batch_size"])
-    validate_during_training = bool(tcfg.get("validate_during_training", True))
+    validate_during_training = bool(tcfg.get("validate_during_training", False))
     validate_every = int(tcfg.get("validate_every", 10))
     val_decoding = config["evaluation"].get("decoding", "greedy")
     val_n_samples = int(config["evaluation"].get("multi_sample_n", 16))
     val_max_per_class = tcfg.get("val_max_per_class")
 
-    baseline_kind = str(tcfg.get("baseline", "greedy_rollout"))
-    reward_scale = float(tcfg.get("reward_scale", 1000.0))
-    normalize_advantage = bool(tcfg.get("normalize_advantage", True))
-    greedy_baseline = GreedyRolloutBaseline(
-        weights, charging_portions, use_horizon, max_steps_factor, reward_scale=reward_scale,
-    )
-    ma_baseline = MovingAverageBaseline(beta=float(tcfg.get("baseline_beta", 0.9)))
-    if ma_baseline_pre is not None:
-        ma_baseline.value = ma_baseline_pre
-
     min_decisions_warn = tcfg.get("min_decisions_warn")
     min_decisions_warn = int(min_decisions_warn) if min_decisions_warn is not None else None
+
+    rl_cfg = RLConfig.from_config(config)
+    validate_rl_memory_config(
+        config, num_nodes=_probe.num_nodes, num_customers=_probe.num_customers,
+    )
+    mcfg = config.get("model") or {}
+    use_amp = bool(tcfg.get("use_amp", False)) and device.type == "cuda"
+    grad_accum = int(tcfg.get("gradient_accumulation_steps", 1))
+    amp_scaler = torch.amp.GradScaler("cuda", enabled=use_amp) if use_amp else None
+    value_critic, q_critic = build_critics(policy, device, build_q=True)
+    if resume_ckpt is not None:
+        if "value_critic_state" in resume_ckpt:
+            value_critic.load_state_dict(resume_ckpt["value_critic_state"])
+        if q_critic is not None and "q_critic_state" in resume_ckpt:
+            q_critic.load_state_dict(resume_ckpt["q_critic_state"])
+    critic_lr = float((config.get("rl") or {}).get("critic_learning_rate", tcfg["learning_rate"]))
+    critic_optimizer = torch.optim.Adam(critic_parameters(value_critic, q_critic), lr=critic_lr)
+    log_memory_plan(
+        instance_name=_probe.instance_name,
+        num_nodes=_probe.num_nodes,
+        num_customers=_probe.num_customers,
+        num_stations=_probe.num_charging_stations,
+        rl_cfg=rl_cfg,
+        use_edge_aware=bool(mcfg.get("use_edge_aware_encoder", False)),
+        use_amp=use_amp,
+        gradient_accumulation_steps=grad_accum,
+    )
+    LOGGER.info(
+        "Actor-critic | step rewards + GAE | Q=%s (after epoch %s) | POMO K=%d | amp=%s",
+        rl_cfg.use_counterfactual_critic,
+        rl_cfg.q_critic_enable_after_epoch if rl_cfg.q_critic_enable_after_epoch is not None else rl_cfg.q_critic_warmup_epochs,
+        rl_cfg.effective_pomo_k(),
+        use_amp,
+    )
 
     log_path = Path(out_cfg["logs"]) / "train_log.jsonl"
     train_logger = JsonlLogger(log_path)
@@ -356,7 +370,7 @@ def train_curriculum(
     run_train_csv = CsvLogger(run_dir / "metrics.csv")
     run_val_csv = CsvLogger(run_dir / "validation_metrics.csv")
 
-    ckpt_mgr = CheckpointManager(policy, config, Path(out_cfg["checkpoints"]))
+    ckpt_mgr = CheckpointManager(policy, config, Path(out_cfg["checkpoints"]), value_critic, q_critic)
     rng = random.Random(seed)
 
     ccfg = config.get("curriculum") or {}
@@ -372,7 +386,6 @@ def train_curriculum(
     schedule_meta: dict = {}
     early_stop_patience = int(tcfg.get("early_stop_patience", 0))
     early_stop_metric = str(tcfg.get("early_stop_metric", "score")).lower()
-    served_progress_bonus = float(tcfg.get("served_progress_bonus", 0.0))
     best_val_score = float("inf")
     best_val_feasibility = -1.0
     val_no_improve = 0
@@ -530,12 +543,13 @@ def train_curriculum(
             max_instances=val_max_per_class,
             exclude_names=fixed_name_set if fixed_mini_mode else None,
         )
+        val_keys = ("C", "R", "RC", "overall")
         flat = {
             "global_epoch": ge,
             "phase": getattr(step_ctx, "index", 0),
             "phase_name": getattr(step_ctx, "name", "cyclic"),
         }
-        for cls in ("C", "R", "RC", "overall"):
+        for cls in val_keys:
             m = val.get(cls)
             if m:
                 for k, v in m.items():
@@ -583,6 +597,13 @@ def train_curriculum(
         metrics = val.get(cls.upper()) or {}
         return float(metrics.get("feasibility_rate", -1.0))
 
+    def _log_and_store(record: dict) -> None:
+        train_logger.log(record)
+        run_train_logger.log(record)
+        train_csv.log(record)
+        run_train_csv.log(record)
+        train_records.append(record)
+
     def _run_training_steps(steps: list[dict], block_label: str, stop_flag: list[bool]) -> None:
         nonlocal global_epoch
         if not steps:
@@ -603,12 +624,14 @@ def train_curriculum(
                 extra_margin=margin,
             )
             record = _train_step(
-                policy, optimizer, train_ds, [idx], weights, device,
-                charging_portions, use_horizon, max_steps_factor, step_phase,
-                rng, baseline_kind, greedy_baseline, ma_baseline,
-                entropy_coef, grad_clip, reward_scale, normalize_advantage,
-                served_progress_bonus=served_progress_bonus,
-                min_decisions_warn=min_decisions_warn,
+                policy, value_critic, q_critic, optimizer, critic_optimizer,
+                train_ds, [idx], weights, device, charging_portions,
+                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
+                global_epoch=global_epoch,
+                use_amp=use_amp,
+                gradient_accumulation_steps=grad_accum,
+                amp_scaler=amp_scaler,
             )
             record["epoch"] = global_epoch
             record["phase"] = step_phase.index
@@ -638,15 +661,8 @@ def train_curriculum(
                     return
             global_epoch += 1
 
-    def _log_and_store(record: dict) -> None:
-        train_logger.log(record)
-        run_train_logger.log(record)
-        train_csv.log(record)
-        run_train_csv.log(record)
-        train_records.append(record)
-
     # ---------------- Fixed mini curriculum (15 instances, repeated cycles) ----------------
-    elif fixed_mini_mode:
+    if fixed_mini_mode:
         fixed_phase = Phase(0, "fixed_mini", val_classes, 0)
         for step in fixed_mini_steps:
             cls = step["instance_class"]
@@ -666,12 +682,14 @@ def train_curriculum(
                 extra_margin=margin,
             )
             record = _train_step(
-                policy, optimizer, train_ds, [idx], weights, device,
-                charging_portions, use_horizon, max_steps_factor, step_phase,
-                rng, baseline_kind, greedy_baseline, ma_baseline,
-                entropy_coef, grad_clip, reward_scale, normalize_advantage,
-                served_progress_bonus=served_progress_bonus,
-                min_decisions_warn=min_decisions_warn,
+                policy, value_critic, q_critic, optimizer, critic_optimizer,
+                train_ds, [idx], weights, device, charging_portions,
+                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
+                global_epoch=global_epoch,
+                use_amp=use_amp,
+                gradient_accumulation_steps=grad_accum,
+                amp_scaler=amp_scaler,
             )
             record["global_step"] = global_epoch
             record["epoch"] = global_epoch
@@ -706,7 +724,6 @@ def train_curriculum(
                 "mode": "fixed_mini",
                 "global_step": global_epoch + 1,
                 "manifest_path": manifest_path_str,
-                "baseline_value": ma_baseline.get(),
             }
             if (global_epoch + 1) % 20 == 0:
                 ckpt_mgr.save_last(training_meta)
@@ -716,7 +733,6 @@ def train_curriculum(
             "mode": "fixed_mini",
             "global_step": global_epoch,
             "manifest_path": manifest_path_str,
-            "baseline_value": ma_baseline.get(),
         })
 
     # ---------------- Size curriculum (RC-only or progressive C→RC→R) ----------------
@@ -804,13 +820,15 @@ def train_curriculum(
                     extra_margin=margin,
                 )
                 record = _train_step(
-                    policy, optimizer, train_ds, [idx], weights, device,
-                    charging_portions, use_horizon, max_steps_factor, step_phase,
-                    rng, baseline_kind, greedy_baseline, ma_baseline,
-                    entropy_coef, grad_clip, reward_scale, normalize_advantage,
-                    served_progress_bonus=served_progress_bonus,
-                    min_decisions_warn=min_decisions_warn,
-                )
+                    policy, value_critic, q_critic, optimizer, critic_optimizer,
+                    train_ds, [idx], weights, device, charging_portions,
+                    use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+            entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
+            global_epoch=global_epoch,
+            use_amp=use_amp,
+            gradient_accumulation_steps=grad_accum,
+            amp_scaler=amp_scaler,
+        )
                 record["epoch"] = global_epoch
                 record["phase"] = step_phase.index
                 record["phase_name"] = step_phase.name
@@ -855,12 +873,14 @@ def train_curriculum(
                 extra_margin=margin,
             )
             record = _train_step(
-                policy, optimizer, train_ds, [idx], weights, device,
-                charging_portions, use_horizon, max_steps_factor, step_phase,
-                rng, baseline_kind, greedy_baseline, ma_baseline,
-                entropy_coef, grad_clip, reward_scale, normalize_advantage,
-                served_progress_bonus=served_progress_bonus,
-                min_decisions_warn=min_decisions_warn,
+                policy, value_critic, q_critic, optimizer, critic_optimizer,
+                train_ds, [idx], weights, device, charging_portions,
+                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
+                global_epoch=global_epoch,
+                use_amp=use_amp,
+                gradient_accumulation_steps=grad_accum,
+                amp_scaler=amp_scaler,
             )
             record["epoch"] = global_epoch
             record["phase"] = step_phase.index
@@ -916,10 +936,14 @@ def train_curriculum(
                     )
 
                 record = _train_step(
-                    policy, optimizer, train_ds, batch_idx, weights, device,
-                    charging_portions, use_horizon, max_steps_factor, phase,
-                    rng, baseline_kind, greedy_baseline, ma_baseline,
-                    entropy_coef, grad_clip, reward_scale, normalize_advantage,
+                    policy, value_critic, q_critic, optimizer, critic_optimizer,
+                    train_ds, batch_idx, weights, device, charging_portions,
+                    use_horizon, max_steps_factor, phase, rng, rl_cfg,
+                    entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
+                    global_epoch=global_epoch,
+                    use_amp=use_amp,
+                    gradient_accumulation_steps=grad_accum,
+                    amp_scaler=amp_scaler,
                 )
                 record["epoch"] = global_epoch
                 record["phase"] = phase.index
@@ -947,7 +971,7 @@ def train_curriculum(
     )
 
     # ---------------- Final evaluation (full fleet search) ----------------
-    if bool(tcfg.get("run_final_eval", True)):
+    if bool(tcfg.get("run_final_eval", False)):
         try:
             from src.evaluation.evaluate import evaluate
 
@@ -967,137 +991,27 @@ def train_curriculum(
 
 
 def _train_step(
-    policy, optimizer, train_ds, batch_idx, weights, device, charging_portions,
-    use_horizon, max_steps_factor, phase, rng, baseline_kind, greedy_baseline,
-    ma_baseline, entropy_coef, grad_clip, reward_scale, normalize_advantage,
-    served_progress_bonus: float = 0.0,
+    policy, value_critic, q_critic, optimizer, critic_optimizer,
+    train_ds, batch_idx, weights, device, charging_portions,
+    use_horizon, max_steps_factor, phase, rng, rl_cfg,
+    entropy_coef, grad_clip,
     min_decisions_warn: int | None = None,
+    global_epoch: int = 0,
+    use_amp: bool = False,
+    gradient_accumulation_steps: int = 1,
+    amp_scaler=None,
 ) -> dict:
-    """One REINFORCE update on a sampled batch; return the metrics record."""
-    policy.train()
-    optimizer.zero_grad()
-
-    raw_costs, rewards, feas_flags = [], [], []
-    used_evs_list, dist_list, charge_list, price_list, wait_list = [], [], [], [], []
-    viol_list, unserved_list, duration_list = [], [], []
-    served_rate_list, customers_list = [], []
-    breakdowns: list[dict] = []
-    log_probs, entropies, advantages = [], [], []
-    episode_extras: list[dict] = []
-
-    for idx in batch_idx:
-        instance = train_ds[idx]
-        m = sample_phase_m(instance, phase.extra_margin, rng)
-        result = run_episode(
-            instance, policy, m, weights, mode="sampling", device=device,
-            charging_portions=charging_portions, use_horizon_check=use_horizon,
-            max_steps_factor=max_steps_factor,
-            min_decisions_warn=min_decisions_warn,
-        )
-        raw_j = float(result.objective)
-        n_cust = max(int(instance.num_customers), 1)
-        served_rate = 1.0 - result.summary.unserved_customers / n_cust
-        reward = training_reward(raw_j, reward_scale)
-        if served_progress_bonus > 0:
-            reward += served_progress_bonus * served_rate
-
-        if baseline_kind == "greedy_rollout":
-            b = greedy_baseline.reward(instance, policy, m, device)
-        else:
-            b = ma_baseline.update(reward)
-        advantages.append(reward - b)
-        log_probs.append(result.log_prob_sum)
-        entropies.append(result.entropy_sum)
-
-        raw_costs.append(raw_j)
-        rewards.append(reward)
-        feas_flags.append(float(result.feasible))
-        used_evs_list.append(result.summary.used_evs)
-        dist_list.append(result.summary.total_distance)
-        charge_list.append(result.summary.total_charging_time)
-        price_list.append(result.summary.total_charging_price)
-        wait_list.append(result.summary.total_waiting_time)
-        unserved_list.append(result.summary.unserved_customers)
-        duration_list.append(result.summary.total_duration)
-        customers_list.append(n_cust)
-        served_rate_list.append(served_rate)
-        viol_list.append(
-            result.summary.total_battery_violation + result.summary.total_capacity_violation
-            + result.summary.total_lateness + result.summary.unserved_customers
-        )
-        breakdowns.append(result.breakdown)
-        episode_extras.append({
-            "num_decisions": result.num_decisions,
-            "done_reason": result.done_reason,
-            "fleet_size": result.fleet_size,
-            "served_customers": n_cust - int(result.summary.unserved_customers),
-            "total_customers": n_cust,
-            "unserved_customers": int(result.summary.unserved_customers),
-            "battery_violations": float(result.env.total_battery_violation),
-            "capacity_violations": float(result.env.total_capacity_violation),
-            "tw_violations": float(result.env.total_lateness),
-            "objective_total": raw_j,
-            "route_duration": float(result.summary.total_duration),
-        })
-
-    adv_raw = torch.tensor(advantages, dtype=torch.float32)
-    adv = adv_raw.clone()
-    if normalize_advantage and adv.numel() > 1 and adv.std() > 1e-8:
-        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-    loss_terms = [-adv[i].detach() * log_probs[i] for i in range(len(log_probs))]
-    policy_loss = torch.stack(loss_terms).mean()
-    entropy_term = torch.stack(entropies).mean()
-    loss = policy_loss - entropy_coef * entropy_term
-    loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip)
-    optimizer.step()
-
-    breakdown_means = {
-        f"mean_{k}": float(np.mean([bd.get(k, 0.0) for bd in breakdowns])) for k in breakdowns[0]
-    }
-    mean_dist = float(np.mean(dist_list))
-    mean_evs = float(np.mean(used_evs_list))
-    mean_charge = float(np.mean(charge_list))
-    mean_price = float(np.mean(price_list))
-    mean_wait = float(np.mean(wait_list))
-    mean_active = mean_dist + mean_charge + mean_wait
-    mean_feas = float(np.mean(feas_flags))
-    batch_mean_reward = float(np.mean(rewards))
-    return {
-        "cost": float(np.mean(raw_costs)),
-        "cost_raw": float(np.mean(raw_costs)),
-        "reward": batch_mean_reward,
-        "reward_scaled": batch_mean_reward,
-        "reward_scale": reward_scale,
-        "reward_std": float(np.std(rewards)),
-        "reward_min": float(np.min(rewards)),
-        "reward_max": float(np.max(rewards)),
-        "baseline": float(batch_mean_reward - float(adv_raw.mean())),
-        "advantage": float(adv_raw.mean()),
-        "loss": float(loss.item()),
-        "policy_loss": float(policy_loss.item()),
-        "grad_norm": float(grad_norm),
-        "learning_rate": float(optimizer.param_groups[0]["lr"]),
-        "feasibility_rate": mean_feas,
-        "feasibility_rate_pct": 100.0 * mean_feas,
-        "served_rate": float(np.mean(served_rate_list)),
-        "served_rate_pct": 100.0 * float(np.mean(served_rate_list)),
-        "avg_used_evs": mean_evs,
-        "avg_distance": mean_dist,
-        "avg_duration": float(np.mean(duration_list)),
-        "avg_charging_time": mean_charge,
-        "avg_charging_price": mean_price,
-        "avg_waiting_time": mean_wait,
-        "avg_unserved": float(np.mean(unserved_list)),
-        "avg_violation": float(np.mean(viol_list)),
-        "distance_per_ev": mean_dist / mean_evs if mean_evs > 0 else 0.0,
-        "distance_per_customer": mean_dist / float(np.mean(customers_list)),
-        "charging_time_share": mean_charge / mean_active if mean_active > 0 else 0.0,
-        "waiting_time_share": mean_wait / mean_active if mean_active > 0 else 0.0,
-        "entropy": float(entropy_term.item()),
-        **breakdown_means,
-        **(episode_extras[0] if len(episode_extras) == 1 else {}),
-    }
+    """One centralized actor-critic update on a sampled batch."""
+    return actor_critic_train_step(
+        policy, value_critic, q_critic, optimizer, critic_optimizer,
+        train_ds, batch_idx, weights, device, charging_portions,
+        use_horizon, max_steps_factor, phase, rng, rl_cfg,
+        entropy_coef, grad_clip, min_decisions_warn,
+        global_epoch=global_epoch,
+        use_amp=use_amp,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        scaler=amp_scaler,
+    )
 
 
 def _finalize(

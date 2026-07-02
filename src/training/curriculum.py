@@ -189,7 +189,7 @@ def build_cyclic_schedule(
 ) -> list[dict]:
     """Build a sequential schedule: all C, then all R, then all RC, repeat ``cycles`` times.
 
-    Each entry is one training iteration (one instance, one REINFORCE update).
+    Each entry is one training iteration (one instance, one actor-critic update).
     """
     rng = rng or random.Random(0)
     order = [c.upper() for c in (class_order or ["C", "R", "RC"])]
@@ -339,7 +339,7 @@ def build_progressive_schedule(
     """Progressive curriculum: for each class, small instances then full.
 
     Default order C → RC → R (easiest to hardest). Each entry is one training
-    iteration (one instance, one REINFORCE update).
+    iteration (one instance, one actor-critic update).
     """
     from src.data.instance_class import split_size_tiers
 

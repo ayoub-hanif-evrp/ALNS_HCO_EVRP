@@ -21,28 +21,28 @@ from src.training.fixed_mini import (
 )
 
 
-def _synthetic_hanif_names() -> list[str]:
+def _synthetic_schneider_names() -> list[str]:
     names = []
     for i in range(1, 8):
-        names.append(f"C1_10_{i}")
-        names.append(f"RC1_10_{i}")
-        names.append(f"R1_10_{i}")
+        names.append(f"c10{i}_21")
+        names.append(f"rc10{i}_21")
+        names.append(f"r10{i}_21")
     return names
 
 
 def test_resolve_default_first_five():
-    names = _synthetic_hanif_names()
+    names = _synthetic_schneider_names()
     config = {"dataset": {"fixed_train_instances": {}}}
     selected = resolve_fixed_train_instances(names, config, seed=42)
     assert set(selected.keys()) == {"C", "RC", "R"}
     for cls in ("C", "RC", "R"):
         assert len(selected[cls]) == INSTANCES_PER_CLASS
         assert all(n.startswith(f"{cls[0]}" if cls != "RC" else "RC") for n in selected[cls])
-    assert selected["C"] == ["C1_10_1", "C1_10_2", "C1_10_3", "C1_10_4", "C1_10_5"]
+    assert selected["C"] == ["c101_21", "c102_21", "c103_21", "c104_21", "c105_21"]
 
 
 def test_schedule_same_set_every_cycle():
-    names = _synthetic_hanif_names()
+    names = _synthetic_schneider_names()
     config = {"dataset": {"fixed_train_instances": {}}}
     fixed = resolve_fixed_train_instances(names, config, seed=0)
     name_to_idx = {n: names.index(n) for n in all_fixed_names(fixed)}
@@ -69,7 +69,7 @@ def test_schedule_same_set_every_cycle():
 
 
 def test_schedule_count_per_cycle():
-    names = _synthetic_hanif_names()
+    names = _synthetic_schneider_names()
     config = {"dataset": {"fixed_train_instances": {}}}
     fixed = resolve_fixed_train_instances(names, config, seed=0)
     name_to_idx = {n: names.index(n) for n in all_fixed_names(fixed)}
@@ -89,7 +89,7 @@ def test_schedule_count_per_cycle():
 
 
 def test_build_schedule_total_steps():
-    names = _synthetic_hanif_names()
+    names = _synthetic_schneider_names()
     config = {"dataset": {"fixed_train_instances": {}}}
     fixed = resolve_fixed_train_instances(names, config, seed=0)
     cycles = {"C": 200, "RC": 200, "R": 200}
@@ -109,16 +109,16 @@ def test_build_schedule_total_steps():
 
 def test_manifest_roundtrip(tmp_path: Path):
     fixed = {
-        "C": [f"C1_10_{i}" for i in range(1, 6)],
-        "RC": [f"RC1_10_{i}" for i in range(1, 6)],
-        "R": [f"R1_10_{i}" for i in range(1, 6)],
+        "C": [f"c10{i}_21" for i in range(1, 6)],
+        "RC": [f"rc10{i}_21" for i in range(1, 6)],
+        "R": [f"r10{i}_21" for i in range(1, 6)],
     }
     cycles = {"C": 2, "RC": 2, "R": 2}
     path = write_fixed_train_manifest(
         tmp_path,
         fixed_by_class=fixed,
         seed=99,
-        dataset_path="dataset/converted_hanif_data",
+        dataset_path="dataset/Schneider/evrptw_instances",
         class_order=["C", "RC", "R"],
         cycles_by_class=cycles,
     )
@@ -128,16 +128,16 @@ def test_manifest_roundtrip(tmp_path: Path):
 
 
 def test_disjoint_train_eval_raises():
-    fixed = {"C1_10_1", "RC1_10_1"}
+    fixed = {"c101_21", "rc101_21"}
     with pytest.raises(RuntimeError, match="overlap"):
-        assert_disjoint_train_eval(fixed, ["C1_10_1", "C1_10_2"])
+        assert_disjoint_train_eval(fixed, ["c101_21", "c102_21"])
 
 
 def test_resume_reloads_manifest(tmp_path: Path):
     fixed = {
-        "C": [f"C1_10_{i}" for i in range(1, 6)],
-        "RC": [f"RC1_10_{i}" for i in range(1, 6)],
-        "R": [f"R1_10_{i}" for i in range(1, 6)],
+        "C": [f"c10{i}_21" for i in range(1, 6)],
+        "RC": [f"rc10{i}_21" for i in range(1, 6)],
+        "R": [f"r10{i}_21" for i in range(1, 6)],
     }
     path = write_fixed_train_manifest(
         tmp_path,
@@ -151,7 +151,6 @@ def test_resume_reloads_manifest(tmp_path: Path):
         "mode": "fixed_mini",
         "global_step": 7,
         "manifest_path": str(path),
-        "baseline_value": -5000.0,
     }
     reloaded = load_fixed_train_manifest(Path(training_meta["manifest_path"]))
     assert manifest_fixed_by_class(reloaded) == fixed

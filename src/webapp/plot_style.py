@@ -22,6 +22,23 @@ STAGE_COLORS: dict[int, str] = {
     5: "#d97706",
 }
 
+# Named curriculum stages (optional labels from config).
+CURRICULUM_STAGE_COLORS: dict[str, str] = {
+    "C_R": "#7c3aed",
+    "C_R_RC": "#0891b2",
+    "hard_finetune": "#d97706",
+}
+
+
+def curriculum_stage_color(name: str, index: int = 0) -> str:
+    """Color for a curriculum stage label; falls back to SECTION palette."""
+    key = str(name or "").strip()
+    if key in CURRICULUM_STAGE_COLORS:
+        return CURRICULUM_STAGE_COLORS[key]
+    if index > 0 and index in STAGE_COLORS:
+        return STAGE_COLORS[index]
+    return SECTION_ACCENTS[index % len(SECTION_ACCENTS)]
+
 OVERALL_LINE_COLOR = "#94a3b8"
 ROLLING_OVERALL_COLOR = "#0f172a"
 

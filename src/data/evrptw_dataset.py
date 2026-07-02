@@ -7,7 +7,6 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from .hanif_loader import is_hanif_dataset_root, load_hanif_instance, resolve_ev_specs_path
 from .instance_loader import (
     NODE_FEATURE_COLUMNS,
     EVRPTWInstance,
@@ -23,11 +22,7 @@ def _passes_filter(name: str, filters: list[str] | None) -> bool:
 
 
 class EVRPTWDataset(Dataset):
-    """Lazily loads E-VRPTW instances from disk (converted folders or Hanif ``.txt``).
-
-    * Converted Schneider-style: ``<root>/<instance>/evrp_instance.json``
-    * Hanif benchmark: ``<root>/*.txt`` + ``*_stations.csv`` (parsed on load)
-    """
+    """Lazily loads Schneider-style E-VRPTW instances from converted folders."""
 
     def __init__(
         self,
@@ -35,22 +30,11 @@ class EVRPTWDataset(Dataset):
         size_filter: list[str] | None = None,
         *,
         load_capacity: float | None = None,
-        ev_specs_path: str | Path | None = None,
     ):
         self.dataset_path = Path(dataset_path)
         self.load_capacity = load_capacity
-        self.hanif_mode = is_hanif_dataset_root(self.dataset_path)
-        self.ev_specs_path = resolve_ev_specs_path(self.dataset_path, ev_specs_path)
-
-        if self.hanif_mode:
-            from .hanif_loader import list_hanif_txt_files
-
-            all_files = list_hanif_txt_files(self.dataset_path)
-            self.dirs = [p for p in all_files if _passes_filter(p.stem, size_filter)]
-        else:
-            all_dirs = list_instance_dirs(self.dataset_path)
-            self.dirs = [d for d in all_dirs if _passes_filter(d.name, size_filter)]
-
+        all_dirs = list_instance_dirs(self.dataset_path)
+        self.dirs = [d for d in all_dirs if _passes_filter(d.name, size_filter)]
         if not self.dirs:
             raise ValueError(
                 f"No instances found in {self.dataset_path} with filter {size_filter}"
@@ -61,12 +45,6 @@ class EVRPTWDataset(Dataset):
         return len(self.dirs)
 
     def _load_at(self, path: Path) -> EVRPTWInstance:
-        if self.hanif_mode:
-            return load_hanif_instance(
-                path,
-                ev_specs_path=self.ev_specs_path,
-                load_capacity=self.load_capacity,
-            )
         return load_instance(path, load_capacity=self.load_capacity)
 
     def __getitem__(self, idx: int) -> EVRPTWInstance:
@@ -76,9 +54,23 @@ class EVRPTWDataset(Dataset):
 
     @property
     def names(self) -> list[str]:
-        if self.hanif_mode:
-            return [p.stem for p in self.dirs]
         return [d.name for d in self.dirs]
+
+
+def _resolve_name_indices(
+    full: EVRPTWDataset,
+    names: list[str],
+    *,
+    label: str,
+) -> list[int]:
+    """Map instance names to indices in ``full``, preserving list order."""
+    name_to_idx = {full.names[i]: i for i in range(len(full))}
+    indices: list[int] = []
+    for name in names:
+        if name not in name_to_idx:
+            raise ValueError(f"{label} instance not found in dataset: {name}")
+        indices.append(name_to_idx[name])
+    return indices
 
 
 def split_dataset(
@@ -88,18 +80,38 @@ def split_dataset(
     train_filter: list[str] | None = None,
     eval_filter: list[str] | None = None,
     *,
+    train_instances: list[str] | None = None,
+    eval_instances: list[str] | None = None,
     load_capacity: float | None = None,
-    ev_specs_path: str | Path | None = None,
 ) -> tuple[EVRPTWDataset, EVRPTWDataset]:
-    """Split instances into train / eval subsets."""
-    ds_cfg_ev = ev_specs_path
+    """Split instances into train / eval subsets.
+
+    When ``train_instances`` is set, use that explicit train list. ``eval_instances``
+    may be provided; otherwise every remaining instance in the loaded pool becomes eval.
+    """
     base_filter = train_filter if train_filter == eval_filter else None
     full = EVRPTWDataset(
         dataset_path,
         size_filter=base_filter,
         load_capacity=load_capacity,
-        ev_specs_path=ds_cfg_ev,
     )
+
+    if train_instances is not None:
+        train_names = list(train_instances)
+        train_idx = _resolve_name_indices(full, train_names, label="train")
+        train_name_set = set(train_names)
+        if eval_instances is not None:
+            eval_names = list(eval_instances)
+            overlap = train_name_set & set(eval_names)
+            if overlap:
+                raise ValueError(f"train and eval instance lists overlap: {sorted(overlap)}")
+            eval_idx = _resolve_name_indices(full, eval_names, label="eval")
+        else:
+            eval_idx = [i for i in range(len(full)) if full.names[i] not in train_name_set]
+        train_ds = _SubsetDataset(full, train_idx, train_filter)
+        eval_ds = _SubsetDataset(full, sorted(eval_idx), eval_filter)
+        return train_ds, eval_ds
+
     indices = list(range(len(full)))
     rng = random.Random(seed)
     rng.shuffle(indices)
@@ -130,10 +142,6 @@ class _SubsetDataset(Dataset):
     @property
     def names(self) -> list[str]:
         return [self.base.names[i] for i in self.indices]
-
-    @property
-    def hanif_mode(self) -> bool:
-        return self.base.hanif_mode
 
     @property
     def dataset_path(self) -> Path:

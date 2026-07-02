@@ -1,15 +1,18 @@
 """Entry point for training the Multi-Agent Transformer E-VRPTW solver.
 
-Two training modes:
+Training uses centralized actor-critic (step rewards, GAE, optional counterfactual Q, POMO).
 
-* Flat REINFORCE (default):
-      python main_train.py --config configs/default.yaml
+* Schneider R _21 flat training (default):
+      python main_train.py
 
-* Curriculum (Phase 0 checks + phased C -> C+R -> C+R+RC -> hard cases):
+* Schneider R _21 (explicit config):
+      python main_train.py --config configs/train_schneider_r21.yaml
+
+* Schneider curriculum (C / R / RC):
       python main_train.py --config configs/curriculum.yaml --curriculum
 
-* Phase 0 environment/mask checks only (no training):
-      python main_train.py --config configs/curriculum.yaml --phase0-only
+* Phase 0 checks only:
+      python main_train.py --phase0-only
 """
 from __future__ import annotations
 

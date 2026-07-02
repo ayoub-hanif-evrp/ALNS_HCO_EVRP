@@ -32,24 +32,39 @@ model:
   feedforward_dim: 768
   dropout: 0.1
   use_ev_communication: true
+  edge_features: [distance, travel_time, energy]
+  edge_bias_hidden_dim: 64
+  edge_bias_per_head: true
 
 training:
-  method: reinforce
+  method: actor_critic
   batch_size: 1
   learning_rate: 0.0001
   entropy_coef: 0.01
   grad_clip: 1.0
-  baseline: moving_average
-  baseline_beta: 0.9
   reward_scale: 1000.0
-  normalize_advantage: true
-  served_progress_bonus: 50.0
   early_stop_patience: 8
   early_stop_metric: feasibility
   validate_every: 10
   val_max_per_class: 2
   run_final_eval: true
   log_every: 1
+
+rl:
+  gamma: 1.0
+  critic_coef: 0.5
+  q_critic_coef: 0.5
+  critic_learning_rate: 0.0001
+  gae_lambda: 0.95
+  counterfactual_mix: 0.5
+  potential_eta_served: 5.0
+  potential_eta_remaining_demand: 2.0
+  potential_eta_battery_risk: 3.0
+  potential_eta_time_risk: 3.0
+  battery_safe_ratio: 0.2
+  pomo_K: 4
+  pomo_mix_rho: 0.1
+  normalize_advantages: true
 
 curriculum:
   mode: progressive

@@ -12,6 +12,7 @@ from src.utils.tensor_utils import NEG_INF
 from .decoder import GlobalContext, PointerDecoder
 from .ev_communication import EVCommunication
 from .ev_state_encoder import EVStateEncoder
+from .edge_encoder import EdgeAwareNodeEncoder
 from .node_encoder import NodeEncoder
 
 
@@ -21,6 +22,8 @@ class ActionOutput:
     log_prob: torch.Tensor  # node + charging log-prob (sum), differentiable
     entropy: torch.Tensor
     charge_portion: float | None = None
+    node_probs: torch.Tensor | None = None
+    decoder_context: torch.Tensor | None = None
 
 
 class TransformerEVRPTWPolicy(nn.Module):
@@ -32,11 +35,27 @@ class TransformerEVRPTWPolicy(nn.Module):
         ff = int(model_cfg.get("feedforward_dim", 512))
         dropout = float(model_cfg.get("dropout", 0.1))
         self.use_ev_communication = bool(model_cfg.get("use_ev_communication", True))
+        self.use_edge_aware_encoder = bool(model_cfg.get("use_edge_aware_encoder", False))
         self.charging_portions = charging_portions or [0.25, 0.50, 0.75, 1.0]
-
-        self.node_encoder = NodeEncoder(
-            embedding_dim=d, num_heads=heads, num_layers=layers, ff_dim=ff, dropout=dropout
-        )
+        if self.use_edge_aware_encoder:
+            self.node_encoder = EdgeAwareNodeEncoder(
+                embedding_dim=d,
+                num_heads=heads,
+                num_layers=layers,
+                ff_dim=ff,
+                dropout=dropout,
+                edge_features=list(model_cfg.get("edge_features", ["distance", "travel_time", "energy"])),
+                edge_bias_hidden_dim=int(model_cfg.get("edge_bias_hidden_dim", 64)),
+                edge_bias_per_head=bool(model_cfg.get("edge_bias_per_head", True)),
+            )
+        else:
+            self.node_encoder = NodeEncoder(
+                embedding_dim=d,
+                num_heads=heads,
+                num_layers=layers,
+                ff_dim=ff,
+                dropout=dropout,
+            )
         self.ev_state_encoder = EVStateEncoder(embedding_dim=d)
         self.ev_communication = EVCommunication(embedding_dim=d, dropout=dropout)
         self.global_context = GlobalContext(embedding_dim=d)
@@ -47,7 +66,13 @@ class TransformerEVRPTWPolicy(nn.Module):
     def encode(self, instance, device: torch.device | str = "cpu") -> torch.Tensor:
         """Encode all nodes of an instance once; return H [N, d]."""
         feats = torch.tensor(instance.node_feature_matrix(), device=device)
+        if self.use_edge_aware_encoder:
+            return self.node_encoder.encode_instance(instance, feats, device=device)
         return self.node_encoder(feats)
+
+    def decoder_context(self, env, ev, node_embeddings: torch.Tensor) -> torch.Tensor:
+        """Public accessor for centralized critic input."""
+        return self._contexts(env, ev, node_embeddings)
 
     # ------------------------------------------------------------------ #
     def _contexts(self, env, ev, node_embeddings: torch.Tensor) -> torch.Tensor:
@@ -94,7 +119,14 @@ class TransformerEVRPTWPolicy(nn.Module):
         if mode == "greedy":
             node = int(torch.argmax(masked_scores).item())
         else:
-            node = int(torch.multinomial(probs, num_samples=1).item())
+            feas = mask_t & torch.isfinite(probs) & (probs > 0)
+            if not feas.any():
+                node = int(torch.argmax(masked_scores).item())
+            else:
+                p = probs.clone()
+                p[~feas] = 0.0
+                p = p / p.sum().clamp_min(1e-12)
+                node = int(torch.multinomial(p, num_samples=1).item())
 
         node_log_prob = log_probs[node]
         # Entropy over feasible nodes (finite terms only).
@@ -116,6 +148,8 @@ class TransformerEVRPTWPolicy(nn.Module):
             log_prob=total_log_prob,
             entropy=entropy,
             charge_portion=charge_portion,
+            node_probs=probs,
+            decoder_context=decoder_context,
         )
 
     def _select_charge(self, env, ev, station, node_embeddings, decoder_context, mode):

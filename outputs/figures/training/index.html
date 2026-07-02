@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang='en'><head><meta charset='utf-8'>
+<title>MARL EVRP Training Dashboard</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+header{padding:1.5rem 2rem;background:#1e293b;border-bottom:1px solid #334155}
+main{padding:1.5rem 2rem;max-width:1200px;margin:0 auto}
+h1{margin:0;font-size:1.5rem} .sub{color:#94a3b8;font-size:.9rem;margin-top:.35rem}
+section{margin:2rem 0} h2{font-size:1.1rem;color:#93c5fd;border-bottom:1px solid #334155;padding-bottom:.4rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:1.25rem;margin-top:1rem}
+.card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1rem}
+.card h3{font-size:.95rem;margin:0 0 .5rem} .card p{font-size:.8rem;color:#94a3b8;margin:.25rem 0 .75rem}
+.card img{width:100%;border-radius:4px;background:#fff}
+.skip{color:#f87171;font-size:.85rem}
+a{color:#60a5fa}
+</style></head><body>
+<header><h1>MARL EVRP Training Dashboard</h1>
+<p class='sub'>Training metrics only — Schneider R _21, 20 instances × 20 cycles. No validation or held-out test data.</p></header><main>
+<section id='learning-curves'><h2>Learning curves</h2><div class='grid'>
+<div class='card'>
+<h3>Training objective over epochs</h3><p>Shows whether the MARL policy is reducing the EVRP solution cost.</p>
+<img src='01_training_objective.png' alt='Training objective over epochs' loading='lazy'>
+<p><a href='01_training_objective.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Episode return over epochs</h3><p>Shows whether the actor-critic learning signal improves over time.</p>
+<img src='02_episode_return.png' alt='Episode return over epochs' loading='lazy'>
+<p><a href='02_episode_return.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Actor-critic losses</h3><p>Training stability of the MARL actor-critic system.</p>
+<img src='06_actor_critic_losses.png' alt='Actor-critic losses' loading='lazy'>
+<p><a href='06_actor_critic_losses.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Policy entropy over epochs</h3><p>Exploration — entropy should not collapse too early.</p>
+<img src='07_policy_entropy.png' alt='Policy entropy over epochs' loading='lazy'>
+<p><a href='07_policy_entropy.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Critic explained variance</h3><p>Whether the critic learns useful value estimates.</p>
+<img src='08_critic_explained_variance.png' alt='Critic explained variance' loading='lazy'>
+<p><a href='08_critic_explained_variance.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Training stability diagnostics</h3><p>Gradient norms and GPU memory during training.</p>
+<img src='17_training_stability_diagnostics.png' alt='Training stability diagnostics' loading='lazy'>
+<p><a href='17_training_stability_diagnostics.svg'>SVG</a></p>
+</div>
+</div></section>
+<section id='feasibility-and-constraints'><h2>Feasibility and constraints</h2><div class='grid'>
+<div class='card'>
+<h3>Feasibility moving average</h3><p>Shows whether the model produces feasible EVRP solutions more often.</p>
+<img src='03_feasibility_moving_average.png' alt='Feasibility moving average' loading='lazy'>
+<p><a href='03_feasibility_moving_average.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Served-customer ratio over epochs</h3><p>Shows whether the policy learns to serve all customers.</p>
+<img src='04_served_customer_ratio.png' alt='Served-customer ratio over epochs' loading='lazy'>
+<p><a href='04_served_customer_ratio.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Constraint violations over training</h3><p>EVRP constraint learning: battery, capacity, time windows, depot return.</p>
+<img src='05_constraint_violations.png' alt='Constraint violations over training' loading='lazy'>
+<p><a href='05_constraint_violations.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Feasible action ratio</h3><p>How restrictive environment masks are during training.</p>
+<img src='13_feasible_action_ratio.png' alt='Feasible action ratio' loading='lazy'>
+<p><a href='13_feasible_action_ratio.svg'>SVG</a></p>
+</div>
+</div></section>
+<section id='evrp-operational-behavior'><h2>EVRP operational behavior</h2><div class='grid'>
+<div class='card'>
+<h3>Distance and duration</h3><p>Route distance and duration over training.</p>
+<img src='09a_distance_duration.png' alt='Distance and duration' loading='lazy'>
+<p><a href='09a_distance_duration.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Charging and waiting</h3><p>Charging and waiting effort over training.</p>
+<img src='09b_charging_waiting.png' alt='Charging and waiting' loading='lazy'>
+<p><a href='09b_charging_waiting.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Number of used EVs</h3><p>Whether the model learns efficient fleet usage.</p>
+<img src='10_used_evs.png' alt='Number of used EVs' loading='lazy'>
+<p><a href='10_used_evs.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Charging-station visits over training</h3><p>EV recharging station usage during training.</p>
+<img src='11a_station_visits.png' alt='Charging-station visits over training' loading='lazy'>
+<p><a href='11a_station_visits.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Charging effort over training</h3><p>Total charging time and monetary charging cost.</p>
+<img src='11b_charging_effort.png' alt='Charging effort over training' loading='lazy'>
+<p><a href='11b_charging_effort.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Minimum battery level over training</h3><p>Minimum remaining battery at episode end.</p>
+<img src='11c_min_battery.png' alt='Minimum battery level over training' loading='lazy'>
+<p><a href='11c_min_battery.svg'>SVG</a></p>
+</div>
+</div></section>
+<section id='marl-coordination'><h2>MARL coordination</h2><div class='grid'>
+<div class='card'>
+<h3>Fleet coordination and route balance</h3><p>Std/mean of per-EV route distance — load balance across agents.</p>
+<img src='12_fleet_coordination_balance.png' alt='Fleet coordination and route balance' loading='lazy'>
+<p><a href='12_fleet_coordination_balance.svg'>SVG</a></p>
+</div>
+</div></section>
+<section id='cyclic-schedule-analysis'><h2>Cyclic schedule analysis</h2><div class='grid'>
+<div class='card'>
+<h3>Cycle-level objective progress</h3><p>Mean objective per full pass over training instances.</p>
+<img src='14a_cycle_objective.png' alt='Cycle-level objective progress' loading='lazy'>
+<p><a href='14a_cycle_objective.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Cycle-level feasibility and served ratio</h3><p>Aggregate feasibility and coverage per cycle.</p>
+<img src='14b_cycle_feasibility_served.png' alt='Cycle-level feasibility and served ratio' loading='lazy'>
+<p><a href='14b_cycle_feasibility_served.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Cycle-level violations</h3><p>Mean violations per training cycle.</p>
+<img src='14c_cycle_violations.png' alt='Cycle-level violations' loading='lazy'>
+<p><a href='14c_cycle_violations.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Per-instance objective across cycles</h3><p>Objective heatmap: instances × cycles.</p>
+<img src='15a_per_instance_objective_heatmap.png' alt='Per-instance objective across cycles' loading='lazy'>
+<p><a href='15a_per_instance_objective_heatmap.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Per-instance feasibility across cycles</h3><p>Feasibility heatmap: instances × cycles.</p>
+<img src='15b_per_instance_feasibility_heatmap.png' alt='Per-instance feasibility across cycles' loading='lazy'>
+<p><a href='15b_per_instance_feasibility_heatmap.svg'>SVG</a></p>
+</div>
+<div class='card'>
+<h3>Final-cycle objective by training instance</h3><p>Hardest training instances in the last cycle.</p>
+<img src='16_final_cycle_instance_objective.png' alt='Final-cycle objective by training instance' loading='lazy'>
+<p><a href='16_final_cycle_instance_objective.svg'>SVG</a></p>
+</div>
+</div></section>
+<section><h2>Index</h2><p>See <a href='figures_index.md'>figures_index.md</a> for metrics and status.</p></section>
+</main></body></html>

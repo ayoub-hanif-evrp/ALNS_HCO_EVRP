@@ -26,6 +26,7 @@ from src.evaluation.baselines import (
     run_heuristic_episode,
 )
 from src.evaluation.fleet_search import FleetCandidate, fleet_search
+from src.evaluation.local_search import local_search_repair
 from src.evaluation.metrics import build_result_row, build_routes
 from src.env.evrptw_env import EVRPTWEnv
 from src.training.rollout import run_episode, run_multi_sample
@@ -86,7 +87,6 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
         full_ds = EVRPTWDataset(
             ds_cfg["path"],
             load_capacity=load_capacity_from_config(config),
-            ev_specs_path=ds_cfg.get("ev_specs_path"),
         )
         fixed_by_class = resolve_fixed_train_instances(full_ds.names, config, seed)
         fixed_names = all_fixed_names(fixed_by_class)
@@ -100,8 +100,9 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
             seed=seed,
             train_filter=ds_cfg.get("train_size_filter"),
             eval_filter=ds_cfg.get("eval_size_filter"),
+            train_instances=ds_cfg.get("train_instances"),
+            eval_instances=ds_cfg.get("eval_instances"),
             load_capacity=load_capacity_from_config(config),
-            ev_specs_path=ds_cfg.get("ev_specs_path"),
         )
     LOGGER.info(f"Evaluation instances: {len(eval_ds)}")
 
@@ -124,6 +125,8 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
     ecfg = config["evaluation"]
     max_steps_factor = int(config["decoding"].get("max_steps_factor", 6))
     n_samples = int(ecfg.get("multi_sample_n", 16))
+
+    ls_cfg = ecfg.get("local_search") or {}
 
     # Resolve checkpoint.
     ckpt_path = checkpoint or str(Path(config["outputs"]["checkpoints"]) / "best.pt")
@@ -161,11 +164,24 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
                 best, candidates = fleet_search(instance, runner, extra_margin, selection_mode)
             runtime = time.time() - t0
             env = best.result.env
+            raw_objective = best.objective
+            raw_feasible = best.feasible
+            ls_improved = False
+            if hasattr(best.result, "env"):
+                ls = local_search_repair(env, weights, ls_cfg)
+                if ls.repaired_feasible and (not raw_feasible or ls.repaired_objective < raw_objective):
+                    best = FleetCandidate(
+                        m=best.m, feasible=ls.repaired_feasible,
+                        objective=ls.repaired_objective, summary=best.summary, result=best.result,
+                    )
+                    ls_improved = ls.improved
             m_min = candidates[0].m
             m_max = candidates[-1].m
-            rows.append(
-                build_result_row(instance, env, best.objective, best.m, m_min, m_max, runtime, method_name)
-            )
+            row = build_result_row(instance, env, best.objective, best.m, m_min, m_max, runtime, method_name)
+            row["raw_objective"] = raw_objective
+            row["raw_feasible"] = float(raw_feasible)
+            row["local_search_improved"] = float(ls_improved)
+            rows.append(row)
 
             # Save routes + fleet-search curve for the primary model method.
             is_primary = method_name == "model_greedy" or (

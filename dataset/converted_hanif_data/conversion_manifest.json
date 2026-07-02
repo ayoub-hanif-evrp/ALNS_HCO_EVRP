@@ -3,7 +3,7 @@
   "output": "dataset\\converted_hanif_data",
   "variant": "variant_B_relaxed_TW",
   "num_instances": 60,
-  "elapsed_seconds": 52.6,
+  "elapsed_seconds": 36.4,
   "instances": [
     "C1_10_1",
     "C1_10_10",

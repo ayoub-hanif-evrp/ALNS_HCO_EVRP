@@ -2,12 +2,7 @@
 
 Validation always runs the full fleet-size search (unlike training, which samples
 a single fleet size) and reports feasibility and cost separately for each
-customer-distribution class (C, R, RC). The headline number is the validation
-score
-
-    score = validation_cost + 10000 * (1 - feasibility_rate)
-
-so a model with low distance but poor feasibility is never preferred.
+customer-distribution class (C, R, RC).
 """
 from __future__ import annotations
 
@@ -39,6 +34,37 @@ def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, 
     return runner
 
 
+def _aggregate_metrics(
+    costs, feas, dist, evs, durations, charge, price, wait, unserved, viol,
+    batt_viol, cap_viol, tw_viol, served_rates, n_inst: int,
+) -> dict:
+    if n_inst == 0:
+        return {}
+    feasibility_rate = float(np.mean(feas))
+    mean_cost = float(np.mean(costs))
+    served_rate = float(np.mean(served_rates)) if served_rates else 0.0
+    return {
+        "num_instances": n_inst,
+        "cost": mean_cost,
+        "feasibility_rate": feasibility_rate,
+        "feasibility_rate_pct": 100.0 * feasibility_rate,
+        "score": mean_cost + INFEASIBILITY_PENALTY * (1.0 - feasibility_rate),
+        "served_rate": served_rate,
+        "served_rate_pct": 100.0 * served_rate,
+        "avg_distance": float(np.mean(dist)),
+        "avg_used_evs": float(np.mean(evs)),
+        "avg_duration": float(np.mean(durations)) if durations else 0.0,
+        "avg_charging_time": float(np.mean(charge)),
+        "avg_charging_price": float(np.mean(price)),
+        "avg_waiting_time": float(np.mean(wait)),
+        "avg_unserved": float(np.mean(unserved)),
+        "avg_violation": float(np.mean(viol)),
+        "avg_battery_violation": float(np.mean(batt_viol)) if batt_viol else 0.0,
+        "avg_capacity_violation": float(np.mean(cap_viol)) if cap_viol else 0.0,
+        "avg_time_window_violation": float(np.mean(tw_viol)) if tw_viol else 0.0,
+    }
+
+
 def validate_class(
     eval_ds,
     indices: list[int],
@@ -56,7 +82,7 @@ def validate_class(
     max_instances: int | None = None,
     exclude_names: set[str] | None = None,
 ) -> dict:
-    """Validate the policy on a list of eval-dataset indices (one class)."""
+    """Validate the policy on a list of eval-dataset indices."""
     if exclude_names:
         indices = [i for i in indices if eval_ds.names[i] not in exclude_names]
     if max_instances is not None:
@@ -67,41 +93,38 @@ def validate_class(
     runner = _neural_runner(
         policy, weights, mode, device, n_samples, charging_portions, use_horizon, max_steps_factor
     )
-    costs, feas, dist, evs, charge, price, wait, unserved, viol = [], [], [], [], [], [], [], [], []
+    costs, feas, dist, evs = [], [], [], []
+    durations, charge, price, wait = [], [], [], []
+    unserved, viol, batt_viol, cap_viol, tw_viol, served_rates = [], [], [], [], [], []
     policy.eval()
     with torch.no_grad():
         for idx in indices:
             instance = eval_ds[idx]
             best, _ = fleet_search(instance, runner, extra_margin, selection_mode)
             s = best.summary
+            n_c = max(instance.num_customers, 1)
             costs.append(best.objective)
             feas.append(1.0 if best.feasible else 0.0)
             dist.append(s.total_distance)
             evs.append(s.used_evs)
+            durations.append(s.total_duration)
             charge.append(s.total_charging_time)
             price.append(s.total_charging_price)
             wait.append(s.total_waiting_time)
             unserved.append(s.unserved_customers)
+            served_rates.append(1.0 - s.unserved_customers / n_c)
+            batt_viol.append(s.total_battery_violation)
+            cap_viol.append(s.total_capacity_violation)
+            tw_viol.append(s.total_lateness)
             viol.append(
                 s.total_battery_violation + s.total_capacity_violation
                 + s.total_lateness + s.unserved_customers
             )
 
-    feasibility_rate = float(np.mean(feas))
-    mean_cost = float(np.mean(costs))
-    return {
-        "num_instances": len(indices),
-        "cost": mean_cost,
-        "feasibility_rate": feasibility_rate,
-        "score": mean_cost + INFEASIBILITY_PENALTY * (1.0 - feasibility_rate),
-        "avg_distance": float(np.mean(dist)),
-        "avg_used_evs": float(np.mean(evs)),
-        "avg_charging_time": float(np.mean(charge)),
-        "avg_charging_price": float(np.mean(price)),
-        "avg_waiting_time": float(np.mean(wait)),
-        "avg_unserved": float(np.mean(unserved)),
-        "avg_violation": float(np.mean(viol)),
-    }
+    return _aggregate_metrics(
+        costs, feas, dist, evs, durations, charge, price, wait,
+        unserved, viol, batt_viol, cap_viol, tw_viol, served_rates, len(indices),
+    )
 
 
 def validate(
@@ -114,12 +137,7 @@ def validate(
     exclude_names: set[str] | None = None,
     **kwargs,
 ) -> dict:
-    """Validate per class and compute an overall score across the given classes.
-
-    Returns ``{"C": {...}, "R": {...}, "RC": {...}, "overall": {...}}`` where
-    only classes with instances are present. ``overall`` averages the per-class
-    metrics over ``classes`` (defaults to every class that has data).
-    """
+    """Validate per class; returns per-class metrics plus ``overall``."""
     if exclude_names:
         overlap = exclude_names & set(eval_ds.names)
         if overlap:
@@ -141,6 +159,7 @@ def validate(
         overall = {
             "cost": float(np.mean([per_class[c]["cost"] for c in use])),
             "feasibility_rate": float(np.mean([per_class[c]["feasibility_rate"] for c in use])),
+            "served_rate": float(np.mean([per_class[c].get("served_rate", 0.0) for c in use])),
             "score": float(np.mean([per_class[c]["score"] for c in use])),
             "avg_used_evs": float(np.mean([per_class[c]["avg_used_evs"] for c in use])),
             "avg_distance": float(np.mean([per_class[c]["avg_distance"] for c in use])),

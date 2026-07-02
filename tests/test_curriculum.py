@@ -150,7 +150,7 @@ def test_progressive_blocks():
     assert len(blocks[0]["small"]) == 2
     assert len(blocks[0]["full"]) == 1
 
-    hanif_names = ["C1_10_1", "C2_10_1", "RC1_10_1", "RC2_10_1"]
+    hanif_names = ["c101_21", "c201_21", "rc101_21", "rc201_21"]
     hanif_groups = group_indices_by_class(hanif_names)
     hanif_sched = build_progressive_schedule(
         hanif_names, hanif_groups, class_order=["C", "RC"], cycles_small=1, cycles_full=1, rng=random.Random(0),

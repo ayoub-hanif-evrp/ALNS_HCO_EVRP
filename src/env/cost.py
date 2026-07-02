@@ -3,7 +3,7 @@
 J(pi) = lambda_v * V + lambda_d * D + lambda_t * T + lambda_c * C_charge
         + lambda_p * P_charge + lambda_w * W + P(pi)
 
-where P_charge is the monetary charging cost (Hanif station price × energy)
+where P_charge is the monetary charging cost (station price × energy)
 and P is the sum of weighted infeasibility penalties. The RL reward is
 R(pi) = -J(pi).
 """
@@ -82,7 +82,7 @@ def compute_cost(summary: SolutionSummary, weights: CostWeights) -> tuple[float,
 
 
 def training_reward(objective: float, scale: float = 1.0) -> float:
-    """Scaled REINFORCE reward used during learning.
+    """Scaled training reward: R = -J / reward_scale (stabilizes critic targets).
 
     The evaluation objective ``J`` can reach very large magnitudes because of
     penalty weights (10k–100k). Dividing by ``scale`` keeps advantages and

@@ -131,6 +131,8 @@ class EVRPTWEnv:
         inst = self.instance
         node_obj = inst.nodes[node]
         self.step_count += 1
+        previous_node = ev.current_node
+        d_move, t_move, e_move = self._move_energy_time(ev, node)
 
         if node_obj.is_customer:
             info = self._apply_customer(ev, node)
@@ -141,6 +143,11 @@ class EVRPTWEnv:
         else:  # pragma: no cover - node types are exhaustive
             raise ValueError(f"Unknown node type for node {node}")
 
+        info["ev_id"] = ev.ev_id
+        info["previous_node"] = previous_node
+        info["delta_travel_time"] = t_move
+        info["delta_energy_used"] = e_move
+        info["customer_served"] = bool(info.get("type") == "customer" and info.get("node") == node)
         self.current_event_time = max(self.current_event_time, ev.current_time)
         return info
 
@@ -220,7 +227,7 @@ class EVRPTWEnv:
         }
 
     def _charging_rate_at(self, node: int) -> float:
-        """Energy recharge rate at a node (Hanif CSV per station, else vehicle default)."""
+        """Energy recharge rate at a node (per-station override, else vehicle default)."""
         inst = self.instance
         if inst.station_charging_rate is not None:
             rate = float(inst.station_charging_rate[node])
@@ -232,7 +239,7 @@ class EVRPTWEnv:
         return 1.0
 
     def _price_per_energy_at(self, node: int) -> float:
-        """Expected Hanif price per unit charged energy at a node (0 if unknown)."""
+        """Expected price per unit charged energy at a node (0 if unknown)."""
         inst = self.instance
         if inst.station_price_per_energy is not None:
             price = float(inst.station_price_per_energy[node])

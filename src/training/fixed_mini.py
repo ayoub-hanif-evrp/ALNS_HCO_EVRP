@@ -229,4 +229,4 @@ def log_fixed_train_startup(
         logger.info(f"  {cls}: {', '.join(fixed_by_class[cls])}")
     logger.info(f"FIXED_TRAIN_SET_HASH={h}")
     logger.info(f"Manifest: {manifest_path}")
-    logger.info(f"Total expected REINFORCE updates: {total_updates}")
+    logger.info(f"Total expected actor-critic updates: {total_updates}")

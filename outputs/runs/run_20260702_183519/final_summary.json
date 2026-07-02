@@ -1,0 +1,53 @@
+{
+  "run_id": "run_20260702_183519",
+  "epochs": 400,
+  "num_train_instances": 20,
+  "log_path": "outputs\\logs\\train_log.jsonl",
+  "run_dir": "outputs\\runs\\run_20260702_183519",
+  "algorithm": "actor_critic",
+  "best_reward": -188.04918138558352,
+  "best_cost": 188049.18138558354,
+  "best_feasibility_rate": 0.0,
+  "final_reward": -406.52099177126803,
+  "final_cost": 406520.991771268,
+  "final_feasibility_rate": 0.0,
+  "final_served_rate": 0.72,
+  "final_avg_used_evs": 16.0,
+  "final_avg_distance": 7993.302083730698,
+  "final_avg_violation": 28.0,
+  "holdout_instances": {
+    "train_instances": [
+      "r102_21",
+      "r103_21",
+      "r105_21",
+      "r106_21",
+      "r107_21",
+      "r108_21",
+      "r109_21",
+      "r110_21",
+      "r111_21",
+      "r112_21",
+      "r201_21",
+      "r202_21",
+      "r203_21",
+      "r204_21",
+      "r205_21",
+      "r206_21",
+      "r207_21",
+      "r208_21",
+      "r210_21",
+      "r211_21"
+    ],
+    "eval_instances": [
+      "r101_21",
+      "r104_21",
+      "r209_21"
+    ]
+  },
+  "training_dashboard": {
+    "html": "outputs\\figures\\training\\index.html",
+    "figures_index": "outputs\\figures\\training\\figures_index.md",
+    "figures_generated": 23,
+    "figures_total": 23
+  }
+}

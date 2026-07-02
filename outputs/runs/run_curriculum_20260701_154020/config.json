@@ -1,0 +1,201 @@
+{
+  "seed": 42,
+  "device": "cuda",
+  "deterministic": false,
+  "training": {
+    "method": "actor_critic",
+    "learning_rate": 0.0001,
+    "entropy_coef": 0.01,
+    "grad_clip": 1.0,
+    "batch_size": 1,
+    "reward_scale": 1000.0,
+    "log_every": 1,
+    "validate_during_training": true,
+    "validate_every": 20,
+    "val_max_per_class": null,
+    "run_final_eval": false,
+    "early_stop_patience": 0,
+    "min_decisions_warn": 10,
+    "use_amp": true,
+    "gradient_accumulation_steps": 1
+  },
+  "rl": {
+    "gamma": 1.0,
+    "critic_coef": 0.5,
+    "q_critic_coef": 0.5,
+    "critic_learning_rate": 0.0001,
+    "gae_lambda": 0.95,
+    "counterfactual_mix": 0.5,
+    "potential_eta_served": 5.0,
+    "potential_eta_remaining_demand": 2.0,
+    "potential_eta_battery_risk": 3.0,
+    "potential_eta_time_risk": 3.0,
+    "battery_safe_ratio": 0.2,
+    "use_pomo": false,
+    "pomo_K": 1,
+    "pomo_mix_rho": 0.1,
+    "normalize_advantages": true,
+    "use_counterfactual_critic": false,
+    "q_critic_warmup_epochs": 0,
+    "q_critic_enable_after_epoch": null,
+    "q_eval_mode": "topk",
+    "max_q_actions": 64,
+    "q_chunk_size": 128,
+    "q_record_batch_size": 32,
+    "detach_critic_inputs": true
+  },
+  "curriculum": {
+    "enabled": true,
+    "mode": "c_only_hanif",
+    "distribution": "C",
+    "train_classes": [
+      "C"
+    ],
+    "tier_order": [
+      "C1",
+      "C2",
+      "C_mixed",
+      "C_hard"
+    ],
+    "adaptive": true,
+    "adaptive_patience": 3,
+    "gate_max_extra_cycles": 5,
+    "shuffle_within_class": false,
+    "extra_margin_by_class": {
+      "C": 10
+    },
+    "transition_criteria": {
+      "C1": {
+        "min_feasibility_rate": 0.3,
+        "min_served_rate": 0.85,
+        "max_avg_violation": 20.0
+      },
+      "C2": {
+        "min_feasibility_rate": 0.15,
+        "min_served_rate": 0.75,
+        "max_avg_violation": 30.0
+      }
+    },
+    "stages": [
+      {
+        "name": "C1_pretrain",
+        "tiers": [
+          "C1"
+        ],
+        "cycles": 15,
+        "description": "Train only on easier clustered Hanif C1_* instances (1000 customers)."
+      },
+      {
+        "name": "C2_full",
+        "tiers": [
+          "C2"
+        ],
+        "cycles": 12,
+        "description": "Train only on harder clustered Hanif C2_* instances (1000 customers)."
+      },
+      {
+        "name": "C_mixed_stabilization",
+        "tiers": [
+          "C1",
+          "C2"
+        ],
+        "cycles": 10,
+        "sampling_probs": {
+          "C1": 0.3,
+          "C2": 0.7
+        },
+        "description": "Stabilize across all class-C instances (mostly C2 replay)."
+      },
+      {
+        "name": "C_hard_finetune",
+        "source": "hard_buffer",
+        "allowed_tiers": [
+          "C1",
+          "C2"
+        ],
+        "cycles": 8,
+        "hard_fraction": 0.5,
+        "hard_share": 0.85,
+        "description": "Fine-tune on hard C-only rollouts discovered during training."
+      }
+    ]
+  },
+  "model": {
+    "embedding_dim": 192,
+    "encoder_layers": 4,
+    "heads": 8,
+    "feedforward_dim": 768,
+    "dropout": 0.1,
+    "use_ev_communication": true,
+    "use_edge_aware_encoder": false,
+    "edge_features": [
+      "distance",
+      "travel_time",
+      "energy"
+    ],
+    "edge_bias_hidden_dim": 64,
+    "edge_bias_per_head": true
+  },
+  "decoding": {
+    "mode": "sampling",
+    "multi_sample_n": 16,
+    "max_steps_factor": 12
+  },
+  "dataset": {
+    "path": "dataset/converted_hanif_data",
+    "train_ratio": 0.8,
+    "train_size_filter": null,
+    "eval_size_filter": null
+  },
+  "problem": {
+    "load_capacity": null,
+    "allow_partial_charging": true,
+    "charging_portions": [
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "station_reusable": true,
+    "use_depot_charging": true,
+    "use_horizon_check": true
+  },
+  "cost": {
+    "lambda_vehicle": 1000.0,
+    "lambda_distance": 1.0,
+    "lambda_duration": 0.1,
+    "lambda_charging": 0.5,
+    "lambda_charging_price": 1.0,
+    "lambda_waiting": 0.1,
+    "penalty_unserved": 10000.0,
+    "penalty_duplicate": 10000.0,
+    "penalty_late": 5000.0,
+    "penalty_battery": 10000.0,
+    "penalty_capacity": 10000.0,
+    "penalty_depot": 10000.0,
+    "penalty_infeasible": 100000.0,
+    "penalty_reserved": 10000.0
+  },
+  "fleet_search": {
+    "enabled": true,
+    "extra_margin": 12,
+    "selection_mode": "hierarchical"
+  },
+  "evaluation": {
+    "decoding": "greedy",
+    "multi_sample_n": 16,
+    "local_search": {
+      "max_iterations": 50
+    },
+    "save_routes": true,
+    "save_figures": true
+  },
+  "outputs": {
+    "root": "outputs",
+    "checkpoints": "outputs/checkpoints",
+    "figures": "outputs/figures",
+    "logs": "outputs/logs",
+    "results": "outputs/results",
+    "routes": "outputs/routes"
+  }
+}

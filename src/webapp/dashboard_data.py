@@ -9,7 +9,8 @@ from pathlib import Path
 import pandas as pd
 
 STALE_AFTER_SECONDS = 20.0
-ROLLING_WINDOW = 10
+ROLLING_WINDOW = 20
+DEFAULT_MA_WINDOW = 20
 
 # Weighted objective / penalty columns logged during training (matches compute_cost breakdown).
 COST_COLUMNS = [
@@ -77,7 +78,7 @@ COST_OBJECTIVE_TERMS: list[dict[str, str | None]] = [
         "raw_col": "avg_charging_price",
         "label": "Charging price · λ_p × energy cost",
         "short": "Charging price",
-        "formula": "λ_charging_price × Hanif station price × charged energy",
+        "formula": "λ_charging_price × station price × charged energy",
         "ylabel": "Weighted term",
         "raw_ylabel": "Charging price",
     },
@@ -192,6 +193,63 @@ def read_log(log_path: Path) -> list[dict]:
     return rows
 
 
+def ma_window_from_config(cfg: dict) -> int:
+    tcfg = cfg.get("training") or {}
+    return int(tcfg.get("dashboard_ma_window", DEFAULT_MA_WINDOW))
+
+
+def filter_training_instances(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """Keep only training instances; exclude held-out eval/test instances."""
+    if df.empty:
+        return df
+    ds = cfg.get("dataset") or {}
+    train_inst = list(ds.get("train_instances") or [])
+    holdout = list(ds.get("eval_instances") or [])
+    if train_inst and "instance_name" in df.columns:
+        return df[df["instance_name"].isin(train_inst)].reset_index(drop=True)
+    if holdout and "instance_name" in df.columns:
+        return df[~df["instance_name"].isin(holdout)].reset_index(drop=True)
+    return df
+
+
+def cycle_column(df: pd.DataFrame) -> pd.Series:
+    """Training cycle (pass) index — one full sweep over training instances."""
+    if "pass" in df.columns and df["pass"].notna().any():
+        return df["pass"].astype(int)
+    if "cycle" in df.columns and df["cycle"].notna().any():
+        return df["cycle"].astype(int)
+    n_inst = int(df["instance_name"].nunique()) if "instance_name" in df.columns else 20
+    n_inst = max(n_inst, 1)
+    return pd.Series((df.index // n_inst) + 1, index=df.index)
+
+
+def cycle_aggregate_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Mean metrics per training cycle."""
+    if df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    work["_cycle"] = cycle_column(work)
+    agg_cols = {
+        c: "mean"
+        for c in [
+            "cost",
+            "feasibility_rate",
+            "served_rate",
+            "avg_violation",
+            "unserved_customers",
+            "avg_lateness",
+            "avg_battery_violation",
+            "avg_capacity_violation",
+            "avg_depot_violation",
+            "avg_duplicate_visits",
+        ]
+        if c in work.columns
+    }
+    if not agg_cols:
+        return pd.DataFrame()
+    return work.groupby("_cycle", as_index=False).agg(agg_cols).rename(columns={"_cycle": "cycle"})
+
+
 def load_metrics_df(log_path: Path) -> pd.DataFrame:
     """Primary source: live JSONL; fall back to results CSV if JSONL is empty."""
     rows = read_log(log_path)
@@ -262,7 +320,8 @@ def training_plan_from_config(cfg: dict) -> dict:
     tcfg = cfg.get("training") or {}
     ccfg = cfg.get("curriculum") or {}
 
-    if str(ccfg.get("mode", "")).lower() == "cyclic":
+    mode = str(ccfg.get("mode", "")).lower()
+    if mode == "cyclic":
         cycles = int(ccfg.get("cycles", 5))
         class_order = [c.upper() for c in ccfg.get("class_order", ["C", "R", "RC"])]
         # Approximate total from config comment; exact count is in run summary / metrics length.
@@ -275,7 +334,7 @@ def training_plan_from_config(cfg: dict) -> dict:
             "total_training_updates": total,
             "total_epochs": total,
             "batch_size": 1,
-            "method": str(tcfg.get("method", "reinforce")),
+            "method": str(tcfg.get("method", "actor_critic")),
             "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
             "training_mode": "cyclic",
             "cycles": cycles,
@@ -299,26 +358,42 @@ def training_plan_from_config(cfg: dict) -> dict:
             "total_training_updates": total,
             "total_epochs": total,
             "batch_size": int(tcfg.get("batch_size", 0) or 0),
-            "method": str(tcfg.get("method", "reinforce")),
+            "method": str(tcfg.get("method", "actor_critic")),
             "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
             "training_mode": "curriculum",
         }
 
     epochs = int(tcfg.get("epochs", 0) or 0)
+    passes = int(tcfg.get("passes", 0) or 0)
+    train_names = list((cfg.get("dataset") or {}).get("train_instances") or [])
+    n_train = len(train_names)
+    if not epochs and passes and n_train:
+        epochs = passes * n_train
     return {
         "phases": [],
-        "phase_names": {1: "flat_reinforce"},
+        "phase_names": {1: "flat_actor_critic"},
         "curriculum_stages": [1],
         "total_training_updates": epochs,
         "total_epochs": epochs,
         "batch_size": int(tcfg.get("batch_size", 0) or 0),
-        "method": str(tcfg.get("method", "reinforce")),
+        "method": str(tcfg.get("method", "actor_critic")),
         "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
         "training_mode": "flat",
+        "passes": passes,
+        "n_train_instances": n_train,
+        "train_instances": train_names,
+        "ma_window": ma_window_from_config(cfg),
     }
 
 
-def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.DataFrame:
+def prepare_metrics_df(
+    df: pd.DataFrame,
+    *,
+    window: int | None = None,
+    cfg: dict | None = None,
+) -> pd.DataFrame:
+    if window is None:
+        window = ma_window_from_config(cfg or {}) if cfg else ROLLING_WINDOW
     if df.empty:
         return df
 
@@ -388,6 +463,11 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
         extras["training_phase_id"] = d["phase"]
     if "phase_name" in d.columns:
         extras["training_phase_name"] = d["phase_name"]
+
+    extras["training_cycle"] = cycle_column(d)
+
+    if "mean_feasible_actions" in d.columns and "num_nodes" in d.columns and "feasible_action_ratio" not in d.columns:
+        extras["feasible_action_ratio"] = d["mean_feasible_actions"] / d["num_nodes"].clip(lower=1)
 
     # Canonical class column for consistent chart colors (C / R / RC).
     if "instance_class" in d.columns:
@@ -498,10 +578,15 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
     global_roll_cols = [
         "loss",
         "policy_loss",
+        "actor_loss",
+        "critic_loss",
+        "total_loss",
+        "q_critic_loss",
         "advantage",
         "entropy",
         "grad_norm",
         "learning_rate",
+        "critic_explained_variance",
         "avg_distance",
         "avg_duration",
         "avg_charging_price",
@@ -509,6 +594,16 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
         "avg_charging_time",
         "charging_time_share",
         "avg_waiting_time",
+        "route_balance_cv",
+        "charging_station_visits",
+        "min_remaining_battery",
+        "feasible_action_ratio",
+        "unserved_customers",
+        "avg_lateness",
+        "avg_battery_violation",
+        "avg_capacity_violation",
+        "avg_depot_violation",
+        "avg_duplicate_visits",
         *COST_COLUMNS,
     ]
     for col in global_roll_cols:
@@ -528,15 +623,28 @@ def prepare_metrics_df(df: pd.DataFrame, *, window: int = ROLLING_WINDOW) -> pd.
     return d
 
 
+def _resolve_total_epochs(plan: dict, rows: list[dict], df_len: int = 0) -> int:
+    """Use config estimate, but expand to logged count when training finished."""
+    total = int(plan.get("total_epochs") or plan.get("total_training_updates") or 0)
+    logged = max(df_len, len(rows))
+    if rows:
+        cur = int(rows[-1].get("epoch", logged - 1))
+        logged = max(logged, cur + 1)
+    if logged > total:
+        return logged
+    return total if total > 0 else logged
+
+
 def load_status(log_path: Path, cfg: dict) -> dict:
     plan = training_plan_from_config(cfg)
-    total = int(plan.get("total_epochs") or plan.get("total_training_updates") or 0)
     rows = read_log(log_path)
+    total = _resolve_total_epochs(plan, rows)
     cur = int(rows[-1].get("epoch", len(rows) - 1)) if rows else 0
     age = time.time() - log_path.stat().st_mtime if log_path.exists() else float("inf")
     running = log_path.exists() and age < STALE_AFTER_SECONDS
-    phase_name = str(rows[-1].get("phase_name", "")) if rows else ""
+    phase_name = str(rows[-1].get("curriculum_stage") or rows[-1].get("phase_name", "")) if rows else ""
     phase_id = int(rows[-1].get("phase", 0)) if rows else 0
+    finished = bool(rows) and not running and (cur + 1 >= total or len(rows) >= total)
     return {
         "epoch": cur,
         "training_update": cur,
@@ -544,18 +652,23 @@ def load_status(log_path: Path, cfg: dict) -> dict:
         "total_training_updates": total,
         "epochs_logged": len(rows),
         "running": running,
+        "finished": finished,
         "curriculum_stage": phase_id,
         "training_phase_name": phase_name,
         "stage_name": phase_name,
         "seconds_since_update": age if log_path.exists() else None,
-        "phase": "training" if running else ("finished" if rows and cur >= total > 0 else "waiting"),
+        "phase": "training" if running else ("finished" if finished else "waiting"),
         "message": (
-            f"Training live · epoch {cur} · {len(rows)} logged"
+            f"Training live · epoch {cur} / {total}"
             if running and rows
             else (
-                f"Idle ({age:.0f}s since last update) · epoch {cur}"
-                if rows
-                else "Waiting for training to start…"
+                f"Training complete · {len(rows)} epochs logged"
+                if finished
+                else (
+                    f"Idle ({age:.0f}s since last update) · epoch {cur} / {total}"
+                    if rows
+                    else "Waiting for training to start…"
+                )
             )
         ),
     }
@@ -566,15 +679,27 @@ def progress_from_metrics(df: pd.DataFrame, plan: dict) -> dict:
         return {}
     last = df.iloc[-1]
     total = int(plan.get("total_training_updates") or plan.get("total_epochs") or len(df))
-    if total <= 0:
-        total = len(df)
-    cur = int(last.get("training_update") or last.get("epoch") or len(df) - 1)
-    phase_name = str(last.get("training_phase_name") or last.get("phase_name") or "")
+    cur = int(last.get("training_update", last.get("epoch", len(df) - 1)))
+    logged = len(df)
+    if logged > total:
+        total = logged
+    if cur + 1 > total:
+        total = cur + 1
+    phase_name = str(
+        last.get("curriculum_stage") or last.get("training_phase_name") or last.get("phase_name") or ""
+    )
     if plan.get("training_mode") == "cyclic":
         phase_name = str(last.get("instance_class") or phase_name)
         cycle = int(last.get("cycle") or 0)
         if cycle:
             phase_name = f"cycle {cycle} · {phase_name}"
+    elif plan.get("training_mode") == "flat":
+        cycle = int(last.get("pass") or last.get("training_cycle") or 0)
+        inst = str(last.get("instance_name") or "")
+        if cycle and inst:
+            phase_name = f"pass {cycle} · {inst}"
+        elif inst:
+            phase_name = inst
     return {
         "epoch": cur,
         "training_update": cur,

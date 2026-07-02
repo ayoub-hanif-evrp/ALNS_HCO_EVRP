@@ -1,28 +1,18 @@
-"""Solomon/Schneider and Hanif instance-class detection (C / R / RC).
+"""Solomon/Schneider instance-class detection (C / R / RC).
 
-Supported naming conventions:
-
-* Schneider-style: ``c101_21``, ``c101C5``, ``r201C10``, ``rc108C15``
-* Hanif-style: ``C1_10_1``, ``RC2_10_5`` (Homberger 1000-customer, series 1/2)
+Supported naming: ``c101_21``, ``c101C5``, ``r201C10``, ``rc108C15``, etc.
 """
 from __future__ import annotations
-
-import re
 
 CLASSES = ("C", "R", "RC")
 
 # Schneider reduced instances (e.g. rc108C5, rc201C10).
 SMALL_SIZE_MARKERS = ("C5", "C10", "C15")
 
-# Hanif Homberger series 1 (C1/R1/RC1) — curriculum "small" tier (relaxed TW variant B).
-_HANIF_SERIES1 = re.compile(r"^(RC1|C1|R1)_", re.IGNORECASE)
-
 
 def is_small_instance(name: str) -> bool:
-    """True for Schneider reduced sizes or Hanif series-1 instances (C1/R1/RC1)."""
+    """True for Schneider reduced-size instances (C5/C10/C15 suffixes)."""
     key = name.upper()
-    if _HANIF_SERIES1.match(key):
-        return True
     return any(key.endswith(marker) for marker in SMALL_SIZE_MARKERS)
 
 
@@ -61,7 +51,7 @@ def filter_groups_by_classes(
 
 
 def split_size_tiers(names: list[str], indices: list[int]) -> tuple[list[int], list[int]]:
-    """Split indices into small vs full tiers (Schneider C5/C15 or Hanif series 1/2)."""
+    """Split indices into small vs full tiers (Schneider C5/C10/C15 vs _21)."""
     small, full = [], []
     for idx in indices:
         (small if is_small_instance(names[idx]) else full).append(idx)

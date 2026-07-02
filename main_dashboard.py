@@ -2,7 +2,7 @@
 
 Run this in a separate terminal while training is in progress:
 
-    python main_dashboard.py --config configs/default.yaml
+    python main_dashboard.py
 
 Then open http://localhost:8080 in a browser. The page auto-refreshes every
 few seconds and reads the training log the trainer writes to
@@ -47,7 +47,7 @@ create_dashboard(
 )
 
 ui.run(
-    title="E-VRPTW Live Training",
+    title="MARL EVRP Live Training",
     host=args.host,
     port=args.port,
     reload=False,

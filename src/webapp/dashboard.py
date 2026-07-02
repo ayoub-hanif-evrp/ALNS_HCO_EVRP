@@ -8,17 +8,19 @@ from pathlib import Path
 
 from nicegui import context, ui
 
-from src.webapp.dashboard_charts import TRAINING_CHART_SECTIONS, build_chart_figure, is_wide_chart
+from src.webapp.dashboard_charts import build_chart_figure, get_training_chart_sections, is_wide_chart
 from src.webapp.dashboard_data import (
+    filter_training_instances,
     load_metrics_df,
     load_run_config,
     load_run_meta,
     load_status,
+    ma_window_from_config,
     prepare_metrics_df,
     progress_from_metrics,
     training_plan_from_config,
 )
-from src.webapp.plot_style import STAGE_COLORS
+from src.webapp.plot_style import STAGE_COLORS, curriculum_stage_color
 
 _PAGE = "w-full max-w-[1400px] mx-auto px-6"
 _SECTION = "w-full rounded-xl border border-slate-200 bg-white shadow-sm mb-5"
@@ -38,6 +40,20 @@ def _field(label: str, value: str, *, mono: bool = False) -> None:
 def _section_has_data(df, charts: list) -> bool:
     for c in charts:
         t = c.get("type", "metric")
+        if t == "multi_series_ma":
+            series = c.get("series") or []
+            if any(col in df.columns for col, _ in series):
+                return True
+            continue
+        if t == "cycle_lines":
+            cols = c.get("cols") or []
+            if any(col in df.columns for col, _ in cols):
+                return True
+            continue
+        if t == "feasibility_ma" and "feasibility_rate" in df.columns:
+            return True
+        if t in ("heatmap", "final_cycle_bar", "series_ma") and c.get("col") in df.columns:
+            return True
         if t in ("cost_breakdown", "reward_components", "served_coverage", "optimization_panel", "cost_term"):
             if t == "cost_term" and c.get("col") in df.columns:
                 return True
@@ -70,8 +86,6 @@ def _plotly_payload(fig) -> dict:
 
 def _plot_chart(df, plan: dict, spec: dict) -> None:
     fig = build_chart_figure(df, plan, spec)
-    if fig is None:
-        return
     title = spec.get("title", spec.get("col", "Chart"))
     desc = spec.get("desc") if spec.get("type") != "cost_term" else None
     with ui.element("div").classes("chart-slot").style("width: 100%; min-width: 0;"):
@@ -79,6 +93,11 @@ def _plot_chart(df, plan: dict, spec: dict) -> None:
             ui.label(title).classes("text-sm font-semibold text-slate-800 mb-2")
             if desc:
                 ui.label(desc).classes("text-xs text-slate-400 mb-2")
+            if fig is None:
+                ui.label("Unavailable — required metrics not logged yet").classes(
+                    "text-xs text-rose-500 py-8 text-center"
+                )
+                return
             ui.plotly(_plotly_payload(fig)).classes("w-full").style(
                 "width: 100%; display: block; min-width: 0;"
             )
@@ -177,8 +196,12 @@ def create_dashboard(
             cfg = load_run_config(outputs_root, config_path)
             status = load_status(log_path, cfg)
             meta = load_run_meta(outputs_root)
-            df = prepare_metrics_df(load_metrics_df(log_path))
+            raw_df = load_metrics_df(log_path)
+            raw_df = filter_training_instances(raw_df, cfg)
+            ma_window = ma_window_from_config(cfg)
+            df = prepare_metrics_df(raw_df, window=ma_window, cfg=cfg)
             plan = training_plan_from_config(cfg)
+            plan["ma_window"] = ma_window
 
             if not df.empty and not plan.get("total_training_updates"):
                 plan["total_training_updates"] = len(df)
@@ -190,6 +213,7 @@ def create_dashboard(
             total = int(plan.get("total_training_updates") or status.get("total_epochs") or len(df) or 0)
             cur = int(status.get("training_update") or status.get("epoch") or 0)
             is_cyclic = plan.get("training_mode") == "cyclic"
+            is_flat = plan.get("training_mode") == "flat"
 
             # ---- Status ----
             status_panel.clear()
@@ -208,16 +232,25 @@ def create_dashboard(
                             ui.label("Progress").classes("text-xs font-bold text-slate-400")
                             _field("Iteration", f"{cur} / {total or '—'}")
                             ui.linear_progress(value=min(cur / max(total, 1), 1.0)).classes("w-full")
-                            if is_cyclic:
+                            if status.get("finished"):
+                                ui.label("Training complete").classes("text-sm font-medium text-emerald-600")
+                            elif is_cyclic:
                                 cycles = plan.get("cycles", 5)
                                 ui.label(f"Cyclic: C → R → RC × {cycles}").classes(
+                                    "text-sm font-medium text-slate-700"
+                                )
+                            elif is_flat:
+                                n_inst = plan.get("n_train_instances") or "—"
+                                passes = plan.get("passes") or "—"
+                                ui.label(f"Flat training: {n_inst} instances × {passes} passes").classes(
                                     "text-sm font-medium text-slate-700"
                                 )
                             phase_label = status.get("training_phase_name") or status.get("stage_name")
                             if phase_label:
                                 st = int(status.get("curriculum_stage") or 0)
-                                ui.label(phase_label).classes("text-sm font-medium").style(
-                                    f"color:{STAGE_COLORS.get(st, '#2563eb')}"
+                                color = curriculum_stage_color(str(phase_label), st)
+                                ui.label(str(phase_label).replace("_", " ")).classes("text-sm font-medium").style(
+                                    f"color:{color}"
                                 )
                             if not df.empty and "instance_name" in df.columns:
                                 last_inst = df.iloc[-1].get("instance_name")
@@ -228,12 +261,30 @@ def create_dashboard(
 
                         with ui.column().classes("p-5 gap-2"):
                             ui.label("Schedule").classes("text-xs font-bold text-slate-400")
-                            if is_cyclic:
+                            if plan.get("phases"):
+                                for ph in plan["phases"]:
+                                    name = str(ph.get("name", "")).replace("_", " ")
+                                    steps = int(ph.get("max_episodes", 0))
+                                    color = curriculum_stage_color(str(ph.get("name", "")), int(ph.get("id", 0)))
+                                    ui.label(f"● {name} ({steps} epochs)").classes("text-xs").style(
+                                        f"color:{color}; font-weight:600"
+                                    )
+                            elif is_cyclic:
                                 order = " → ".join(plan.get("class_order") or ["C", "R", "RC"])
                                 ui.label(f"{order} · 1 instance = 1 iteration").classes(
                                     "text-xs text-slate-500"
                                 )
-                            _field("Algorithm", "REINFORCE + baseline")
+                            elif is_flat:
+                                n_inst = plan.get("n_train_instances") or 20
+                                passes = plan.get("passes") or 20
+                                ui.label(
+                                    f"{n_inst} R _21 train instances · {passes} passes · MA window {ma_window}"
+                                ).classes("text-xs text-slate-500")
+                                ui.label("Held-out (not shown): r101_21, r104_21, r209_21").classes(
+                                    "text-[10px] text-slate-400"
+                                )
+                            algo = str(plan.get("method", "actor_critic")).replace("_", "-")
+                            _field("Algorithm", f"Actor-critic ({algo})")
                             ui.label("outputs/results/training_metrics.csv").classes(
                                 "text-[10px] font-mono text-slate-400 mt-1"
                             )
@@ -243,14 +294,15 @@ def create_dashboard(
             with charts_panel:
                 if df.empty:
                     with ui.card().classes(_SECTION + " p-10 text-center"):
-                        ui.label("Waiting for metrics…").classes("text-slate-600")
-                        ui.label(
-                            "python main_train.py --config configs/curriculum.yaml --curriculum"
-                        ).classes("text-xs font-mono text-slate-400 mt-2")
+                        ui.label("Waiting for training metrics…").classes("text-slate-600")
+                        ui.label("python main_train.py").classes("text-xs font-mono text-slate-400 mt-2")
+                        ui.label("Then open this page in a second terminal:").classes("text-xs text-slate-400 mt-3")
+                        ui.label("python main_dashboard.py").classes("text-xs font-mono text-slate-400")
                     return
 
+                chart_sections = get_training_chart_sections(df, plan)
                 visible_sections = [
-                    s for s in TRAINING_CHART_SECTIONS
+                    s for s in chart_sections
                     if _section_has_data(df, s.get("charts", []))
                 ]
 
@@ -269,13 +321,13 @@ def create_dashboard(
                 "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
-                    ui.label("E-VRPTW Transformer · Training monitor").classes("text-lg font-bold")
-                    ui.label(str(log_path)).classes("text-xs text-slate-400")
+                    ui.label("MARL EVRP · Live training monitor").classes("text-lg font-bold")
+                    ui.label(f"{log_path} · training metrics only").classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")
             ui.label(
-                "Grouped sections · one card per theme · jump links above charts"
+                "Training-only · auto-refresh every 3s · held-out test instances excluded"
             ).classes("text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1400px] mx-auto block")
 
         poll = ui.timer(3.0, refresh)
