@@ -44,18 +44,20 @@ from src.utils.seed import describe_device, resolve_device, set_seed
 LOGGER = get_logger()
 
 
-def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, use_horizon, max_steps_factor):
+def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, use_horizon, use_depot_charging, max_steps_factor):
     def runner(instance, m):
         if mode == "multi_sample":
             res = run_multi_sample(
                 instance, policy, m, weights, n_samples=n_samples, device=device,
                 charging_portions=charging_portions, use_horizon_check=use_horizon,
+                use_depot_charging=use_depot_charging,
                 max_steps_factor=max_steps_factor,
             )
         else:
             res = run_episode(
                 instance, policy, m, weights, mode="greedy", device=device,
                 charging_portions=charging_portions, use_horizon_check=use_horizon,
+                use_depot_charging=use_depot_charging,
                 max_steps_factor=max_steps_factor,
             )
         return FleetCandidate(m=m, feasible=res.feasible, objective=res.objective, summary=res.summary, result=res)
@@ -63,9 +65,12 @@ def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, 
     return runner
 
 
-def _baseline_runner(policy_factory, weights, use_horizon, max_steps_factor):
+def _baseline_runner(policy_factory, weights, use_horizon, use_depot_charging, max_steps_factor):
     def runner(instance, m):
-        env = EVRPTWEnv(instance, m=m, use_horizon_check=use_horizon, max_steps_factor=max_steps_factor)
+        env = EVRPTWEnv(
+            instance, m=m, use_horizon_check=use_horizon,
+            use_depot_charging=use_depot_charging, max_steps_factor=max_steps_factor,
+        )
         run_heuristic_episode(env, policy_factory())
         j, _, summary = env.score(weights)
         res = SimpleNamespace(env=env)
@@ -119,6 +124,7 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
     weights = CostWeights.from_config(config["cost"])
     charging_portions = config["problem"]["charging_portions"]
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
+    use_depot_charging = bool(config["problem"].get("use_depot_charging", True))
     fcfg = config["fleet_search"]
     extra_margin = int(fcfg.get("extra_margin", 5))
     selection_mode = fcfg.get("selection_mode", "hierarchical")
@@ -135,16 +141,22 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
         policy = load_policy(ckpt_path, device=device)
         LOGGER.info(f"Loaded checkpoint: {ckpt_path}")
         methods["model_greedy"] = _neural_runner(
-            policy, weights, "greedy", device, n_samples, charging_portions, use_horizon, max_steps_factor
+            policy, weights, "greedy", device, n_samples, charging_portions,
+            use_horizon, use_depot_charging, max_steps_factor,
         )
         methods["model_sample_bestN"] = _neural_runner(
-            policy, weights, "multi_sample", device, n_samples, charging_portions, use_horizon, max_steps_factor
+            policy, weights, "multi_sample", device, n_samples, charging_portions,
+            use_horizon, use_depot_charging, max_steps_factor,
         )
     else:
         LOGGER.warning(f"No checkpoint at {ckpt_path}; evaluating baselines only.")
 
-    methods["nearest"] = _baseline_runner(lambda: NearestFeasiblePolicy(), weights, use_horizon, max_steps_factor)
-    methods["random"] = _baseline_runner(lambda: RandomFeasiblePolicy(seed=0), weights, use_horizon, max_steps_factor)
+    methods["nearest"] = _baseline_runner(
+        lambda: NearestFeasiblePolicy(), weights, use_horizon, use_depot_charging, max_steps_factor,
+    )
+    methods["random"] = _baseline_runner(
+        lambda: RandomFeasiblePolicy(seed=0), weights, use_horizon, use_depot_charging, max_steps_factor,
+    )
 
     out = config["outputs"]
     results_path = Path(out["results"]) / "results.csv"

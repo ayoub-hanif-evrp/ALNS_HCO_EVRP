@@ -246,6 +246,7 @@ def train_curriculum(
     charging_portions = config["problem"]["charging_portions"]
     weights = CostWeights.from_config(config["cost"])
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
+    use_depot_charging = bool(config["problem"].get("use_depot_charging", True))
     max_steps_factor = int(config["decoding"].get("max_steps_factor", 6))
     fcfg = config["fleet_search"]
     val_extra_margin = int(fcfg.get("extra_margin", 5))
@@ -538,7 +539,7 @@ def train_curriculum(
             eval_ds, eval_groups, policy, weights,
             classes=val_classes, mode=val_decoding, device=device,
             n_samples=val_n_samples, charging_portions=charging_portions,
-            use_horizon=use_horizon, max_steps_factor=max_steps_factor,
+            use_horizon=use_horizon, use_depot_charging=use_depot_charging, max_steps_factor=max_steps_factor,
             extra_margin=val_extra_margin, selection_mode=selection_mode,
             max_instances=val_max_per_class,
             exclude_names=fixed_name_set if fixed_mini_mode else None,
@@ -626,7 +627,7 @@ def train_curriculum(
             record = _train_step(
                 policy, value_critic, q_critic, optimizer, critic_optimizer,
                 train_ds, [idx], weights, device, charging_portions,
-                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                use_horizon, use_depot_charging, max_steps_factor, step_phase, rng, rl_cfg,
                 entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
                 global_epoch=global_epoch,
                 use_amp=use_amp,
@@ -684,7 +685,7 @@ def train_curriculum(
             record = _train_step(
                 policy, value_critic, q_critic, optimizer, critic_optimizer,
                 train_ds, [idx], weights, device, charging_portions,
-                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                use_horizon, use_depot_charging, max_steps_factor, step_phase, rng, rl_cfg,
                 entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
                 global_epoch=global_epoch,
                 use_amp=use_amp,
@@ -822,7 +823,7 @@ def train_curriculum(
                 record = _train_step(
                     policy, value_critic, q_critic, optimizer, critic_optimizer,
                     train_ds, [idx], weights, device, charging_portions,
-                    use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                    use_horizon, use_depot_charging, max_steps_factor, step_phase, rng, rl_cfg,
             entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
             global_epoch=global_epoch,
             use_amp=use_amp,
@@ -875,7 +876,7 @@ def train_curriculum(
             record = _train_step(
                 policy, value_critic, q_critic, optimizer, critic_optimizer,
                 train_ds, [idx], weights, device, charging_portions,
-                use_horizon, max_steps_factor, step_phase, rng, rl_cfg,
+                use_horizon, use_depot_charging, max_steps_factor, step_phase, rng, rl_cfg,
                 entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
                 global_epoch=global_epoch,
                 use_amp=use_amp,
@@ -938,7 +939,7 @@ def train_curriculum(
                 record = _train_step(
                     policy, value_critic, q_critic, optimizer, critic_optimizer,
                     train_ds, batch_idx, weights, device, charging_portions,
-                    use_horizon, max_steps_factor, phase, rng, rl_cfg,
+                    use_horizon, use_depot_charging, max_steps_factor, phase, rng, rl_cfg,
                     entropy_coef, grad_clip, min_decisions_warn=min_decisions_warn,
                     global_epoch=global_epoch,
                     use_amp=use_amp,
@@ -993,7 +994,7 @@ def train_curriculum(
 def _train_step(
     policy, value_critic, q_critic, optimizer, critic_optimizer,
     train_ds, batch_idx, weights, device, charging_portions,
-    use_horizon, max_steps_factor, phase, rng, rl_cfg,
+    use_horizon, use_depot_charging, max_steps_factor, phase, rng, rl_cfg,
     entropy_coef, grad_clip,
     min_decisions_warn: int | None = None,
     global_epoch: int = 0,
@@ -1005,7 +1006,7 @@ def _train_step(
     return actor_critic_train_step(
         policy, value_critic, q_critic, optimizer, critic_optimizer,
         train_ds, batch_idx, weights, device, charging_portions,
-        use_horizon, max_steps_factor, phase, rng, rl_cfg,
+        use_horizon, use_depot_charging, max_steps_factor, phase, rng, rl_cfg,
         entropy_coef, grad_clip, min_decisions_warn,
         global_epoch=global_epoch,
         use_amp=use_amp,

@@ -286,10 +286,10 @@ def check_depot_return(instance) -> CheckResult:
     j = instance.customer_indices[0]
     ev.remaining_battery = instance.vehicle.battery_capacity
     ev.remaining_capacity = instance.vehicle.load_capacity
-    env.apply_action(ev, j)  # leave depot, serve a customer
+    env.apply_action(ev, j)
     depot = instance.depot_index
     ev.remaining_battery = instance.vehicle.battery_capacity
-    env.apply_action(ev, depot)
+    env.auto_close_route(ev)
     return _ok(
         "depot_return_works",
         ev.finished and ev.route_nodes[-1] == depot,

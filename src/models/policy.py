@@ -105,6 +105,8 @@ class TransformerEVRPTWPolicy(nn.Module):
         node_embeddings: torch.Tensor,
         feasible_mask: np.ndarray,
         mode: str = "sampling",
+        *,
+        depot_logit_penalty: float = 0.0,
     ) -> ActionOutput:
         """Select the next node (and charging portion if a station) for the EV."""
         device = node_embeddings.device
@@ -113,6 +115,11 @@ class TransformerEVRPTWPolicy(nn.Module):
         scores = self.pointer.node_scores(decoder_context, node_embeddings)  # [N]
         mask_t = torch.tensor(feasible_mask, dtype=torch.bool, device=device)
         masked_scores = scores.masked_fill(~mask_t, NEG_INF)
+        if depot_logit_penalty > 0.0:
+            depot_idx = int(env.instance.depot_index)
+            if mask_t[depot_idx]:
+                masked_scores = masked_scores.clone()
+                masked_scores[depot_idx] = masked_scores[depot_idx] - float(depot_logit_penalty)
         log_probs = torch.log_softmax(masked_scores, dim=-1)
         probs = log_probs.exp()
 
@@ -136,7 +143,9 @@ class TransformerEVRPTWPolicy(nn.Module):
         total_log_prob = node_log_prob
         charge_portion = None
 
-        if env.instance.nodes[node].is_charging_station:
+        if env.instance.nodes[node].is_charging_station or (
+            env.instance.nodes[node].is_depot and env.use_depot_charging and env.instance.depot_has_charging
+        ):
             charge_portion, charge_log_prob, charge_entropy = self._select_charge(
                 env, ev, node, node_embeddings, decoder_context, mode
             )

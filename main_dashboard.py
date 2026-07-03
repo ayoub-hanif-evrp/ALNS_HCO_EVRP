@@ -1,12 +1,11 @@
 """Launch the live training dashboard (NiceGUI).
 
-Run this in a separate terminal while training is in progress:
+This is the primary training monitor. Run in a second terminal while training:
 
     python main_dashboard.py
 
-Then open http://localhost:8080 in a browser. The page auto-refreshes every
-few seconds and reads the training log the trainer writes to
-``outputs/logs/train_log.jsonl``.
+Open http://localhost:8080 — graphs refresh automatically from
+``outputs/logs/train_log.jsonl`` (training instances only; no test/holdout data).
 """
 from __future__ import annotations
 

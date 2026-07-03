@@ -73,16 +73,53 @@ def test_partial_charging_portion(small_instance):
     assert abs(ev.remaining_battery - expected) < 1e-4
 
 
-def test_depot_return_marks_finished(small_instance):
+def test_depot_recharge_continues_route(small_instance):
+    inst = small_instance
+    if not inst.depot_has_charging:
+        return
+    env = _env(inst)
+    ev = env.evs[0]
+    j = inst.customer_indices[0]
+    env.apply_action(ev, j)
+    before_time = ev.current_time
+    env.apply_action(ev, inst.depot_index, charge_portion=1.0)
+    assert not ev.finished
+    assert ev.active
+    assert ev.current_node == inst.depot_index
+    assert ev.current_time > before_time
+    assert ev.total_charging_price == 0.0
+    assert len(ev.charging_actions) == 1
+
+
+def test_auto_close_returns_to_depot(small_instance):
     inst = small_instance
     env = _env(inst)
     ev = env.evs[0]
-    # Move to a customer first so depot is not a self-loop.
     j = inst.customer_indices[0]
     env.apply_action(ev, j)
-    env.apply_action(ev, inst.depot_index)
+    dist_before = env.total_distance
+    route_before = ev.route_distance
+    info = env.auto_close_route(ev)
     assert ev.finished
     assert ev.route_nodes[-1] == inst.depot_index
+    assert info["delta_distance"] > 0.0
+    assert env.total_distance > dist_before
+    assert ev.route_distance > route_before
+
+
+def test_auto_close_respects_depot_closing_window(small_instance):
+    inst = small_instance
+    env = _env(inst)
+    ev = env.evs[0]
+    j = inst.customer_indices[0]
+    env.apply_action(ev, j)
+    depot = inst.depot_index
+    travel_back = inst.travel_time_matrix[j, depot]
+    # Force a late return relative to depot due time.
+    ev.current_time = inst.nodes[depot].due_time - travel_back + 1.0
+    info = env.auto_close_route(ev)
+    assert info["lateness"] > 0.0
+    assert env.total_lateness > 0.0
 
 
 def test_event_driven_smallest_time_acts_next(small_instance):

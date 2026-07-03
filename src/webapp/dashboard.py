@@ -52,6 +52,17 @@ def _section_has_data(df, charts: list) -> bool:
             continue
         if t == "feasibility_ma" and "feasibility_rate" in df.columns:
             return True
+        if t == "best_objective_so_far" and (
+            "best_objective_so_far" in df.columns or "cost_best" in df.columns
+        ):
+            return True
+        if t == "sample_efficiency_quality" and (
+            ("served_ratio" in df.columns or "served_rate" in df.columns)
+            and "feasibility_rate" in df.columns
+        ):
+            return True
+        if t == "explained_variance" and "critic_explained_variance" in df.columns:
+            return True
         if t in ("heatmap", "final_cycle_bar", "series_ma") and c.get("col") in df.columns:
             return True
         if t in ("cost_breakdown", "reward_components", "served_coverage", "optimization_panel", "cost_term"):
@@ -278,9 +289,9 @@ def create_dashboard(
                                 n_inst = plan.get("n_train_instances") or 20
                                 passes = plan.get("passes") or 20
                                 ui.label(
-                                    f"{n_inst} R _21 train instances · {passes} passes · MA window {ma_window}"
+                                    f"{n_inst} RC _21 train instances · {passes} cycles · MA window {ma_window}"
                                 ).classes("text-xs text-slate-500")
-                                ui.label("Held-out (not shown): r101_21, r104_21, r209_21").classes(
+                                ui.label("Held-out (not used in training): rc101_21, rc104_21, rc208_21").classes(
                                     "text-[10px] text-slate-400"
                                 )
                             algo = str(plan.get("method", "actor_critic")).replace("_", "-")
@@ -321,8 +332,8 @@ def create_dashboard(
                 "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
-                    ui.label("MARL EVRP · Live training monitor").classes("text-lg font-bold")
-                    ui.label(f"{log_path} · training metrics only").classes("text-xs text-slate-400")
+                    ui.label("MARL EVRP · Live training diagnostics").classes("text-lg font-bold")
+                    ui.label(f"{log_path} · Schneider RC _21 training only").classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")

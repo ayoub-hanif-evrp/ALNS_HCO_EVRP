@@ -26,6 +26,11 @@ class EpisodeResult:
     fleet_size: int = 0
 
 
+def _step_or_close(env: EVRPTWEnv, ev) -> bool:
+    """Close the route if required; return True if the EV was closed without a policy step."""
+    return env.try_auto_close_route(ev)
+
+
 def run_episode(
     instance,
     policy,
@@ -35,6 +40,7 @@ def run_episode(
     device: torch.device | str = "cpu",
     charging_portions: list[float] | None = None,
     use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
     max_steps_factor: int = 6,
     min_decisions_warn: int | None = None,
 ) -> EpisodeResult:
@@ -48,6 +54,7 @@ def run_episode(
         m=m,
         charging_portions=charging_portions or policy.charging_portions,
         use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
         max_steps_factor=max_steps_factor,
     )
     node_embeddings = policy.encode(instance, device=device)
@@ -61,15 +68,18 @@ def run_episode(
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
-        feasible_mask, _ = env.feasible_mask(ev)
-        if not feasible_mask.any():
-            env.finish_idle_ev(ev)
+        if _step_or_close(env, ev):
             continue
+        feasible_mask, _ = env.feasible_mask(ev)
         action = policy.select_action(env, ev, node_embeddings, feasible_mask, mode=mode)
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
         num_decisions += 1
         env.apply_action(ev, action.node, action.charge_portion)
+
+    for ev in env.evs:
+        if not ev.finished:
+            env.auto_close_route(ev)
 
     done_reason = env.get_done_reason()
     if env.done_reason is None and env.is_done():

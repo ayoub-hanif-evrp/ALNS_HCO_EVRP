@@ -21,17 +21,19 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
         ev = env.select_acting_ev()
         if ev is None:
             break
-        mask, _ = env.feasible_mask(ev)
-        if not mask.any():
-            env.finish_idle_ev(ev)
+        if env.try_auto_close_route(ev):
             continue
+        mask, _ = env.feasible_mask(ev)
         node, portion = policy.select(env, ev, mask)
         env.apply_action(ev, node, portion)
+    for ev in env.evs:
+        if not ev.finished:
+            env.auto_close_route(ev)
     return env
 
 
 class NearestFeasiblePolicy:
-    """Pick the nearest feasible unserved customer; else nearest station; else depot."""
+    """Pick the nearest feasible unserved customer; else nearest recharge node."""
 
     def select(self, env: EVRPTWEnv, ev, mask: np.ndarray):
         inst = env.instance
@@ -45,10 +47,12 @@ class NearestFeasiblePolicy:
         feasible_stations = [s for s in inst.charging_station_indices if mask[s]]
         if feasible_stations:
             node = min(feasible_stations, key=lambda s: dist[s])
-            return node, 1.0  # charge fully
+            return node, 1.0
 
-        # Fall back to depot (the only remaining feasible option).
-        return inst.depot_index, None
+        if mask[inst.depot_index]:
+            return inst.depot_index, 1.0
+
+        raise RuntimeError("No feasible action for heuristic policy")
 
 
 class RandomFeasiblePolicy:
@@ -61,7 +65,11 @@ class RandomFeasiblePolicy:
         inst = env.instance
         feasible = np.nonzero(mask)[0].tolist()
         node = self.rng.choice(feasible)
-        portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if inst.nodes[node].is_charging_station else None
+        n_obj = inst.nodes[node]
+        is_recharge = n_obj.is_charging_station or (
+            n_obj.is_depot and env.use_depot_charging and inst.depot_has_charging
+        )
+        portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if is_recharge else None
         return node, portion
 
 

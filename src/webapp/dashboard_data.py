@@ -194,6 +194,11 @@ def read_log(log_path: Path) -> list[dict]:
 
 
 def ma_window_from_config(cfg: dict) -> int:
+    """Moving-average window = training instances per cycle (one full pass)."""
+    ds = cfg.get("dataset") or {}
+    train_n = len(ds.get("train_instances") or [])
+    if train_n > 0:
+        return train_n
     tcfg = cfg.get("training") or {}
     return int(tcfg.get("dashboard_ma_window", DEFAULT_MA_WINDOW))
 
@@ -233,6 +238,7 @@ def cycle_aggregate_df(df: pd.DataFrame) -> pd.DataFrame:
         c: "mean"
         for c in [
             "cost",
+            "final_objective",
             "feasibility_rate",
             "served_rate",
             "avg_violation",
@@ -364,7 +370,7 @@ def training_plan_from_config(cfg: dict) -> dict:
         }
 
     epochs = int(tcfg.get("epochs", 0) or 0)
-    passes = int(tcfg.get("passes", 0) or 0)
+    passes = int(tcfg.get("cycles") or tcfg.get("passes") or 0)
     train_names = list((cfg.get("dataset") or {}).get("train_instances") or [])
     n_train = len(train_names)
     if not epochs and passes and n_train:
@@ -380,6 +386,7 @@ def training_plan_from_config(cfg: dict) -> dict:
         "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
         "training_mode": "flat",
         "passes": passes,
+        "cycles": passes,
         "n_train_instances": n_train,
         "train_instances": train_names,
         "ma_window": ma_window_from_config(cfg),
@@ -576,6 +583,24 @@ def prepare_metrics_df(
     _roll_mean("avg_violation", "rolling_avg_violation_mean")
 
     global_roll_cols = [
+        "final_objective",
+        "raw_objective_return",
+        "shaped_training_return",
+        "served_bonus_total",
+        "early_depot_penalty_total",
+        "step_penalty_total",
+        "terminal_unserved_penalty_scaled",
+        "terminal_penalty_coef",
+        "relative_objective_mismatch",
+        "fraction_customer_actions",
+        "fraction_station_actions",
+        "fraction_depot_actions",
+        "early_depot_returns",
+        "actor_grad_norm",
+        "critic_grad_norm",
+        "actor_param_delta_norm",
+        "critic_param_delta_norm",
+        "advantage_std",
         "loss",
         "policy_loss",
         "actor_loss",
@@ -613,6 +638,9 @@ def prepare_metrics_df(
         extras["best_reward"] = d["reward"].cummax()
     if "cost" in d.columns:
         extras["cost_best"] = d["cost"].cummin()
+    obj_col = "final_objective" if "final_objective" in d.columns else ("cost" if "cost" in d.columns else None)
+    if obj_col and "best_objective_so_far" not in d.columns:
+        extras["best_objective_so_far"] = d[obj_col].astype(float).cummin()
 
     # Overwrite existing columns in-place; concat only net-new columns (avoids duplicate labels).
     overlap = {k: extras.pop(k) for k in list(extras.keys()) if k in d.columns}

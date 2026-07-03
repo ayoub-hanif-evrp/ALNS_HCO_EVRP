@@ -17,7 +17,7 @@ import numpy as np
 from .cost import CostWeights, SolutionSummary, compute_cost, is_feasible
 from .ev_state import EVState
 from .event_queue import select_next_ev
-from .masks import compute_feasible_mask
+from .masks import compute_feasible_mask, must_close_route
 
 EPS = 1e-6
 
@@ -29,12 +29,14 @@ class EVRPTWEnv:
         m: int,
         charging_portions: list[float] | None = None,
         use_horizon_check: bool = True,
+        use_depot_charging: bool = True,
         max_steps_factor: int = 6,
     ):
         self.instance = instance
         self.m = m
         self.charging_portions = charging_portions or [0.25, 0.50, 0.75, 1.0]
         self.use_horizon_check = use_horizon_check
+        self.use_depot_charging = bool(use_depot_charging)
         self.max_steps = max(50, max_steps_factor * max(instance.num_customers, 1))
         self.reset()
 
@@ -82,7 +84,24 @@ class EVRPTWEnv:
         return select_next_ev(self.evs)
 
     def feasible_mask(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
-        return compute_feasible_mask(self.instance, self, ev, self.use_horizon_check)
+        return compute_feasible_mask(
+            self.instance,
+            self,
+            ev,
+            self.use_horizon_check,
+            self.use_depot_charging,
+        )
+
+    def should_close_route(self, ev: EVState) -> bool:
+        """True when the EV must return to depot (no customer service possible)."""
+        return must_close_route(
+            self.instance,
+            ev,
+            self.served_mask,
+            self.reserved_mask,
+            use_depot_charging=self.use_depot_charging,
+            use_horizon_check=self.use_horizon_check,
+        )
 
     def all_customers_served(self) -> bool:
         return self.num_served_customers >= self.instance.num_customers
@@ -137,9 +156,11 @@ class EVRPTWEnv:
         if node_obj.is_customer:
             info = self._apply_customer(ev, node)
         elif node_obj.is_charging_station:
-            info = self._apply_station(ev, node, charge_portion)
+            info = self._apply_recharge(ev, node, charge_portion, free=False)
         elif node_obj.is_depot:
-            info = self._apply_depot(ev, node)
+            if not (self.use_depot_charging and inst.depot_has_charging):
+                raise ValueError("Depot visits require use_depot_charging and depot_has_charging")
+            info = self._apply_recharge(ev, node, charge_portion, free=True)
         else:  # pragma: no cover - node types are exhaustive
             raise ValueError(f"Unknown node type for node {node}")
 
@@ -239,18 +260,27 @@ class EVRPTWEnv:
         return 1.0
 
     def _price_per_energy_at(self, node: int) -> float:
-        """Expected price per unit charged energy at a node (0 if unknown)."""
+        """Expected price per unit charged energy at a node (0 if unknown or depot)."""
         inst = self.instance
+        if node == inst.depot_index:
+            return 0.0
         if inst.station_price_per_energy is not None:
             price = float(inst.station_price_per_energy[node])
             if price > 1e-9 and not np.isnan(price):
                 return price
         return 0.0
 
-    def _apply_station(self, ev: EVState, s: int, charge_portion: float | None) -> dict:
+    def _apply_recharge(
+        self,
+        ev: EVState,
+        node: int,
+        charge_portion: float | None,
+        *,
+        free: bool,
+    ) -> dict:
         inst = self.instance
         vp = inst.vehicle
-        d, t, e = self._move_energy_time(ev, s)
+        d, t, e = self._move_energy_time(ev, node)
         portion = 1.0 if charge_portion is None else float(charge_portion)
 
         arrival = ev.current_time + t
@@ -263,11 +293,26 @@ class EVRPTWEnv:
         missing = max(0.0, vp.battery_capacity - battery_after_arrival)
         charged_energy = portion * missing
         new_battery = min(vp.battery_capacity, battery_after_arrival + charged_energy)
-        charging_time = charged_energy / self._charging_rate_at(s)
-        charge_price = self._price_per_energy_at(s) * charged_energy
+        charging_time = charged_energy / self._charging_rate_at(node)
+
+        if inst.nodes[node].is_depot:
+            waiting = max(0.0, inst.nodes[node].ready_time - arrival)
+            lateness = max(0.0, arrival - inst.nodes[node].due_time)
+            if lateness > EPS:
+                self.time_window_violation_count += 1
+            self.total_lateness += lateness
+            self.total_waiting_time += waiting
+            ev.total_waiting_time += waiting
+            charge_start = max(arrival, inst.nodes[node].ready_time)
+        else:
+            waiting = 0.0
+            lateness = 0.0
+            charge_start = arrival
+
+        charge_price = 0.0 if free else self._price_per_energy_at(node) * charged_energy
 
         ev.remaining_battery = new_battery
-        ev.current_time = arrival + charging_time
+        ev.current_time = charge_start + charging_time
         ev.route_distance += d
         ev.total_charging_time += charging_time
         ev.total_charging_price += charge_price
@@ -275,14 +320,14 @@ class EVRPTWEnv:
         self.total_charging_time += charging_time
         self.total_charging_price += charge_price
 
-        ev.route_nodes.append(s)
+        ev.route_nodes.append(node)
         ev.arrival_times.append(arrival)
         ev.departure_times.append(ev.current_time)
         ev.battery_trace.append(ev.remaining_battery)
         ev.capacity_trace.append(ev.remaining_capacity)
-        ev.current_node = s  # EV physically moves to the charging station
+        ev.current_node = node
         ev.charging_actions.append({
-            "node": s,
+            "node": node,
             "portion": portion,
             "charged_energy": charged_energy,
             "charging_time": charging_time,
@@ -291,16 +336,61 @@ class EVRPTWEnv:
         ev.active = True
         ev.busy = False
 
+        node_type = "depot_recharge" if inst.nodes[node].is_depot else "station"
         return {
-            "type": "station",
-            "node": s,
+            "type": node_type,
+            "node": node,
             "arrival": arrival,
             "charged_energy": charged_energy,
             "charging_time": charging_time,
             "charging_price": charge_price,
+            "waiting": waiting,
+            "lateness": lateness,
+            "delta_distance": d,
         }
 
-    def _apply_depot(self, ev: EVState, depot: int) -> dict:
+    def _finalize_depot_arrival(
+        self,
+        ev: EVState,
+        arrival: float,
+        distance: float,
+    ) -> tuple[float, float, float]:
+        """Apply depot closing window, distance, waiting; return (waiting, lateness, departure)."""
+        depot = self.instance.depot_index
+        node = self.instance.nodes[depot]
+        waiting = max(0.0, node.ready_time - arrival)
+        lateness = max(0.0, arrival - node.due_time)
+        if lateness > EPS:
+            self.time_window_violation_count += 1
+        self.total_lateness += lateness
+        self.total_waiting_time += waiting
+        ev.total_waiting_time += waiting
+        service_start = max(arrival, node.ready_time)
+        departure = service_start + node.service_time
+        ev.current_time = departure
+        ev.route_distance += distance
+        self.total_distance += distance
+        return waiting, lateness, departure
+
+    def auto_close_route(self, ev: EVState) -> dict:
+        """End the EV route with a mandatory return to the depot when required."""
+        inst = self.instance
+        depot = inst.depot_index
+        self.step_count += 1
+        previous_node = ev.current_node
+
+        if ev.current_node == depot:
+            ev.finished = True
+            ev.active = False
+            return {
+                "type": "route_close",
+                "node": depot,
+                "arrival": ev.current_time,
+                "delta_distance": 0.0,
+                "delta_travel_time": 0.0,
+                "delta_energy_used": 0.0,
+            }
+
         d, t, e = self._move_energy_time(ev, depot)
         arrival = ev.current_time + t
         ev.remaining_battery -= e
@@ -308,32 +398,51 @@ class EVRPTWEnv:
             self.total_battery_violation += -ev.remaining_battery
             self.battery_violation_count += 1
             self.depot_return_violation += 1
-        ev.current_time = arrival
-        ev.route_distance += d
-        self.total_distance += d
+            self.infeasible = True
+            self.infeasibility_reasons.append(
+                f"ev_{ev.ev_id}_cannot_return_to_depot_from_{ev.current_node}"
+            )
+
+        waiting, lateness, departure = self._finalize_depot_arrival(ev, arrival, d)
 
         ev.route_nodes.append(depot)
         ev.arrival_times.append(arrival)
-        ev.departure_times.append(arrival)
+        ev.departure_times.append(departure)
         ev.battery_trace.append(ev.remaining_battery)
         ev.capacity_trace.append(ev.remaining_capacity)
-        ev.current_node = depot  # EV physically returns to the depot
+        ev.current_node = depot
         ev.finished = True
         ev.active = False
-        return {"type": "depot", "node": depot, "arrival": arrival}
+        self.current_event_time = max(self.current_event_time, ev.current_time)
+        return {
+            "type": "route_close",
+            "node": depot,
+            "arrival": arrival,
+            "departure": departure,
+            "waiting": waiting,
+            "lateness": lateness,
+            "ev_id": ev.ev_id,
+            "previous_node": previous_node,
+            "delta_travel_time": t,
+            "delta_energy_used": e,
+            "delta_distance": d,
+            "customer_served": False,
+        }
+
+    def try_auto_close_route(self, ev: EVState) -> bool:
+        """Close the route when service is impossible; return True if closed."""
+        if self.should_close_route(ev):
+            self.auto_close_route(ev)
+            return True
+        mask, _ = self.feasible_mask(ev)
+        if not mask.any():
+            self.auto_close_route(ev)
+            return True
+        return False
 
     def finish_idle_ev(self, ev: EVState) -> None:
-        """Mark an EV finished when it has no feasible action.
-
-        If the EV is away from the depot this is a depot-return violation (it is
-        stranded); if it is at the depot it simply remains unused.
-        """
-        if ev.current_node != self.instance.depot_index:
-            self.depot_return_violation += 1
-            self.infeasible = True
-            self.infeasibility_reasons.append(f"ev_{ev.ev_id}_stranded_at_{ev.current_node}")
-        ev.finished = True
-        ev.active = False
+        """Deprecated alias: always close with mandatory depot return."""
+        self.auto_close_route(ev)
 
     # ------------------------------------------------------------------ #
     # Feature extraction for the policy

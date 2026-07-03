@@ -136,6 +136,7 @@ def fig_series_ma(
     title: str,
     ylabel: str,
     y_range: tuple[float, float] | None = None,
+    hline: float | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     if df.empty or col not in df.columns:
@@ -158,12 +159,112 @@ def fig_series_ma(
                 line=dict(color="#2563eb", width=2.5),
             )
         )
+    if hline is not None:
+        fig.add_hline(
+            y=float(hline), line_dash="dash", line_color="#ef4444", line_width=1.5,
+            annotation_text=f"ref {hline}", annotation_position="top right",
+        )
     add_training_regions(fig, df, plan)
     layout = _chart_layout_embedded(xaxis_title="Training epoch", yaxis_title=ylabel)
     if y_range:
         layout["yaxis"] = dict(range=list(y_range))
     fig.update_layout(**layout)
     return fig
+
+
+def fig_explained_variance(df: pd.DataFrame, plan: dict, *, title: str) -> go.Figure:
+    col = "critic_explained_variance"
+    fig = go.Figure()
+    if df.empty or col not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    x = _x_epoch(df)
+    y = df[col].astype(float)
+    fig.add_trace(
+        go.Scatter(x=x, y=y, mode="lines", name="Explained variance", line=dict(color="#7c3aed", width=2))
+    )
+    fig.add_hline(y=0.0, line_dash="dash", line_color="#64748b", line_width=1.5)
+    add_training_regions(fig, df, plan)
+    fig.update_layout(**_chart_layout_embedded(xaxis_title="Training epoch", yaxis_title="Explained variance"))
+    return fig
+
+
+def fig_best_objective_so_far(df: pd.DataFrame, plan: dict, *, title: str) -> go.Figure:
+    """Best-so-far objective curve (standard RL sample-efficiency / anytime plot)."""
+    obj_col = _pick_metric_col(df, "final_objective", "cost", "cost_raw")
+    best_col = _pick_metric_col(df, "best_objective_so_far", "cost_best")
+    fig = go.Figure()
+    if df.empty or not best_col or best_col not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    x = _x_epoch(df)
+    if obj_col and obj_col in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=df[obj_col].astype(float),
+                mode="markers",
+                name="Per epoch",
+                marker=dict(size=4, color="#94a3b8", opacity=0.4),
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=df[best_col].astype(float),
+            mode="lines",
+            name="Best so far",
+            line=dict(color="#16a34a", width=2.8),
+        )
+    )
+    add_training_regions(fig, df, plan)
+    fig.update_layout(
+        **_chart_layout_embedded(
+            xaxis_title="Training epoch",
+            yaxis_title="Objective J (lower is better)",
+        )
+    )
+    return fig
+
+
+def fig_sample_efficiency_quality(df: pd.DataFrame, plan: dict, *, title: str) -> go.Figure:
+    """CB-DRL-style dual metric: served coverage % and feasibility rate over training."""
+    served_col = _pick_metric_col(df, "served_ratio", "served_rate")
+    feas_col = "feasibility_rate"
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    if df.empty or not served_col or served_col not in df.columns or feas_col not in df.columns:
+        fig.update_layout(**_chart_layout())
+        return fig
+    x = _x_epoch(df)
+    served_ma = _rolling_series(df, served_col, plan)
+    served_y = (served_ma if served_ma is not None else df[served_col].astype(float)) * 100.0
+    feas_ma = _rolling_series(df, feas_col, plan)
+    feas_y = feas_ma if feas_ma is not None else df[feas_col].astype(float)
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=served_y, mode="lines", name="Served % (MA)",
+            line=dict(color="#2563eb", width=2.5),
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=feas_y, mode="lines", name="Feasibility (MA)",
+            line=dict(color="#16a34a", width=2.5, dash="dot"),
+        ),
+        secondary_y=True,
+    )
+    add_training_regions(fig, df, plan)
+    fig.update_layout(**_chart_layout_embedded(xaxis_title="Training epoch"))
+    fig.update_yaxes(title_text="Served (%)", range=[0, 105], secondary_y=False)
+    fig.update_yaxes(title_text="Feasibility rate", range=[-0.05, 1.05], secondary_y=True)
+    fig.update_layout(title=dict(text=title, x=0.02, xanchor="left"))
+    return fig
+
+
+def _constraint_violation_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Hard-constraint violations only (unserved tracked separately)."""
+    return [(c, l) for c, l in _violation_series(df) if c != "unserved_customers"]
 
 
 def fig_feasibility_ma(df: pd.DataFrame, plan: dict, *, title: str) -> go.Figure:
@@ -401,255 +502,348 @@ def _objective_component_specs(df: pd.DataFrame) -> list[dict[str, Any]]:
     }]
 
 
-def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
-    """Live monitor sections grouped by domain (solution, network, EVRP, MARL, schedule)."""
-    cost_col = "cost" if "cost" in df.columns else ("mean_J" if "mean_J" in df.columns else None)
-    viol = _violation_series(df)
-    losses = _loss_series(df)
-    gpu_cols = [(c, l) for c, l in [
-        ("cuda_max_mem_allocated_mb", "peak GPU MB"),
-        ("cuda_mem_allocated_mb", "GPU allocated MB"),
-    ] if c in df.columns and df[c].notna().any()]
+def _pick_metric_col(df: pd.DataFrame, *candidates: str) -> str | None:
+    for col in candidates:
+        if col in df.columns and df[col].notna().any():
+            return col
+    return None
 
-    sections: list[dict[str, Any]] = [
+
+def _reward_decomp_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("served_bonus_total", "served bonus"),
+        ("early_depot_penalty_total", "early depot penalty"),
+        ("terminal_unserved_penalty_scaled", "terminal unserved (scaled)"),
+        ("mean_pen_unserved", "pen. unserved (objective)"),
+        ("mean_pen_infeasible", "pen. infeasible"),
+        ("step_penalty_total", "step penalty"),
+    ]:
+        if col in df.columns and df[col].notna().any() and float(df[col].abs().sum()) > 0:
+            series.append((col, label))
+    return series[:5]
+
+
+def _return_comparison_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("raw_objective_return", "raw objective return"),
+        ("shaped_training_return", "shaped training return"),
+        ("reward", "episode return"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series[:2] if len(series) >= 2 else series
+
+
+def _action_fraction_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("fraction_customer_actions", "customer"),
+        ("fraction_station_actions", "station"),
+        ("fraction_depot_actions", "depot"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series
+
+
+def _grad_param_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("actor_grad_norm", "actor grad"),
+        ("critic_grad_norm", "critic grad"),
+        ("actor_param_delta_norm", "actor Δparam"),
+        ("critic_param_delta_norm", "critic Δparam"),
+        ("grad_norm", "total grad"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series[:4]
+
+
+def _advantage_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [("advantage", "mean"), ("advantage_std", "std")]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series
+
+
+def _ops_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("avg_distance", "distance"),
+        ("avg_charging_time", "charging time"),
+        ("charging_station_visits", "station visits"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series
+
+
+def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
+    """Paper-aligned MARL EVRP dashboard (TERRAN / CB-DRL / marl-eval conventions)."""
+    n_inst = int(plan.get("n_train_instances") or 20)
+    obj_col = _pick_metric_col(df, "final_objective", "cost", "cost_raw")
+    served_col = _pick_metric_col(df, "served_rate", "served_ratio")
+    losses = _loss_series(df)
+    returns = _return_comparison_series(df)
+    decomp = _reward_decomp_series(df)
+    actions = _action_fraction_series(df)
+    grads = _grad_param_series(df)
+    adv = _advantage_series(df)
+    ops = _ops_series(df)
+    constraints = _constraint_violation_series(df)
+    cycle_obj = [(obj_col, "mean objective")] if obj_col else []
+    has_served_feas = (
+        served_col
+        and served_col in df.columns
+        and "feasibility_rate" in df.columns
+    )
+
+    return [
         {
-            "id": "solution_quality",
-            "title": "Solution quality",
-            "nav": "Solution",
-            "subtitle": "EVRP objective cost and scaled training reward — is the policy improving solutions?",
+            "id": "sample_efficiency",
+            "title": "1. Sample efficiency",
+            "nav": "Sample eff.",
+            "subtitle": "Primary objective J vs training epochs with best-so-far curve (TERRAN / marl-eval style).",
             "charts": [
                 *([{
                     "type": "series_ma",
-                    "col": cost_col,
-                    "title": "Training objective over epochs",
-                    "desc": "Final objective cost per epoch with moving average.",
+                    "col": obj_col,
+                    "title": "Objective J over epochs",
+                    "desc": "Real EVRP cost (lower is better). Grey = per epoch, blue = moving average.",
                     "ylabel": "Objective J",
                     "wide": True,
-                }] if cost_col else []),
+                }] if obj_col else []),
                 {
-                    "type": "series_ma",
-                    "col": "reward",
-                    "title": "Episode return over epochs",
-                    "desc": "Actor-critic learning signal (scaled reward) with moving average.",
-                    "ylabel": "Episode return",
+                    "type": "best_objective_so_far",
+                    "title": "Best objective so far",
+                    "desc": "Anytime / sample-efficiency curve: cumulative minimum of J across training.",
                     "wide": True,
                 },
+                *([{
+                    "type": "cycle_lines",
+                    "cols": cycle_obj,
+                    "title": "Cycle-level mean objective",
+                    "desc": f"Mean J over all {n_inst} training instances per cycle (one full pass).",
+                    "ylabel": "Mean objective J",
+                    "wide": True,
+                }] if cycle_obj else []),
             ],
         },
         {
-            "id": "network_training",
-            "title": "Neural network training",
-            "nav": "Network",
-            "subtitle": "Actor-critic optimization — losses, exploration, critic fit, gradients, learning rate.",
+            "id": "solution_quality",
+            "title": "2. Solution quality",
+            "nav": "Quality",
+            "subtitle": "Customer coverage and feasibility — core metrics in CB-DRL-style EVRP learning curves.",
             "charts": [
                 *([{
-                    "type": "multi_series_ma",
-                    "series": losses,
-                    "title": "Actor-critic losses",
-                    "desc": "Actor, critic, and total loss over training epochs.",
-                    "ylabel": "Loss",
+                    "type": "sample_efficiency_quality",
+                    "title": "Served % & feasibility (dual axis)",
+                    "desc": "CB-DRL Fig. 3 style: served-customer ratio and feasibility rate should rise together.",
                     "wide": True,
-                }] if losses else []),
+                }] if has_served_feas else []),
                 {
-                    "type": "series_ma",
-                    "col": "entropy",
-                    "title": "Policy entropy",
-                    "desc": "Exploration — entropy should not collapse too early.",
-                    "ylabel": "Entropy",
-                },
-                {
-                    "type": "series_ma",
-                    "col": "critic_explained_variance",
-                    "title": "Critic explained variance",
-                    "desc": "How well the critic predicts returns.",
-                    "ylabel": "Explained variance",
-                },
-                {
-                    "type": "series_ma",
-                    "col": "advantage",
-                    "title": "Advantage magnitude",
-                    "desc": "Mean advantage signal driving policy updates.",
-                    "ylabel": "Advantage",
-                },
-                {
-                    "type": "series_ma",
-                    "col": "grad_norm",
-                    "title": "Gradient norm",
-                    "desc": "Gradient magnitude before clipping — instability indicator.",
-                    "ylabel": "‖∇‖",
-                },
-                {
-                    "type": "series_ma",
-                    "col": "learning_rate",
-                    "title": "Learning rate",
-                    "desc": "Optimizer learning rate schedule.",
-                    "ylabel": "LR",
-                },
-                *([{
-                    "type": "multi_series_ma",
-                    "series": gpu_cols,
-                    "title": "GPU memory",
-                    "desc": "CUDA memory usage during training.",
-                    "ylabel": "MB",
+                    "type": "served_coverage",
+                    "title": "Customers served (%)",
+                    "desc": "Rolling mean of served-customer ratio (target 100%).",
                     "wide": True,
-                }] if gpu_cols else []),
-            ],
-        },
-        {
-            "id": "feasibility",
-            "title": "EVRP feasibility & constraints",
-            "nav": "Feasibility",
-            "subtitle": "Whether solutions respect time windows, battery, capacity, and serve all customers.",
-            "charts": [
+                },
                 {
                     "type": "feasibility_ma",
-                    "title": "Feasibility moving average",
-                    "desc": "Share of feasible training episodes (smoothed).",
+                    "title": "Feasibility rate",
+                    "desc": "Share of episodes with zero hard-constraint violations (target 1.0).",
                     "wide": True,
                 },
                 {
                     "type": "series_ma",
-                    "col": "served_rate",
-                    "title": "Served-customer ratio",
-                    "desc": "Fraction of customers served per episode.",
-                    "ylabel": "Served ratio",
-                    "y_range": (0, 1.05),
+                    "col": "unserved_customers",
+                    "title": "Unserved customers",
+                    "desc": "Remaining unserved customers per episode (should approach 0).",
+                    "ylabel": "Count",
                     "wide": True,
                 },
-                *([{
-                    "type": "multi_series_ma",
-                    "series": viol,
-                    "title": "Constraint violations",
-                    "desc": "Unserved, battery, time window, capacity, depot, duplicate visits.",
-                    "ylabel": "Violation magnitude",
-                    "wide": True,
-                }] if viol else []),
             ],
         },
         {
-            "id": "operations",
-            "title": "Fleet & routing operations",
-            "nav": "Operations",
-            "subtitle": "Fleet size, travel, charging, and waiting — operational EVRP behavior.",
+            "id": "constraint_violations",
+            "title": "3. Constraint violations",
+            "nav": "Constraints",
+            "subtitle": "EVRP hard constraints — all should trend to zero for feasible solutions.",
             "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": constraints,
+                    "title": "Constraint violation magnitudes",
+                    "desc": "Battery, time windows, capacity, depot return — standard EVRP feasibility diagnostics.",
+                    "ylabel": "Violation",
+                    "wide": True,
+                }] if len(constraints) >= 2 else []),
+            ],
+        },
+        {
+            "id": "routing_operations",
+            "title": "4. Routing & fleet",
+            "nav": "Routing",
+            "subtitle": "Operational metrics reported in TERRAN and related EVRP-DRL papers.",
+            "charts": [
+                {
+                    "type": "series_ma",
+                    "col": "avg_distance",
+                    "title": "Total travel distance",
+                    "desc": "Mean route distance per episode (primary routing cost component).",
+                    "ylabel": "Distance",
+                    "wide": True,
+                },
                 {
                     "type": "series_ma",
                     "col": "avg_used_evs",
-                    "title": "Number of used EVs",
-                    "desc": "Fleet size used per training episode.",
-                    "ylabel": "Used EVs",
-                    "wide": True,
-                },
-                *_objective_component_specs(df),
-                {
-                    "type": "series_ma",
-                    "col": "charging_station_visits",
-                    "title": "Charging-station visits",
-                    "desc": "Station visits per training episode.",
-                    "ylabel": "Visits",
+                    "title": "Fleet size (used EVs)",
+                    "desc": "Number of vehicles deployed per episode.",
+                    "ylabel": "Count",
                 },
                 *([{
                     "type": "multi_series_ma",
-                    "series": charge_effort,
-                    "title": "Charging effort",
-                    "desc": "Total charging time and monetary charging cost.",
+                    "series": ops,
+                    "title": "Charging & waiting behavior",
+                    "desc": "Charging time, station visits, and related operational costs.",
                     "ylabel": "Value",
-                }] if (charge_effort := [
-                    (c, l) for c, l in [
-                        ("avg_charging_time", "charging time"),
-                        ("avg_charging_price", "charging cost"),
-                    ] if c in df.columns
-                ]) else []),
-                {
-                    "type": "series_ma",
-                    "col": "min_remaining_battery",
-                    "title": "Minimum battery level",
-                    "desc": "Minimum remaining battery at episode end.",
-                    "ylabel": "Battery level",
-                },
+                    "wide": True,
+                }] if len(ops) >= 2 else []),
             ],
         },
         {
-            "id": "marl",
-            "title": "Multi-agent MARL",
-            "nav": "MARL",
-            "subtitle": "Coordination across EV agents and action-mask restrictiveness.",
+            "id": "rl_optimization",
+            "title": "5. RL optimization",
+            "nav": "RL opt.",
+            "subtitle": "Actor-critic learning signals — shaped vs raw return and loss stability.",
             "charts": [
-                {
-                    "type": "series_ma",
-                    "col": "route_balance_cv",
-                    "title": "Fleet route balance",
-                    "desc": "std(route distance per EV) / mean — lower means better load sharing.",
-                    "ylabel": "Route balance (CV)",
+                *([{
+                    "type": "multi_series_ma",
+                    "series": returns,
+                    "title": "Raw vs shaped return",
+                    "desc": "Shaped return drives updates; raw return tracks the true objective signal.",
+                    "ylabel": "Return",
                     "wide": True,
-                },
+                }] if len(returns) >= 2 else []),
+                *([{
+                    "type": "multi_series_ma",
+                    "series": losses[:2],
+                    "title": "Actor & critic loss",
+                    "desc": "Standard MARL optimization health check.",
+                    "ylabel": "Loss",
+                    "wide": True,
+                }] if len(losses) >= 2 else []),
                 {
-                    "type": "series_ma",
-                    "col": "feasible_action_ratio",
-                    "title": "Feasible action ratio",
-                    "desc": "Average fraction of nodes with at least one feasible action per step.",
-                    "ylabel": "Ratio",
-                    "y_range": (0, 1.05),
+                    "type": "explained_variance",
+                    "title": "Critic explained variance",
+                    "desc": "Near zero means the value function is not learning.",
                     "wide": True,
                 },
             ],
         },
         {
-            "id": "cycles",
-            "title": "Training schedule (per cycle)",
-            "nav": "Cycles",
-            "subtitle": f"One cycle = all {plan.get('n_train_instances', 20)} training instances once "
-                          f"({plan.get('passes', 20)} cycles total). Dotted lines mark pass boundaries on epoch charts.",
+            "id": "reward_diagnosis",
+            "title": "6. Reward shaping",
+            "nav": "Reward",
+            "subtitle": "Penalty decomposition — terminal unserved should shrink as coverage improves.",
             "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": decomp,
+                    "title": "Reward / penalty decomposition",
+                    "desc": "Served bonus vs terminal and step penalties.",
+                    "ylabel": "Magnitude",
+                    "wide": True,
+                }] if decomp else []),
                 {
-                    "type": "cycle_lines",
-                    "cols": [("cost", "mean objective")],
-                    "title": "Cycle-level objective",
-                    "ylabel": "Mean objective",
+                    "type": "series_ma",
+                    "col": "terminal_penalty_coef",
+                    "title": "Terminal penalty schedule",
+                    "desc": "Ramp of terminal unserved penalty coefficient.",
+                    "ylabel": "Coefficient",
+                },
+            ],
+        },
+        {
+            "id": "action_behavior",
+            "title": "7. Policy behavior",
+            "nav": "Policy",
+            "subtitle": "Action mix and premature route closures.",
+            "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": actions,
+                    "title": "Action type fractions",
+                    "desc": "Customer vs station vs depot — customer fraction should dominate.",
+                    "ylabel": "Fraction",
+                    "wide": True,
+                }] if len(actions) >= 2 else []),
+                {
+                    "type": "series_ma",
+                    "col": "early_depot_returns",
+                    "title": "Premature route closures",
+                    "desc": "Route closes while customers remain unserved (route_close events; should decrease).",
+                    "ylabel": "Count per episode",
                     "wide": True,
                 },
-                {
-                    "type": "cycle_lines",
-                    "cols": [("feasibility_rate", "feasibility"), ("served_rate", "served ratio")],
-                    "title": "Cycle-level feasibility & served ratio",
-                    "ylabel": "Rate",
+            ],
+        },
+        {
+            "id": "actor_critic_health",
+            "title": "8. Actor-critic diagnostics",
+            "nav": "AC health",
+            "subtitle": "Gradient norms and advantage statistics.",
+            "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": adv,
+                    "title": "Advantage statistics",
+                    "desc": "Mean and std of GAE advantages.",
+                    "ylabel": "Advantage",
+                }] if adv else []),
+                *([{
+                    "type": "multi_series_ma",
+                    "series": grads,
+                    "title": "Gradient & parameter update norms",
+                    "desc": "Confirms weights are changing each update.",
+                    "ylabel": "Norm",
                     "wide": True,
-                },
-                {
-                    "type": "cycle_lines",
-                    "cols": [
-                        ("avg_violation", "total violation"),
-                        ("unserved_customers", "unserved"),
-                        ("avg_battery_violation", "battery"),
-                        ("avg_lateness", "time window"),
-                    ],
-                    "title": "Cycle-level violations",
-                    "ylabel": "Mean violation",
-                    "wide": True,
-                },
+                }] if len(grads) >= 2 else []),
+            ],
+        },
+        {
+            "id": "per_instance",
+            "title": "9. Per-instance learning",
+            "nav": "Instances",
+            "subtitle": f"Instance × cycle heatmaps ({n_inst} train instances).",
+            "charts": [
                 *([{
                     "type": "heatmap",
-                    "col": cost_col,
-                    "title": "Per-instance objective across cycles",
+                    "col": obj_col,
+                    "title": "Objective heatmap (instance × cycle)",
+                    "desc": "Which instances improve and which stall.",
                     "wide": True,
-                }] if cost_col else []),
+                }] if obj_col else []),
+                *([{
+                    "type": "heatmap",
+                    "col": served_col,
+                    "title": "Served-ratio heatmap (instance × cycle)",
+                    "desc": "Coverage per instance across training cycles.",
+                    "wide": True,
+                }] if served_col else []),
                 {
                     "type": "heatmap",
                     "col": "feasibility_rate",
-                    "title": "Per-instance feasibility across cycles",
+                    "title": "Feasibility heatmap (instance × cycle)",
+                    "desc": "Feasibility per instance across cycles.",
                     "wide": True,
                 },
-                *([{
-                    "type": "final_cycle_bar",
-                    "col": cost_col,
-                    "title": "Final-cycle objective by instance",
-                    "desc": "Hardest training instances in the last pass.",
-                    "wide": True,
-                }] if cost_col else []),
             ],
         },
     ]
-    return sections
 
 
 def get_training_chart_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
@@ -1443,9 +1637,16 @@ def build_chart_figure(df: pd.DataFrame, plan: dict, spec: dict[str, Any]) -> go
             title=spec.get("title", col),
             ylabel=spec.get("ylabel", col),
             y_range=spec.get("y_range"),
+            hline=spec.get("hline"),
         )
+    if t == "explained_variance":
+        return fig_explained_variance(df, plan, title=spec.get("title", "Critic explained variance"))
     if t == "feasibility_ma":
         return fig_feasibility_ma(df, plan, title=spec.get("title", "Feasibility"))
+    if t == "best_objective_so_far":
+        return fig_best_objective_so_far(df, plan, title=spec.get("title", "Best objective so far"))
+    if t == "sample_efficiency_quality":
+        return fig_sample_efficiency_quality(df, plan, title=spec.get("title", "Served & feasibility"))
     if t == "multi_series_ma":
         series = spec.get("series") or []
         if not series:
@@ -1660,6 +1861,7 @@ _WIDE_CHART_TYPES = frozenset({
     "cycle_lines",
     "heatmap",
     "final_cycle_bar",
+    "explained_variance",
 })
 
 

@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from src.training.q_critic_ops import q_loss_and_cf_for_record
+from src.training.reward_shaping import TerminalPenaltySchedule
 from src.training.trajectory import Trajectory
 
 
@@ -32,6 +33,22 @@ class RLConfig:
     pomo_mix_rho: float = 0.1
     use_pomo: bool = False
     use_counterfactual_critic: bool = False
+    use_step_rewards: bool = True
+    use_gae: bool = True
+    use_potential_shaping: bool = False
+    use_served_customer_bonus: bool = True
+    served_customer_bonus: float | None = None
+    served_bonus_mode: str = "penalty_equivalent"
+    served_bonus_coef: float = 0.5
+    use_early_depot_penalty: bool = True
+    early_depot_penalty_coef: float = 1.0
+    use_step_penalty: bool = True
+    step_penalty: float = 0.01
+    use_depot_logit_penalty: bool = True
+    depot_logit_penalty: float = 2.0
+    depot_penalty_until_served_ratio: float = 0.95
+    normalize_returns_for_critic: bool = True
+    terminal_penalty_schedule: "TerminalPenaltySchedule | None" = None
     q_critic_warmup_epochs: int = 0
     q_critic_enable_after_epoch: int | None = None
     q_eval_mode: str = "topk"
@@ -57,6 +74,13 @@ class RLConfig:
         use_pomo = bool(rcfg.get("use_pomo", False))
         default_k = int(rcfg.get("pomo_K", 4 if use_pomo else 1))
         enable_after = rcfg.get("q_critic_enable_after_epoch")
+        sched_raw = rcfg.get("terminal_penalty_schedule") or {}
+        terminal_schedule = TerminalPenaltySchedule(
+            enabled=bool(sched_raw.get("enabled", False)),
+            start_coef=float(sched_raw.get("start_coef", 0.25)),
+            end_coef=float(sched_raw.get("end_coef", 1.0)),
+            warmup_cycles=int(sched_raw.get("warmup_cycles", 20)),
+        )
         return cls(
             gamma=float(rcfg.get("gamma", 1.0)),
             critic_coef=float(rcfg.get("critic_coef", 0.5)),
@@ -75,6 +99,22 @@ class RLConfig:
             pomo_mix_rho=float(rcfg.get("pomo_mix_rho", 0.1)),
             use_pomo=use_pomo,
             use_counterfactual_critic=bool(rcfg.get("use_counterfactual_critic", False)),
+            use_step_rewards=bool(rcfg.get("use_step_rewards", True)),
+            use_gae=bool(rcfg.get("use_gae", True)),
+            use_potential_shaping=bool(rcfg.get("use_potential_shaping", False)),
+            use_served_customer_bonus=bool(rcfg.get("use_served_customer_bonus", True)),
+            served_customer_bonus=rcfg.get("served_customer_bonus"),
+            served_bonus_mode=str(rcfg.get("served_bonus_mode", "penalty_equivalent")),
+            served_bonus_coef=float(rcfg.get("served_bonus_coef", 0.5)),
+            use_early_depot_penalty=bool(rcfg.get("use_early_depot_penalty", True)),
+            early_depot_penalty_coef=float(rcfg.get("early_depot_penalty_coef", 1.0)),
+            use_step_penalty=bool(rcfg.get("use_step_penalty", True)),
+            step_penalty=float(rcfg.get("step_penalty", 0.01)),
+            use_depot_logit_penalty=bool(rcfg.get("use_depot_logit_penalty", True)),
+            depot_logit_penalty=float(rcfg.get("depot_logit_penalty", 2.0)),
+            depot_penalty_until_served_ratio=float(rcfg.get("depot_penalty_until_served_ratio", 0.95)),
+            normalize_returns_for_critic=bool(rcfg.get("normalize_returns_for_critic", True)),
+            terminal_penalty_schedule=terminal_schedule,
             q_critic_warmup_epochs=int(rcfg.get("q_critic_warmup_epochs", 0)),
             q_critic_enable_after_epoch=int(enable_after) if enable_after is not None else None,
             q_eval_mode=str(rcfg.get("q_eval_mode", "topk")),
@@ -171,6 +211,13 @@ class ActorCriticLossOut:
     explained_var: float
     counterfactual_advantage_mean: float
     mean_q_candidates: float = 0.0
+    value_mean: float = 0.0
+    value_std: float = 0.0
+    return_mean: float = 0.0
+    return_std: float = 0.0
+    advantage_min: float = 0.0
+    advantage_max: float = 0.0
+    mean_log_prob: float = 0.0
 
 
 def _maybe_detach(x: torch.Tensor, detach: bool) -> torch.Tensor:
@@ -207,12 +254,23 @@ def actor_critic_loss(
     if rewards.numel() > values.numel():
         values = torch.cat([values, torch.zeros(1, device=device)])
 
-    advantages, returns = compute_gae(
-        rewards[: values.numel()], values, rl_cfg.gamma, rl_cfg.gae_lambda,
-    )
+    if rl_cfg.use_gae:
+        advantages, returns = compute_gae(
+            rewards[: values.numel()], values, rl_cfg.gamma, rl_cfg.gae_lambda,
+        )
+    else:
+        returns = torch.zeros_like(rewards[: values.numel()])
+        running = 0.0
+        for t in range(returns.numel() - 1, -1, -1):
+            running = float(rewards[t]) + rl_cfg.gamma * running
+            returns[t] = running
+        advantages = returns - values[: returns.numel()].detach()
     actor_adv = advantages[: len(steps)]
     critic_returns = returns[: len(steps)]
     critic_values = values[: len(steps)]
+
+    if rl_cfg.normalize_returns_for_critic and critic_returns.numel() > 1:
+        critic_returns = normalize_tensor(critic_returns)
 
     if pomo_advantage is not None and rl_cfg.use_pomo:
         actor_adv = actor_adv + rl_cfg.pomo_mix_rho * float(pomo_advantage)
@@ -282,4 +340,11 @@ def actor_critic_loss(
         explained_var=ev,
         counterfactual_advantage_mean=cf_mean,
         mean_q_candidates=mean_q_cand,
+        value_mean=float(critic_values.mean().detach()),
+        value_std=float(critic_values.std().detach()) if critic_values.numel() > 1 else 0.0,
+        return_mean=float(critic_returns.mean().detach()),
+        return_std=float(critic_returns.std().detach()) if critic_returns.numel() > 1 else 0.0,
+        advantage_min=float(actor_adv.min().detach()),
+        advantage_max=float(actor_adv.max().detach()),
+        mean_log_prob=float(log_probs.mean().detach()),
     )

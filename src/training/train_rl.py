@@ -10,10 +10,13 @@ import torch
 
 from src.data.evrptw_dataset import split_dataset
 from src.data.instance_loader import load_capacity_from_config
+from src.data.rc21_split import log_rc21_split_startup, resolve_rc21_split
 from src.env.cost import CostWeights
 from src.models.policy import TransformerEVRPTWPolicy
 from src.training.ac_train import actor_critic_train_step, build_critics, critic_parameters
 from src.training.actor_critic import RLConfig
+from src.training.config_validation import apply_safe_training_defaults, validate_training_config
+from src.training.cycle_summary import aggregate_cycle
 from src.training.curriculum import Phase
 from src.training.flat_schedule import build_sequential_schedule
 from src.utils.logging_utils import CsvLogger, JsonlLogger, get_logger, write_csv
@@ -32,22 +35,31 @@ def build_policy(config: dict, charging_portions: list[float]) -> TransformerEVR
     return TransformerEVRPTWPolicy(config["model"], charging_portions=charging_portions)
 
 
+def _resolve_cycles(tcfg: dict) -> int:
+    """Number of full passes over training instances (cycles / passes)."""
+    if tcfg.get("cycles") is not None:
+        return int(tcfg["cycles"])
+    if tcfg.get("passes") is not None:
+        return int(tcfg["passes"])
+    return 0
+
+
 def _resolve_epochs_and_schedule(
     tcfg: dict,
     num_train: int,
     rng: random.Random,
 ) -> tuple[int, list[int] | None]:
     """Return (epochs, optional per-epoch instance index schedule)."""
-    passes = tcfg.get("passes")
+    cycles = _resolve_cycles(tcfg)
     batch_size = int(tcfg.get("batch_size", 1))
     shuffle_within_pass = bool(tcfg.get("shuffle_within_pass", False))
 
-    if passes is not None:
+    if cycles > 0:
         if batch_size != 1:
-            raise ValueError("training.passes requires batch_size: 1 (one instance per step)")
+            raise ValueError("training.cycles requires batch_size: 1 (one instance per step)")
         schedule = build_sequential_schedule(
             num_train,
-            int(passes),
+            cycles,
             shuffle_within_pass=shuffle_within_pass,
             rng=rng,
         )
@@ -57,29 +69,65 @@ def _resolve_epochs_and_schedule(
     return epochs, None
 
 
+def _resolve_learning_rates(config: dict) -> tuple[float, float]:
+    tcfg = config.get("training") or {}
+    ocfg = config.get("optimizer") or {}
+    rcfg = config.get("rl") or {}
+    actor_lr = float(ocfg.get("actor_lr", tcfg.get("learning_rate", 1e-4)))
+    critic_lr = float(ocfg.get("critic_lr", rcfg.get("critic_learning_rate", actor_lr * 0.5)))
+    return actor_lr, critic_lr
+
+
+def _apply_overfit_mode(config: dict, train_ds) -> tuple[object, int]:
+    """Train on a single RC _21 instance for many updates (sanity test)."""
+    tcfg = config["training"]
+    name = str(
+        tcfg.get("overfit_instance_name")
+        or tcfg.get("debug_overfit_instance")
+        or train_ds.names[0]
+    )
+    if name not in train_ds.names:
+        raise ValueError(f"debug_overfit_instance '{name}' not in training set")
+    idx = train_ds.names.index(name)
+    updates = int(tcfg.get("debug_overfit_updates", 300))
+    LOGGER.info("DEBUG overfit mode: instance=%s, updates=%d", name, updates)
+    return idx, updates
+
+
 def train(config: dict) -> dict:
     """Run flat actor-critic training (no curriculum schedule)."""
+    config = apply_safe_training_defaults(dict(config))
+    validate_training_config(config)
+
     deterministic = bool(config.get("deterministic", False))
     seed = int(config.get("seed", 42))
     set_seed(seed, deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
     LOGGER.info(f"Training on device: {describe_device(device)}")
+    LOGGER.info("Mode: Schneider RC _21 — actor-critic + step rewards + GAE (safe baseline)")
 
     tcfg = config["training"]
     ds_cfg = config["dataset"]
+    dbg = config.get("debug") or {}
+
+    train_names, eval_names, split_meta = resolve_rc21_split(config)
+    ds_cfg = dict(ds_cfg)
+    ds_cfg["train_instances"] = train_names
+    ds_cfg["eval_instances"] = eval_names
+
     train_ds, eval_ds = split_dataset(
         ds_cfg["path"],
         train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
         seed=seed,
         train_filter=ds_cfg.get("train_size_filter"),
         eval_filter=ds_cfg.get("eval_size_filter"),
-        train_instances=ds_cfg.get("train_instances"),
-        eval_instances=ds_cfg.get("eval_instances"),
+        train_instances=train_names,
+        eval_instances=eval_names,
+        class_filter=ds_cfg.get("class_filter"),
         load_capacity=load_capacity_from_config(config),
     )
-    LOGGER.info(f"Training instances: {len(train_ds)} | held out: {len(eval_ds)}")
-    if eval_ds.names:
-        LOGGER.info(f"Held-out instances (for later testing): {', '.join(eval_ds.names)}")
+    cycles = _resolve_cycles(tcfg)
+    log_rc21_split_startup(split_meta, cycles if cycles > 0 else int(tcfg.get("debug_overfit_updates", 300)))
 
     charging_portions = config["problem"]["charging_portions"]
     weights = CostWeights.from_config(config["cost"])
@@ -92,8 +140,8 @@ def train(config: dict) -> dict:
         policy, device, build_q=rl_cfg.use_counterfactual_critic,
     )
 
-    optimizer = torch.optim.Adam(policy.parameters(), lr=float(tcfg["learning_rate"]))
-    critic_lr = float((config.get("rl") or {}).get("critic_learning_rate", tcfg["learning_rate"]))
+    actor_lr, critic_lr = _resolve_learning_rates(config)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=actor_lr)
     critic_optimizer = torch.optim.Adam(critic_parameters(value_critic, q_critic), lr=critic_lr)
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     grad_clip = float(tcfg.get("grad_clip", 1.0))
@@ -102,6 +150,7 @@ def train(config: dict) -> dict:
     decode_cfg = config["decoding"]
     max_steps_factor = int(decode_cfg.get("max_steps_factor", 6))
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
+    use_depot_charging = bool(config["problem"].get("use_depot_charging", True))
     phase = Phase(0, "flat", [], extra_margin)
 
     out_cfg = config["outputs"]
@@ -120,6 +169,7 @@ def train(config: dict) -> dict:
     holdout_meta = {
         "train_instances": list(train_ds.names),
         "eval_instances": list(eval_ds.names),
+        **split_meta,
     }
     (run_dir / "holdout_instances.json").write_text(
         json.dumps(holdout_meta, indent=2), encoding="utf-8",
@@ -130,24 +180,41 @@ def train(config: dict) -> dict:
 
     rng = random.Random(seed)
     indices = list(range(len(train_ds)))
-    epoch_schedule, sequential_schedule = _resolve_epochs_and_schedule(tcfg, len(train_ds), rng)
-    if sequential_schedule is not None:
-        passes = int(tcfg["passes"])
+
+    overfit_idx: int | None = None
+    if bool(tcfg.get("debug_overfit_one_instance", False)):
+        overfit_idx, epoch_schedule = _apply_overfit_mode(config, train_ds)
+        sequential_schedule = [overfit_idx] * epoch_schedule
+    else:
+        epoch_schedule, sequential_schedule = _resolve_epochs_and_schedule(tcfg, len(train_ds), rng)
+
+    cycles = _resolve_cycles(tcfg)
+    if sequential_schedule is not None and not bool(tcfg.get("debug_overfit_one_instance", False)):
         LOGGER.info(
-            f"Sequential training: {len(train_ds)} instances × {passes} passes "
-            f"= {epoch_schedule} epochs"
+            f"Cyclic training: {len(train_ds)} RC _21 instances × {cycles} cycles "
+            f"= {epoch_schedule} updates"
         )
 
     best_reward = -float("inf")
-    checkpoint_every = int(tcfg.get("checkpoint_every", 10))
+    best_cycle_objective = float("inf")
+    best_cycle_feasibility = -float("inf")
+    checkpoint_every = int(tcfg.get("checkpoint_every", 0))
     min_decisions_warn = tcfg.get("min_decisions_warn")
+    mismatch_warn = float(dbg.get("objective_mismatch_warn_threshold", 0.05))
+    fail_on_mismatch = bool(dbg.get("fail_on_large_objective_mismatch", False))
+
+    cycle_rows: list[dict] = []
+    cycle_logger = JsonlLogger(results_dir / "cycle_summaries.jsonl")
+
+    critic_warmup = int(tcfg.get("critic_warmup_steps", 0))
+    critic_updates = int(tcfg.get("critic_updates_per_step", 1))
 
     for epoch in range(epoch_schedule):
         if sequential_schedule is not None:
             batch_idx = [sequential_schedule[epoch]]
-            pass_num = epoch // len(train_ds) + 1
+            cycle_num = epoch // len(train_ds) + 1 if not bool(tcfg.get("debug_overfit_one_instance")) else 1
         else:
-            pass_num = None
+            cycle_num = None
             rng.shuffle(indices)
             batch_idx = indices[:batch_size] if batch_size <= len(indices) else [
                 rng.choice(indices) for _ in range(batch_size)
@@ -156,20 +223,37 @@ def train(config: dict) -> dict:
         record = actor_critic_train_step(
             policy, value_critic, q_critic, optimizer, critic_optimizer,
             train_ds, batch_idx, weights, device, charging_portions,
-            use_horizon, max_steps_factor, phase, rng, rl_cfg,
+            use_horizon, use_depot_charging, max_steps_factor, phase, rng, rl_cfg,
             entropy_coef, grad_clip,
             min_decisions_warn=min_decisions_warn,
             global_epoch=epoch,
+            cycle_id=int(cycle_num or 1),
             use_amp=use_amp,
             gradient_accumulation_steps=grad_accum,
             scaler=amp_scaler,
+            critic_warmup_steps=critic_warmup,
+            critic_updates_per_step=critic_updates,
         )
         record["epoch"] = epoch
+        record["learning_rate"] = actor_lr
+        record["critic_learning_rate"] = critic_lr
         if len(batch_idx) == 1:
             record["instance_name"] = train_ds.names[batch_idx[0]]
             record["instance_idx"] = batch_idx[0]
-        if pass_num is not None:
-            record["pass"] = pass_num
+        if cycle_num is not None:
+            record["cycle"] = cycle_num
+            record["pass"] = cycle_num
+
+        rel_mm = float(record.get("relative_objective_mismatch", 0.0))
+        if rel_mm > mismatch_warn:
+            LOGGER.warning(
+                "epoch %d | relative objective mismatch %.4f > %.4f",
+                epoch, rel_mm, mismatch_warn,
+            )
+            if fail_on_mismatch:
+                raise RuntimeError(
+                    f"Objective mismatch too large at epoch {epoch}: rel={rel_mm:.4f}"
+                )
 
         batch_mean_reward = float(record.get("reward", 0.0))
         improved = batch_mean_reward > best_reward
@@ -180,13 +264,15 @@ def train(config: dict) -> dict:
         run_logger.log(record)
         train_csv.log(record)
         run_train_csv.log(record)
+        cycle_rows.append(record)
+
         if epoch % int(tcfg.get("log_every", 1)) == 0:
             inst = record.get("instance_name", "?")
-            pass_tag = f" pass {pass_num}" if pass_num is not None else ""
+            cyc_tag = f" cycle {cycle_num}" if cycle_num is not None else ""
             LOGGER.info(
-                f"epoch {epoch:3d}{pass_tag} | {inst} | reward {batch_mean_reward:10.1f} | "
-                f"feas {record['feasibility_rate']:.2f} | evs {record['avg_used_evs']:.1f} | "
-                f"dist {record['avg_distance']:.1f}"
+                f"epoch {epoch:4d}{cyc_tag} | {inst} | reward {batch_mean_reward:10.1f} | "
+                f"served {record.get('served_rate', 0):.2f} | "
+                f"mm {rel_mm:.4f} | ev {record.get('critic_explained_variance', 0):.3f}"
             )
 
         if improved:
@@ -200,12 +286,42 @@ def train(config: dict) -> dict:
                 value_critic=value_critic, q_critic=q_critic,
             )
 
+        # End of cycle — aggregate and checkpoint best cycle metrics
+        if sequential_schedule and not bool(tcfg.get("debug_overfit_one_instance")):
+            if len(cycle_rows) >= len(train_ds) and len(cycle_rows) % len(train_ds) == 0:
+                summary = aggregate_cycle(cycle_rows[-len(train_ds):], cycle_id=int(cycle_num or 0))
+                cycle_logger.log(summary)
+                c_obj = float(summary.get("mean_objective", float("inf")))
+                c_feas = float(summary.get("feasibility_rate", 0.0))
+                if c_obj < best_cycle_objective:
+                    best_cycle_objective = c_obj
+                    _save_checkpoint(
+                        policy, config, Path(out_cfg["checkpoints"]) / "best_cycle_objective.pt",
+                        value_critic=value_critic, q_critic=q_critic,
+                        training_meta={"cycle": cycle_num, "mean_objective": c_obj},
+                    )
+                if c_feas > best_cycle_feasibility:
+                    best_cycle_feasibility = c_feas
+                    _save_checkpoint(
+                        policy, config, Path(out_cfg["checkpoints"]) / "best_cycle_feasibility.pt",
+                        value_critic=value_critic, q_critic=q_critic,
+                        training_meta={"cycle": cycle_num, "feasibility_rate": c_feas},
+                    )
+                LOGGER.info(
+                    "cycle %d summary | objective %.0f | served %.2f | feas %.2f",
+                    cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
+                )
+
     _save_checkpoint(
         policy, config, Path(out_cfg["checkpoints"]) / "last.pt",
         value_critic=value_critic, q_critic=q_critic,
     )
 
     rows = jsonl.read()
+
+    if bool(tcfg.get("debug_overfit_one_instance", False)) and rows:
+        _check_overfit_improvement(rows, tcfg)
+
     results_dir = Path(out_cfg["results"])
     figures_dir = Path(out_cfg["figures"]) / "training"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -218,11 +334,19 @@ def train(config: dict) -> dict:
         write_csv(results_dir / "training_metrics.csv", rows)
         write_csv(run_dir / "metrics.csv", rows)
 
-    from src.training.training_dashboard import generate_training_dashboard_from_config
+    from src.training.training_dashboard import DashboardReport, generate_training_dashboard_from_config
 
-    dash_report = generate_training_dashboard_from_config(
-        config, rows=rows, holdout_meta=holdout_meta,
-    )
+    if bool(tcfg.get("generate_static_dashboard", False)):
+        try:
+            dash_report = generate_training_dashboard_from_config(
+                config, rows=rows, holdout_meta=holdout_meta,
+            )
+        except ValueError as exc:
+            LOGGER.error("Static training dashboard not generated: %s", exc)
+            dash_report = DashboardReport()
+    else:
+        LOGGER.info("Live dashboard only — run: python main_dashboard.py")
+        dash_report = DashboardReport()
     summary["training_dashboard"] = {
         "html": dash_report.html_path,
         "figures_index": dash_report.index_md_path,
@@ -251,6 +375,41 @@ def train(config: dict) -> dict:
         LOGGER.info(f"Training dashboard: {summary['training_dashboard']['html']}")
     LOGGER.info(f"Run archived at: {run_dir}")
     return summary
+
+
+def _check_overfit_improvement(rows: list[dict], tcfg: dict) -> None:
+    """Fail or warn if one-instance overfit did not improve served ratio / objective."""
+    n = len(rows)
+    if n < 20:
+        return
+    k = max(5, n // 5)
+    early = rows[:k]
+    late = rows[-k:]
+
+    def _mean(recs, key):
+        vals = [float(r.get(key, 0.0)) for r in recs]
+        return sum(vals) / max(len(vals), 1)
+
+    early_served = _mean(early, "served_rate")
+    late_served = _mean(late, "served_rate")
+    early_obj = _mean(early, "final_objective")
+    late_obj = _mean(late, "final_objective")
+    early_ev = _mean(early, "critic_explained_variance")
+    late_ev = _mean(late, "critic_explained_variance")
+
+    LOGGER.info(
+        "Overfit check | served %.3f -> %.3f | objective %.0f -> %.0f | ev %.4f -> %.4f",
+        early_served, late_served, early_obj, late_obj, early_ev, late_ev,
+    )
+    improved = (late_served > early_served + 0.02) or (late_obj < early_obj * 0.98)
+    if not improved:
+        msg = (
+            "One-instance overfit did NOT improve (served ratio / objective). "
+            "Fix reward signal, critic, or actor updates before full training."
+        )
+        if bool(tcfg.get("fail_on_overfit_regression", True)):
+            raise RuntimeError(msg)
+        LOGGER.error(msg)
 
 
 def _build_final_summary(rows, run_id, epochs, num_train, log_path, run_dir) -> dict:

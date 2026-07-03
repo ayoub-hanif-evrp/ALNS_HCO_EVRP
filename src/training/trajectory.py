@@ -37,10 +37,12 @@ class Trajectory:
     objective: float = 0.0
     reconstructed_objective: float = 0.0
     objective_mismatch: float = 0.0
+    relative_objective_mismatch: float = 0.0
+    reward_breakdown: dict[str, float] = field(default_factory=dict)
     terminal_reward: float = 0.0
     pomo_group_reward: float | None = None
     pomo_advantage: float | None = None
-    node_embeddings: torch.Tensor | None = None
+    training_stats: dict[str, float] = field(default_factory=dict)
 
     @property
     def num_steps(self) -> int:

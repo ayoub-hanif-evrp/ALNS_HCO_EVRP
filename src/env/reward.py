@@ -78,8 +78,8 @@ def snapshot_env(env) -> CostSnapshot:
     )
 
 
-def _delta_objective(before: CostSnapshot, after: CostSnapshot, weights: CostWeights) -> tuple[float, float]:
-    """Return (delta_J, immediate_penalty_component)."""
+def _delta_objective(before: CostSnapshot, after: CostSnapshot, weights: CostWeights) -> tuple[float, float, dict[str, float]]:
+    """Return (delta_J, immediate_penalty_component, weighted breakdown)."""
     d_dist = after.total_distance - before.total_distance
     d_wait = after.total_waiting_time - before.total_waiting_time
     d_charge_t = after.total_charging_time - before.total_charging_time
@@ -108,7 +108,16 @@ def _delta_objective(before: CostSnapshot, after: CostSnapshot, weights: CostWei
         + weights.penalty_capacity * d_cap
         + weights.penalty_depot * d_depot
     )
-    return float(obj + pen), float(pen)
+    breakdown = {
+        "delta_distance_cost": weights.lambda_distance * d_dist,
+        "delta_duration_cost": weights.lambda_duration * d_dur,
+        "delta_charging_time_cost": weights.lambda_charging * d_charge_t,
+        "delta_charging_price_cost": weights.lambda_charging_price * d_charge_p,
+        "delta_waiting_cost": weights.lambda_waiting * d_wait,
+        "delta_fleet_cost": weights.lambda_vehicle * d_used,
+        "delta_penalty_cost": float(pen),
+    }
+    return float(obj + pen), float(pen), breakdown
 
 
 class StepRewardCalculator:
@@ -143,7 +152,7 @@ class StepRewardCalculator:
         d_dup = after.duplicate_customer_visits - before.duplicate_customer_visits
         d_depot = after.depot_return_violation - before.depot_return_violation
 
-        delta_j, immediate_pen = _delta_objective(before, after, self.weights)
+        delta_j, immediate_pen, breakdown = _delta_objective(before, after, self.weights)
         reward = -delta_j / self.reward_scale
 
         return StepInfo(
@@ -169,6 +178,7 @@ class StepRewardCalculator:
             delta_objective=delta_j,
             reward=reward,
             raw_reward=reward,
+            extra=breakdown,
         )
 
     def terminal_adjustment(self, before: CostSnapshot, summary: SolutionSummary) -> StepInfo:
@@ -190,14 +200,13 @@ class StepRewardCalculator:
             unresolved_reserved=summary.unresolved_reserved_customers,
         )
 
-        # Objective terms already counted step-wise; terminal chunk = global penalties + vehicle if missed.
+        # Global penalties not attributed per step (unserved / reserved / infeasible).
         w = self.weights
         terminal_j = (
             w.penalty_unserved * summary.unserved_customers
             + w.penalty_reserved * summary.unresolved_reserved_customers
             + w.penalty_infeasible * summary.infeasible_flag
         )
-        # Vehicle + any residual mismatch from used_evs not attributed step-wise.
         terminal_j += w.lambda_vehicle * max(0, summary.used_evs - before.used_evs)
 
         reward = -terminal_j / self.reward_scale
@@ -211,6 +220,7 @@ class StepRewardCalculator:
             reward=reward,
             raw_reward=reward,
             terminal=True,
+            extra={"terminal_penalty_cost": terminal_j},
         )
 
     def verify_alignment(
@@ -219,8 +229,9 @@ class StepRewardCalculator:
         final_objective: float,
         *,
         atol: float = 1e-3,
-    ) -> tuple[float, bool]:
+    ) -> tuple[float, float, bool]:
         """Compare reconstructed objective from step deltas to ``compute_cost`` result."""
         reconstructed = sum(s.delta_objective for s in step_infos)
         mismatch = abs(reconstructed - float(final_objective))
-        return mismatch, mismatch <= atol
+        rel = mismatch / max(1.0, abs(float(final_objective)))
+        return mismatch, rel, mismatch <= atol

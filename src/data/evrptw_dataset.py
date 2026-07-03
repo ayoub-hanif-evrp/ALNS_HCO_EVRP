@@ -13,6 +13,7 @@ from .instance_loader import (
     list_instance_dirs,
     load_instance,
 )
+from .instance_class import instance_class
 
 
 def _passes_filter(name: str, filters: list[str] | None) -> bool:
@@ -73,6 +74,15 @@ def _resolve_name_indices(
     return indices
 
 
+def _assert_class_filter(name: str, class_filter: list[str] | None) -> None:
+    if not class_filter:
+        return
+    allowed = {c.strip().upper() for c in class_filter}
+    cls = instance_class(name)
+    if cls not in allowed:
+        raise ValueError(f"Instance '{name}' is class {cls}, not in allowed {sorted(allowed)}")
+
+
 def split_dataset(
     dataset_path: str | Path,
     train_ratio: float,
@@ -82,6 +92,7 @@ def split_dataset(
     *,
     train_instances: list[str] | None = None,
     eval_instances: list[str] | None = None,
+    class_filter: list[str] | None = None,
     load_capacity: float | None = None,
 ) -> tuple[EVRPTWDataset, EVRPTWDataset]:
     """Split instances into train / eval subsets.
@@ -98,10 +109,14 @@ def split_dataset(
 
     if train_instances is not None:
         train_names = list(train_instances)
+        for name in train_names:
+            _assert_class_filter(name, class_filter)
         train_idx = _resolve_name_indices(full, train_names, label="train")
         train_name_set = set(train_names)
         if eval_instances is not None:
             eval_names = list(eval_instances)
+            for name in eval_names:
+                _assert_class_filter(name, class_filter)
             overlap = train_name_set & set(eval_names)
             if overlap:
                 raise ValueError(f"train and eval instance lists overlap: {sorted(overlap)}")

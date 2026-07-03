@@ -9,52 +9,50 @@ pip install -r requirements.txt
 python scripts/check_gpu.py
 ```
 
-## 2. Train — Schneider R `_21` (default)
+## 2. Train — Schneider RC `_21` safe baseline (default)
 
 ```powershell
 python main_train.py
 ```
 
-Flat training (no curriculum): **20** R full instances × **20 passes** = **400 epochs**.  
-Held out for your later testing: `r101_21`, `r104_21`, `r209_21` (not used during training).
+**Phase A only:** actor-critic + step rewards + GAE (no Q critic, POMO, shaping, edge encoder).
 
-**Outputs:**
+- **13** RC `_21` train instances × **50** cycles = **650** updates
+- Held out: `rc101_21`, `rc104_21`, `rc208_21` (never loaded during training)
+- Schneider has **16** RC `_21` instances total (not 23 like R class)
 
-| File | Content |
-|------|---------|
-| `outputs/logs/train_log.jsonl` | Per-epoch training metrics |
-| `outputs/results/training_metrics.csv` | Same metrics in CSV |
-| `outputs/checkpoints/last.pt` | Latest model |
-| `outputs/runs/run_*/holdout_instances.json` | Train vs held-out instance lists |
-
-Evaluate later when you want:
+Longer run (~1000 updates):
 
 ```powershell
-python main_evaluate.py --config configs/train.yaml --checkpoint outputs/checkpoints/last.pt
+python main_train.py --cycles 77
 ```
 
-## 3. Live training monitor (recommended — second terminal)
+Overfit sanity test (one instance):
 
-While training runs, open the NiceGUI dashboard in another terminal:
+```powershell
+python main_train.py --overfit
+```
+
+Explicit safe config:
+
+```powershell
+python main_train.py --config configs/train_schneider_RC21_safe.yaml
+```
+
+## 3. Live training monitor (second terminal)
 
 ```powershell
 python main_dashboard.py
 ```
 
-Open **http://localhost:8080** — auto-refreshes every 3 seconds.
+Open **http://localhost:8080**
 
-Shows the same training graph groups as the static figures (learning, feasibility, operations, coordination, cycles). Uses **training metrics only** and excludes held-out instances.
-
-Moving-average window: `training.dashboard_ma_window` in config (default **20**).
-
-## 4. Schneider curriculum (optional)
+## 4. Evaluate later (held-out test instances)
 
 ```powershell
-python main_train.py --config configs/curriculum.yaml --curriculum
+python main_evaluate.py --config configs/train.yaml --checkpoint outputs/checkpoints/last.pt
 ```
-
-Cyclic C → R → RC training on Schneider instances.
 
 ---
 
-**Config:** `configs/train.yaml` — Schneider path, explicit 20 train names, `passes: 20`, no `curriculum:` block.
+**Config:** `configs/train.yaml` or `configs/train_schneider_RC21_safe.yaml`

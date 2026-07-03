@@ -1,4 +1,4 @@
-"""Generate static MARL EVRP training figures and HTML dashboard from training logs only."""
+"""Generate focused MARL EVRP training diagnostic dashboard (training metrics only)."""
 from __future__ import annotations
 
 import json
@@ -17,19 +17,28 @@ from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
 
-DEFAULT_MA_WINDOW = 20
+REQUIRED_RC21_TRAIN_COUNT = 20
+
+DASHBOARD_SECTIONS = [
+    "1. Learning progress",
+    "2. Customer service and feasibility",
+    "3. Reward and penalty diagnosis",
+    "4. Action behavior",
+    "5. Critic and actor health",
+    "6. Per-instance learning",
+    "7. EVRP operational metrics",
+]
 
 
 @dataclass
 class FigureResult:
-    """Outcome of one dashboard figure."""
-
     name: str
     filename: str
     metrics: list[str]
     section: str
     description: str
     generated: bool
+    required: bool = False
     png_path: str | None = None
     svg_path: str | None = None
     skip_reason: str | None = None
@@ -42,6 +51,7 @@ class DashboardReport:
     index_md_path: str | None = None
     num_epochs: int = 0
     num_train_instances: int = 0
+    ma_window: int = REQUIRED_RC21_TRAIN_COUNT
 
 
 def load_training_dataframe(
@@ -79,6 +89,31 @@ def load_training_dataframe(
     return df.reset_index(drop=True)
 
 
+def resolve_dashboard_ma_window(
+    config: dict,
+    df: pd.DataFrame,
+    holdout_meta: dict | None = None,
+) -> int:
+    """MA window = training instances per cycle; fail if RC _21 count != 20."""
+    ds = config.get("dataset") or {}
+    meta = holdout_meta or {}
+    train_names = list(meta.get("train_instances") or ds.get("train_instances") or [])
+    if train_names:
+        n_train = len(train_names)
+    elif "instance_name" in df.columns and not df.empty:
+        n_train = int(df["instance_name"].nunique())
+    else:
+        n_train = int(meta.get("num_train") or ds.get("expected_train_count") or 0)
+
+    if n_train != REQUIRED_RC21_TRAIN_COUNT:
+        raise ValueError(
+            f"Dashboard requires {REQUIRED_RC21_TRAIN_COUNT} RC _21 training instances per cycle "
+            f"(moving-average window = {REQUIRED_RC21_TRAIN_COUNT}), but found {n_train}. "
+            f"Train instances: {train_names or '(from metrics)'}"
+        )
+    return n_train
+
+
 def _moving_avg(values: pd.Series, window: int) -> pd.Series:
     w = max(1, int(window))
     return values.astype(float).rolling(window=w, min_periods=1).mean()
@@ -90,14 +125,13 @@ def _epoch_x(df: pd.DataFrame) -> np.ndarray:
     return np.arange(len(df), dtype=float)
 
 
-def _cycle_col(df: pd.DataFrame) -> pd.Series:
+def _cycle_col(df: pd.DataFrame, n_inst: int) -> pd.Series:
     if "pass" in df.columns and df["pass"].notna().any():
         return df["pass"].astype(int)
     if "cycle" in df.columns and df["cycle"].notna().any():
         return df["cycle"].astype(int)
-    n_inst = df["instance_name"].nunique() if "instance_name" in df.columns else 20
-    n_inst = max(int(n_inst), 1)
-    return pd.Series((df.index // n_inst) + 1, index=df.index)
+    n = max(int(n_inst), 1)
+    return pd.Series((np.arange(len(df)) // n) + 1, index=df.index)
 
 
 def _pick(df: pd.DataFrame, *candidates: str) -> str | None:
@@ -138,12 +172,15 @@ def _plot_series_ma(
     *,
     ma_window: int,
     save_svg: bool,
+    hline: float | None = None,
 ) -> tuple[Path | None, Path | None]:
     x = _epoch_x(df)
     y = df[col].astype(float)
     fig, ax = plt.subplots(figsize=(9, 4))
     ax.plot(x, y, color="#94a3b8", lw=1, alpha=0.65, label="per epoch")
     ax.plot(x, _moving_avg(y, ma_window), color="#2563eb", lw=2, label=f"MA ({ma_window})")
+    if hline is not None:
+        ax.axhline(hline, color="#ef4444", ls="--", lw=1, alpha=0.8, label=f"ref {hline}")
     ax.set_title(title)
     ax.set_xlabel("training epoch")
     ax.set_ylabel(ylabel)
@@ -152,7 +189,7 @@ def _plot_series_ma(
     return _save_fig(fig, out_dir, filename, save_svg=save_svg)
 
 
-def _plot_multi_series(
+def _plot_multi_ma(
     df: pd.DataFrame,
     series: list[tuple[str, str]],
     title: str,
@@ -162,13 +199,16 @@ def _plot_multi_series(
     *,
     ma_window: int,
     save_svg: bool,
+    raw: bool = False,
 ) -> tuple[Path | None, Path | None]:
     x = _epoch_x(df)
     fig, ax = plt.subplots(figsize=(9, 4))
-    colors = ["#dc2626", "#d97706", "#16a34a", "#7c3aed", "#0891b2", "#64748b"]
+    colors = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2"]
     for i, (col, label) in enumerate(series):
         y = df[col].astype(float)
         c = colors[i % len(colors)]
+        if raw:
+            ax.plot(x, y, lw=1, alpha=0.45, color=c)
         ax.plot(x, _moving_avg(y, ma_window), lw=2, color=c, label=label)
     ax.set_title(title)
     ax.set_xlabel("training epoch")
@@ -178,22 +218,15 @@ def _plot_multi_series(
     return _save_fig(fig, out_dir, filename, save_svg=save_svg)
 
 
-def _cycle_aggregate(df: pd.DataFrame) -> pd.DataFrame:
-    cycles = _cycle_col(df)
+def _cycle_aggregate(df: pd.DataFrame, n_inst: int) -> pd.DataFrame:
     work = df.copy()
-    work["_cycle"] = cycles
-    agg_cols = {
-        c: "mean"
-        for c in [
-            "cost", "feasibility_rate", "served_rate", "avg_violation",
-            "unserved_customers", "avg_lateness", "avg_battery_violation",
-            "avg_capacity_violation", "avg_depot_violation", "avg_duplicate_visits",
-        ]
-        if c in work.columns
-    }
-    if not agg_cols:
+    work["_cycle"] = _cycle_col(work, n_inst)
+    cols = [c for c in [
+        "final_objective", "cost", "feasibility_rate", "served_rate", "unserved_customers",
+    ] if c in work.columns]
+    if not cols:
         return pd.DataFrame()
-    return work.groupby("_cycle", as_index=False).agg(agg_cols).rename(columns={"_cycle": "cycle"})
+    return work.groupby("_cycle", as_index=False)[cols].mean(numeric_only=True).rename(columns={"_cycle": "cycle"})
 
 
 def _heatmap_instance_cycle(
@@ -203,24 +236,25 @@ def _heatmap_instance_cycle(
     out_dir: Path,
     filename: str,
     *,
+    n_inst: int,
     save_svg: bool,
 ) -> tuple[Path | None, Path | None]:
     if "instance_name" not in df.columns or value_col not in df.columns:
         return None, None
     work = df.copy()
-    work["_cycle"] = _cycle_col(work)
+    work["_cycle"] = _cycle_col(work, n_inst)
     pivot = work.pivot_table(index="instance_name", columns="_cycle", values=value_col, aggfunc="mean")
     if pivot.empty:
         return None, None
     pivot = pivot.sort_index()
-    fig, ax = plt.subplots(figsize=(10, max(4, 0.25 * len(pivot))))
+    fig, ax = plt.subplots(figsize=(10, max(4, 0.28 * len(pivot))))
     im = ax.imshow(pivot.to_numpy(dtype=float), aspect="auto", cmap="YlOrRd_r")
     ax.set_xticks(range(len(pivot.columns)))
     ax.set_xticklabels([str(c) for c in pivot.columns])
     ax.set_yticks(range(len(pivot.index)))
     ax.set_yticklabels(pivot.index, fontsize=7)
-    ax.set_xlabel("training cycle (pass)")
-    ax.set_ylabel("training instance")
+    ax.set_xlabel("training cycle")
+    ax.set_ylabel("RC _21 training instance")
     ax.set_title(title)
     fig.colorbar(im, ax=ax, fraction=0.02)
     fig.tight_layout()
@@ -235,6 +269,7 @@ def _register(
     metrics: list[str],
     section: str,
     description: str,
+    required: bool,
     png: Path | None,
     svg: Path | None,
     skip_reason: str | None = None,
@@ -246,6 +281,7 @@ def _register(
             metrics=metrics,
             section=section,
             description=description,
+            required=required,
             generated=png is not None,
             png_path=str(png) if png else None,
             svg_path=str(svg) if svg else None,
@@ -258,23 +294,22 @@ def generate_training_dashboard(
     df: pd.DataFrame,
     out_dir: str | Path,
     *,
-    moving_avg_window: int = DEFAULT_MA_WINDOW,
+    moving_avg_window: int = REQUIRED_RC21_TRAIN_COUNT,
+    n_train_instances: int = REQUIRED_RC21_TRAIN_COUNT,
     save_svg: bool = True,
 ) -> DashboardReport:
-    """Build all training figures, index.md, and index.html."""
+    """Build diagnostic training figures, figures_index.md, and index.html."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    report = DashboardReport(num_epochs=len(df))
-    if "instance_name" in df.columns:
-        report.num_train_instances = int(df["instance_name"].nunique())
+    ma = int(moving_avg_window)
+    n_inst = int(n_train_instances)
+    report = DashboardReport(num_epochs=len(df), num_train_instances=n_inst, ma_window=ma)
+    results: list[FigureResult] = []
 
     if df.empty:
-        _write_index_md(report.figures, out_dir)
-        report.html_path = str(_write_index_html(report.figures, out_dir))
-        report.index_md_path = str(out_dir / "figures_index.md")
+        report.index_md_path = str(_write_index_md(results, out_dir, ma))
+        report.html_path = str(_write_index_html(results, out_dir, ma))
         return report
-
-    results: list[FigureResult] = []
 
     def _try(
         name: str,
@@ -282,6 +317,7 @@ def generate_training_dashboard(
         metrics: list[str],
         section: str,
         description: str,
+        required: bool,
         fn: Callable[[], tuple[Path | None, Path | None]],
     ) -> None:
         try:
@@ -289,388 +325,319 @@ def generate_training_dashboard(
             reason = None if png else "required metrics missing or empty plot"
             _register(
                 results, name=name, filename=filename, metrics=metrics, section=section,
-                description=description, png=png, svg=svg, skip_reason=reason,
+                description=description, required=required, png=png, svg=svg, skip_reason=reason,
             )
         except Exception as exc:
             LOGGER.warning("Figure %s skipped: %s", filename, exc)
             _register(
                 results, name=name, filename=filename, metrics=metrics, section=section,
-                description=description, png=None, svg=None, skip_reason=str(exc),
+                description=description, required=required, png=None, svg=None, skip_reason=str(exc),
             )
 
-    cost_col = _pick(df, "cost", "mean_J", "cost_raw")
-    if cost_col:
+    obj_col = _pick(df, "final_objective", "cost", "cost_raw")
+    cyc = _cycle_aggregate(df, n_inst)
+
+    # --- 1. Learning progress ---
+    if obj_col:
         _try(
-            "Training objective over epochs", "01_training_objective.png", [cost_col],
-            "Learning curves", "Shows whether the MARL policy is reducing the EVRP solution cost.",
+            "Final objective over epochs", "01_objective.png", [obj_col],
+            DASHBOARD_SECTIONS[0],
+            "Real EVRP objective J per epoch (lower is better). MA window = one full training cycle.",
+            True,
             lambda: _plot_series_ma(
-                df, cost_col, "Training objective over epochs", "objective J",
-                out_dir, "01_training_objective.png", ma_window=moving_avg_window, save_svg=save_svg,
+                df, obj_col, "Final objective over epochs", "objective J",
+                out_dir, "01_objective.png", ma_window=ma, save_svg=save_svg,
             ),
         )
     else:
-        _register(results, name="Training objective over epochs", filename="01_training_objective.png",
-                  metrics=["cost"], section="Learning curves", description="Objective cost per epoch.",
-                  png=None, svg=None, skip_reason="cost column missing")
+        _register(results, name="Final objective over epochs", filename="01_objective.png",
+                  metrics=["final_objective", "cost"], section=DASHBOARD_SECTIONS[0],
+                  description="Real EVRP objective.", required=True, png=None, svg=None,
+                  skip_reason="final_objective / cost column missing")
 
-    if "reward" in df.columns:
+    ret_series = [(c, l) for c, l in [
+        ("raw_objective_return", "raw objective return"),
+        ("shaped_training_return", "shaped training return"),
+        ("reward", "episode return (legacy)"),
+    ] if c in df.columns]
+    if len(ret_series) >= 2 or (ret_series and ret_series[0][0] in ("raw_objective_return", "shaped_training_return")):
+        cols = [c for c, _ in ret_series[:2]] if len(ret_series) >= 2 else [ret_series[0][0]]
+        labels = [l for c, l in ret_series[:2]] if len(ret_series) >= 2 else [ret_series[0][1]]
         _try(
-            "Episode return over epochs", "02_episode_return.png", ["reward"],
-            "Learning curves", "Shows whether the actor-critic learning signal improves over time.",
+            "Raw objective return vs shaped training return", "02_raw_vs_shaped_return.png", cols,
+            DASHBOARD_SECTIONS[0],
+            "Compares the true objective signal (-J/scale) with the shaped return used for policy updates.",
+            True,
+            lambda: _plot_multi_ma(
+                df, list(zip(cols, labels)), "Raw objective return vs shaped training return",
+                "return", out_dir, "02_raw_vs_shaped_return.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    cycle_obj_col = _pick(cyc, "final_objective", "cost") if not cyc.empty else None
+    if cycle_obj_col and not cyc.empty:
+        def _cycle_obj():
+            fig, ax = plt.subplots(figsize=(9, 4))
+            ax.plot(cyc["cycle"], cyc[cycle_obj_col], marker="o", color="#2563eb", lw=2)
+            ax.set_title("Cycle-level mean objective")
+            ax.set_xlabel("training cycle")
+            ax.set_ylabel("mean objective J")
+            fig.tight_layout()
+            return _save_fig(fig, out_dir, "03_cycle_objective.png", save_svg=save_svg)
+        _try(
+            "Cycle-level objective", "03_cycle_objective.png", [cycle_obj_col],
+            DASHBOARD_SECTIONS[0],
+            f"Mean objective over all {n_inst} training instances per cycle (most interpretable learning curve).",
+            True, _cycle_obj,
+        )
+
+    # --- 2. Customer service and feasibility ---
+    served_col = _pick(df, "served_rate", "served_rate_pct")
+    if served_col:
+        _try(
+            "Served-customer ratio", "04_served_ratio.png", [served_col],
+            DASHBOARD_SECTIONS[1], "Fraction of customers served (target 1.0).", True,
             lambda: _plot_series_ma(
-                df, "reward", "Episode return over epochs", "episode return",
-                out_dir, "02_episode_return.png", ma_window=moving_avg_window, save_svg=save_svg,
+                df, served_col, "Served-customer ratio", "served ratio",
+                out_dir, "04_served_ratio.png", ma_window=ma, save_svg=save_svg, hline=1.0,
+            ),
+        )
+
+    if "unserved_customers" in df.columns:
+        _try(
+            "Unserved customers", "05_unserved_customers.png", ["unserved_customers"],
+            DASHBOARD_SECTIONS[1], "Remaining unserved customers per episode (lower is better).", True,
+            lambda: _plot_series_ma(
+                df, "unserved_customers", "Unserved customers", "count",
+                out_dir, "05_unserved_customers.png", ma_window=ma, save_svg=save_svg,
             ),
         )
 
     if "feasibility_rate" in df.columns:
-        x = _epoch_x(df)
-        y = _moving_avg(df["feasibility_rate"].astype(float), moving_avg_window)
-        def _feas():
+        _try(
+            "Feasibility rate", "06_feasibility_rate.png", ["feasibility_rate"],
+            DASHBOARD_SECTIONS[1], "Feasible solution indicator smoothed over epochs.", True,
+            lambda: _plot_series_ma(
+                df, "feasibility_rate", "Feasibility rate", "feasibility",
+                out_dir, "06_feasibility_rate.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    # --- 3. Reward and penalty diagnosis ---
+    decomp: list[tuple[str, str]] = []
+    for col, label in [
+        ("served_bonus_total", "served bonus"),
+        ("early_depot_penalty_total", "early depot penalty"),
+        ("terminal_unserved_penalty_scaled", "terminal unserved (scaled)"),
+        ("mean_pen_unserved", "pen. unserved (objective)"),
+        ("mean_pen_infeasible", "pen. infeasible"),
+        ("step_penalty_total", "step penalty"),
+    ]:
+        if col in df.columns and df[col].notna().any() and float(df[col].abs().sum()) > 0:
+            decomp.append((col, label))
+    if decomp:
+        _try(
+            "Reward decomposition", "07_reward_decomposition.png", [c for c, _ in decomp],
+            DASHBOARD_SECTIONS[2],
+            "Training reward components — check whether terminal penalties still dominate.", True,
+            lambda: _plot_multi_ma(
+                df, decomp[:5], "Reward and penalty decomposition", "magnitude",
+                out_dir, "07_reward_decomposition.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    if "terminal_penalty_coef" in df.columns:
+        def _tpc():
+            x = _epoch_x(df)
+            y = df["terminal_penalty_coef"].astype(float)
             fig, ax = plt.subplots(figsize=(9, 4))
-            ax.plot(x, y, color="#16a34a", lw=2)
-            ax.set_title("Feasibility moving average")
+            ax.plot(x, y, color="#d97706", lw=2)
+            ax.set_title("Terminal unserved penalty schedule")
             ax.set_xlabel("training epoch")
-            ax.set_ylabel("feasibility rate")
-            ax.set_ylim(-0.05, 1.05)
+            ax.set_ylabel("terminal penalty coefficient")
             fig.tight_layout()
-            return _save_fig(fig, out_dir, "03_feasibility_moving_average.png", save_svg=save_svg)
+            return _save_fig(fig, out_dir, "08_terminal_penalty_schedule.png", save_svg=save_svg)
         _try(
-            "Feasibility moving average", "03_feasibility_moving_average.png", ["feasibility_rate"],
-            "Feasibility and constraints",
-            "Shows whether the model produces feasible EVRP solutions more often.", _feas,
+            "Terminal penalty schedule", "08_terminal_penalty_schedule.png", ["terminal_penalty_coef"],
+            DASHBOARD_SECTIONS[2], "Ramp of terminal unserved penalty during training.", False, _tpc,
         )
 
-    served_col = _pick(df, "served_rate", "served_rate_pct")
-    if served_col:
-        ylab = "served rate" if served_col == "served_rate" else "served %"
+    if "relative_objective_mismatch" in df.columns:
         _try(
-            "Served-customer ratio over epochs", "04_served_customer_ratio.png", [served_col],
-            "Feasibility and constraints", "Shows whether the policy learns to serve all customers.",
+            "Objective mismatch", "09_objective_mismatch.png", ["relative_objective_mismatch"],
+            DASHBOARD_SECTIONS[2],
+            "Relative |J - reconstructed J| / |J|. Values > 0.05 mean reward misalignment.", True,
             lambda: _plot_series_ma(
-                df, served_col, "Served-customer ratio over epochs", ylab,
-                out_dir, "04_served_customer_ratio.png", ma_window=moving_avg_window, save_svg=save_svg,
+                df, "relative_objective_mismatch", "Relative objective mismatch", "relative mismatch",
+                out_dir, "09_objective_mismatch.png", ma_window=ma, save_svg=save_svg, hline=0.05,
             ),
         )
 
-    viol_series: list[tuple[str, str]] = []
-    for col, label in [
-        ("unserved_customers", "unserved"),
-        ("avg_battery_violation", "battery"),
-        ("avg_lateness", "time window"),
-        ("avg_capacity_violation", "capacity"),
-        ("avg_depot_violation", "depot return"),
-        ("avg_duplicate_visits", "duplicate"),
-        ("mean_pen_unserved", "pen. unserved"),
-        ("mean_pen_battery", "pen. battery"),
-        ("mean_pen_late", "pen. late"),
-        ("mean_pen_capacity", "pen. capacity"),
-        ("mean_pen_depot", "pen. depot"),
-        ("mean_pen_duplicate", "pen. duplicate"),
-    ]:
-        if col in df.columns and df[col].notna().any():
-            viol_series.append((col, label))
-    if viol_series:
+    # --- 4. Action behavior ---
+    action_cols = [(c, l) for c, l in [
+        ("fraction_customer_actions", "customer"),
+        ("fraction_station_actions", "station"),
+        ("fraction_depot_actions", "depot"),
+    ] if c in df.columns]
+    if len(action_cols) >= 2:
         _try(
-            "Constraint violations over training", "05_constraint_violations.png",
-            [c for c, _ in viol_series], "Feasibility and constraints",
-            "EVRP constraint learning: battery, capacity, time windows, depot return.",
-            lambda: _plot_multi_series(
-                df, viol_series[:6], "Constraint violations over training", "violation magnitude",
-                out_dir, "05_constraint_violations.png", ma_window=moving_avg_window, save_svg=save_svg,
+            "Action type fractions", "10_action_type_fractions.png", [c for c, _ in action_cols],
+            DASHBOARD_SECTIONS[3],
+            "Policy action mix — rising customer fraction and falling early depot use indicate progress.", True,
+            lambda: _plot_multi_ma(
+                df, action_cols, "Action type fractions", "fraction",
+                out_dir, "10_action_type_fractions.png", ma_window=ma, save_svg=save_svg,
             ),
         )
 
-    loss_series: list[tuple[str, str]] = []
-    for col, label in [
-        ("actor_loss", "actor"), ("critic_loss", "critic"), ("total_loss", "total"),
-        ("q_critic_loss", "Q critic"), ("loss", "combined loss"),
-    ]:
-        if col in df.columns and df[col].astype(float).abs().sum() > 0:
-            loss_series.append((col, label))
-    if loss_series:
+    if "early_depot_returns" in df.columns:
         _try(
-            "Actor-critic losses", "06_actor_critic_losses.png", [c for c, _ in loss_series],
-            "Learning curves", "Training stability of the MARL actor-critic system.",
-            lambda: _plot_multi_series(
-                df, loss_series, "Actor-critic losses", "loss",
-                out_dir, "06_actor_critic_losses.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-
-    if "entropy" in df.columns:
-        _try(
-            "Policy entropy over epochs", "07_policy_entropy.png", ["entropy"],
-            "Learning curves", "Exploration — entropy should not collapse too early.",
+            "Early depot returns", "11_early_depot_returns.png", ["early_depot_returns"],
+            DASHBOARD_SECTIONS[3],
+            "Depot returns while customers remain unserved (should decrease).", True,
             lambda: _plot_series_ma(
-                df, "entropy", "Policy entropy over epochs", "entropy",
-                out_dir, "07_policy_entropy.png", ma_window=moving_avg_window, save_svg=save_svg,
+                df, "early_depot_returns", "Early depot returns per episode", "count",
+                out_dir, "11_early_depot_returns.png", ma_window=ma, save_svg=save_svg,
             ),
         )
 
-    if "critic_explained_variance" in df.columns and df["critic_explained_variance"].notna().any():
-        def _cev():
+    # --- 5. Critic and actor health ---
+    loss_cols = [(c, l) for c, l in [("actor_loss", "actor"), ("critic_loss", "critic")] if c in df.columns]
+    if loss_cols:
+        _try(
+            "Actor and critic loss", "12_actor_critic_loss.png", [c for c, _ in loss_cols],
+            DASHBOARD_SECTIONS[4], "Actor-critic optimization stability.", True,
+            lambda: _plot_multi_ma(
+                df, loss_cols, "Actor and critic loss", "loss",
+                out_dir, "12_actor_critic_loss.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    if "critic_explained_variance" in df.columns:
+        def _ev():
             x = _epoch_x(df)
             y = df["critic_explained_variance"].astype(float)
             fig, ax = plt.subplots(figsize=(9, 4))
             ax.plot(x, y, color="#7c3aed", lw=1.5)
+            ax.axhline(0.0, color="#64748b", ls="--", lw=1)
             ax.set_title("Critic explained variance")
             ax.set_xlabel("training epoch")
             ax.set_ylabel("explained variance")
             fig.tight_layout()
-            return _save_fig(fig, out_dir, "08_critic_explained_variance.png", save_svg=save_svg)
+            return _save_fig(fig, out_dir, "13_explained_variance.png", save_svg=save_svg)
         _try(
-            "Critic explained variance", "08_critic_explained_variance.png", ["critic_explained_variance"],
-            "Learning curves", "Whether the critic learns useful value estimates.", _cev,
+            "Critic explained variance", "13_explained_variance.png", ["critic_explained_variance"],
+            DASHBOARD_SECTIONS[4], "Near zero means the critic is not learning useful values.", True, _ev,
         )
 
-    obj_pairs = [
-        ("avg_distance", "distance"), ("avg_duration", "duration"),
-        ("avg_charging_time", "charging time"), ("avg_charging_price", "charging cost"),
-        ("avg_waiting_time", "waiting time"),
-    ]
-    obj_avail = [(c, l) for c, l in obj_pairs if c in df.columns]
-    if len(obj_avail) >= 2:
-        scales = [df[c].astype(float).std() for c, _ in obj_avail]
-        if max(scales) > 10 * max(min(scales), 1e-9):
-            dd = [(c, l) for c, l in obj_avail if c in ("avg_distance", "avg_duration")]
-            cw = [(c, l) for c, l in obj_avail if c not in ("avg_distance", "avg_duration")]
-            if dd:
-                _try("Distance and duration", "09a_distance_duration.png", [c for c, _ in dd],
-                     "EVRP operational behavior", "Route distance and duration over training.",
-                     lambda: _plot_multi_series(
-                         df, dd, "Distance and duration over training", "value",
-                         out_dir, "09a_distance_duration.png", ma_window=moving_avg_window, save_svg=save_svg,
-                     ))
-            if cw:
-                _try("Charging and waiting", "09b_charging_waiting.png", [c for c, _ in cw],
-                     "EVRP operational behavior", "Charging and waiting effort over training.",
-                     lambda: _plot_multi_series(
-                         df, cw, "Charging and waiting over training", "value",
-                         out_dir, "09b_charging_waiting.png", ma_window=moving_avg_window, save_svg=save_svg,
-                     ))
-        else:
-            _try(
-                "Objective components over training", "09_objective_components.png",
-                [c for c, _ in obj_avail], "EVRP operational behavior",
-                "Which parts of the EVRP cost are improving.",
-                lambda: _plot_multi_series(
-                    df, obj_avail, "Objective components over training", "value",
-                    out_dir, "09_objective_components.png", ma_window=moving_avg_window, save_svg=save_svg,
-                ),
-            )
+    adv_cols = [(c, l) for c, l in [("advantage", "mean"), ("advantage_std", "std")] if c in df.columns]
+    if adv_cols:
+        _try(
+            "Advantage statistics", "14_advantage_stats.png", [c for c, _ in adv_cols],
+            DASHBOARD_SECTIONS[4], "Scale and spread of GAE advantages.", False,
+            lambda: _plot_multi_ma(
+                df, adv_cols, "Advantage statistics", "advantage",
+                out_dir, "14_advantage_stats.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
 
+    grad_cols = [(c, l) for c, l in [
+        ("actor_grad_norm", "actor grad"),
+        ("critic_grad_norm", "critic grad"),
+        ("actor_param_delta_norm", "actor Δparam"),
+        ("critic_param_delta_norm", "critic Δparam"),
+        ("grad_norm", "total grad"),
+    ] if c in df.columns and df[c].notna().any()]
+    if len(grad_cols) >= 2:
+        _try(
+            "Gradient and parameter update norms", "15_gradient_param_norms.png", [c for c, _ in grad_cols],
+            DASHBOARD_SECTIONS[4],
+            "Confirms the actor and critic weights are actually changing each update.", True,
+            lambda: _plot_multi_ma(
+                df, grad_cols[:4], "Gradient and parameter update norms", "norm",
+                out_dir, "15_gradient_param_norms.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    # --- 6. Per-instance learning ---
+    heat_obj = obj_col or "cost"
+    if heat_obj and "instance_name" in df.columns:
+        _try(
+            "Per-instance objective heatmap", "16_instance_objective_heatmap.png", [heat_obj],
+            DASHBOARD_SECTIONS[5],
+            f"Objective per RC _21 instance across cycles ({n_inst} rows).", True,
+            lambda: _heatmap_instance_cycle(
+                df, heat_obj, "Per-instance objective heatmap",
+                out_dir, "16_instance_objective_heatmap.png", n_inst=n_inst, save_svg=save_svg,
+            ),
+        )
+    if served_col and "instance_name" in df.columns:
+        _try(
+            "Per-instance served-ratio heatmap", "17_instance_served_ratio_heatmap.png", [served_col],
+            DASHBOARD_SECTIONS[5],
+            "Served ratio per instance across cycles — detects repeating bad patterns.", True,
+            lambda: _heatmap_instance_cycle(
+                df, served_col, "Per-instance served-ratio heatmap",
+                out_dir, "17_instance_served_ratio_heatmap.png", n_inst=n_inst, save_svg=save_svg,
+            ),
+        )
+
+    # --- 7. EVRP operational metrics (minimal) ---
     if "avg_used_evs" in df.columns:
         _try(
-            "Number of used EVs", "10_used_evs.png", ["avg_used_evs"],
-            "EVRP operational behavior", "Whether the model learns efficient fleet usage.",
+            "Used EVs", "18_used_evs.png", ["avg_used_evs"],
+            DASHBOARD_SECTIONS[6], "Fleet size used per episode.", False,
             lambda: _plot_series_ma(
-                df, "avg_used_evs", "Number of used EVs", "used EVs",
-                out_dir, "10_used_evs.png", ma_window=moving_avg_window, save_svg=save_svg,
+                df, "avg_used_evs", "Used EVs", "count",
+                out_dir, "18_used_evs.png", ma_window=ma, save_svg=save_svg,
             ),
         )
 
-    if "charging_station_visits" in df.columns:
-        _try(
-            "Charging-station visits over training", "11a_station_visits.png", ["charging_station_visits"],
-            "EVRP operational behavior", "EV recharging station usage during training.",
-            lambda: _plot_series_ma(
-                df, "charging_station_visits", "Charging-station visits over training", "visits",
-                out_dir, "11a_station_visits.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-    charge_effort = [(c, l) for c, l in [
-        ("avg_charging_time", "charging time"), ("avg_charging_price", "charging cost"),
+    op_cols = [(c, l) for c, l in [
+        ("avg_distance", "distance"),
+        ("avg_charging_time", "charging time"),
+        ("charging_station_visits", "station visits"),
     ] if c in df.columns]
-    if charge_effort:
+    if len(op_cols) >= 2:
         _try(
-            "Charging effort over training", "11b_charging_effort.png", [c for c, _ in charge_effort],
-            "EVRP operational behavior", "Total charging time and monetary charging cost.",
-            lambda: _plot_multi_series(
-                df, charge_effort, "Charging effort over training", "value",
-                out_dir, "11b_charging_effort.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-    if "min_remaining_battery" in df.columns:
-        _try(
-            "Minimum battery level over training", "11c_min_battery.png", ["min_remaining_battery"],
-            "EVRP operational behavior", "Minimum remaining battery at episode end.",
-            lambda: _plot_series_ma(
-                df, "min_remaining_battery", "Minimum battery level over training", "battery level",
-                out_dir, "11c_min_battery.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-
-    if "route_balance_cv" in df.columns:
-        _try(
-            "Fleet coordination and route balance", "12_fleet_coordination_balance.png", ["route_balance_cv"],
-            "MARL coordination", "Std/mean of per-EV route distance — load balance across agents.",
-            lambda: _plot_series_ma(
-                df, "route_balance_cv", "Fleet coordination and route balance", "route balance (CV)",
-                out_dir, "12_fleet_coordination_balance.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-
-    far_col = _pick(df, "feasible_action_ratio")
-    if far_col:
-        _try(
-            "Feasible action ratio", "13_feasible_action_ratio.png", [far_col],
-            "Feasibility and constraints", "How restrictive environment masks are during training.",
-            lambda: _plot_series_ma(
-                df, far_col, "Feasible action ratio", "ratio",
-                out_dir, "13_feasible_action_ratio.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-    elif "mean_feasible_actions" in df.columns and "num_nodes" in df.columns:
-        work = df.copy()
-        work["feasible_action_ratio"] = work["mean_feasible_actions"] / work["num_nodes"].clip(lower=1)
-        _try(
-            "Feasible action ratio", "13_feasible_action_ratio.png",
-            ["mean_feasible_actions", "num_nodes"], "Feasibility and constraints",
-            "Feasible actions per step relative to graph size.",
-            lambda: _plot_series_ma(
-                work, "feasible_action_ratio", "Feasible action ratio", "ratio",
-                out_dir, "13_feasible_action_ratio.png", ma_window=moving_avg_window, save_svg=save_svg,
-            ),
-        )
-
-    cyc = _cycle_aggregate(df)
-    if not cyc.empty and "cost" in cyc.columns:
-        def _cobj():
-            fig, ax = plt.subplots(figsize=(9, 4))
-            ax.plot(cyc["cycle"], cyc["cost"], marker="o", color="#2563eb")
-            ax.set_title("Cycle-level objective progress")
-            ax.set_xlabel("training cycle")
-            ax.set_ylabel("mean objective")
-            fig.tight_layout()
-            return _save_fig(fig, out_dir, "14a_cycle_objective.png", save_svg=save_svg)
-        _try(
-            "Cycle-level objective progress", "14a_cycle_objective.png", ["cost"],
-            "Cyclic schedule analysis", "Mean objective per full pass over training instances.", _cobj,
-        )
-
-    if not cyc.empty:
-        fs_cols = [c for c in ("feasibility_rate", "served_rate") if c in cyc.columns]
-        if fs_cols:
-            def _cfs():
-                fig, ax = plt.subplots(figsize=(9, 4))
-                for col in fs_cols:
-                    ax.plot(cyc["cycle"], cyc[col], marker="o", label=col.replace("_", " "))
-                ax.set_title("Cycle-level feasibility and served ratio")
-                ax.set_xlabel("training cycle")
-                ax.legend()
-                fig.tight_layout()
-                return _save_fig(fig, out_dir, "14b_cycle_feasibility_served.png", save_svg=save_svg)
-            _try(
-                "Cycle-level feasibility and served ratio", "14b_cycle_feasibility_served.png", fs_cols,
-                "Cyclic schedule analysis", "Aggregate feasibility and coverage per cycle.", _cfs,
-            )
-        vcols = [c for c in (
-            "avg_violation", "unserved_customers", "avg_battery_violation", "avg_lateness",
-        ) if c in cyc.columns]
-        if vcols:
-            _try(
-                "Cycle-level violations", "14c_cycle_violations.png", vcols,
-                "Cyclic schedule analysis", "Mean violations per training cycle.",
-                lambda: _plot_multi_series(
-                    cyc.rename(columns={"cycle": "epoch"}), [(c, c) for c in vcols],
-                    "Cycle-level violations", "mean violation",
-                    out_dir, "14c_cycle_violations.png", ma_window=1, save_svg=save_svg,
-                ),
-            )
-
-    if cost_col and "instance_name" in df.columns:
-        _try(
-            "Per-instance objective across cycles", "15a_per_instance_objective_heatmap.png", [cost_col],
-            "Cyclic schedule analysis", "Objective heatmap: instances × cycles.",
-            lambda: _heatmap_instance_cycle(
-                df, cost_col, "Per-instance objective across cycles",
-                out_dir, "15a_per_instance_objective_heatmap.png", save_svg=save_svg,
-            ),
-        )
-    if "feasibility_rate" in df.columns and "instance_name" in df.columns:
-        _try(
-            "Per-instance feasibility across cycles", "15b_per_instance_feasibility_heatmap.png",
-            ["feasibility_rate"], "Cyclic schedule analysis", "Feasibility heatmap: instances × cycles.",
-            lambda: _heatmap_instance_cycle(
-                df, "feasibility_rate", "Per-instance feasibility across cycles",
-                out_dir, "15b_per_instance_feasibility_heatmap.png", save_svg=save_svg,
-            ),
-        )
-
-    if cost_col and "instance_name" in df.columns:
-        last_cycle = int(_cycle_col(df).max())
-        final = df[_cycle_col(df) == last_cycle]
-        if not final.empty:
-            inst_mean = final.groupby("instance_name")[cost_col].mean().sort_values(ascending=False)
-            def _final_bar():
-                fig, ax = plt.subplots(figsize=(10, max(4, 0.22 * len(inst_mean))))
-                ax.barh(range(len(inst_mean)), inst_mean.to_numpy(), color="#dc2626")
-                ax.set_yticks(range(len(inst_mean)))
-                ax.set_yticklabels(inst_mean.index, fontsize=7)
-                ax.invert_yaxis()
-                ax.set_title("Final-cycle objective by training instance")
-                ax.set_xlabel("mean objective")
-                fig.tight_layout()
-                return _save_fig(fig, out_dir, "16_final_cycle_instance_objective.png", save_svg=save_svg)
-            _try(
-                "Final-cycle objective by training instance", "16_final_cycle_instance_objective.png",
-                [cost_col], "Cyclic schedule analysis", "Hardest training instances in the last cycle.",
-                _final_bar,
-            )
-
-    stab_series: list[tuple[str, str]] = []
-    for col, label in [
-        ("grad_norm", "grad norm"),
-        ("cuda_max_mem_allocated_mb", "peak GPU MB"),
-        ("cuda_mem_allocated_mb", "GPU allocated MB"),
-    ]:
-        if col in df.columns and df[col].notna().any():
-            stab_series.append((col, label))
-    if stab_series:
-        _try(
-            "Training stability diagnostics", "17_training_stability_diagnostics.png",
-            [c for c, _ in stab_series], "Learning curves",
-            "Gradient norms and GPU memory during training.",
-            lambda: _plot_multi_series(
-                df, stab_series, "Training stability diagnostics", "value",
-                out_dir, "17_training_stability_diagnostics.png", ma_window=moving_avg_window, save_svg=save_svg,
+            "Distance and charging behavior", "19_distance_charging.png", [c for c, _ in op_cols],
+            DASHBOARD_SECTIONS[6], "Minimal operational routing metrics.", False,
+            lambda: _plot_multi_ma(
+                df, op_cols, "Distance and charging behavior", "value",
+                out_dir, "19_distance_charging.png", ma_window=ma, save_svg=save_svg,
             ),
         )
 
     report.figures = results
-    report.index_md_path = str(_write_index_md(results, out_dir))
-    report.html_path = str(_write_index_html(results, out_dir))
+    report.index_md_path = str(_write_index_md(results, out_dir, ma))
+    report.html_path = str(_write_index_html(results, out_dir, ma))
     return report
 
 
-def _write_index_md(figures: list[FigureResult], out_dir: Path) -> Path:
+def _write_index_md(figures: list[FigureResult], out_dir: Path, ma_window: int) -> Path:
     path = out_dir / "figures_index.md"
     lines = [
-        "# MARL EVRP Training Figures Index",
+        "# MARL EVRP Training Dashboard — Figure Index",
         "",
-        "Training-only metrics (no validation or held-out test instances).",
+        "Training metrics only. No validation or held-out test instances.",
+        f"Moving average window: **{ma_window}** (= training instances per cycle).",
         "",
-        "| Graph | File | Metrics | Status | Explanation |",
-        "|-------|------|---------|--------|-------------|",
+        "| Graph | File | Required | Metrics | Status | Explanation |",
+        "|-------|------|----------|---------|--------|-------------|",
     ]
     for f in figures:
+        req = "yes" if f.required else "no"
         status = "generated" if f.generated else f"skipped ({f.skip_reason or 'unavailable'})"
         metrics = ", ".join(f.metrics) if f.metrics else "—"
-        lines.append(f"| {f.name} | `{f.filename}` | {metrics} | {status} | {f.description} |")
+        lines.append(
+            f"| {f.name} | `{f.filename}` | {req} | {metrics} | {status} | {f.description} |"
+        )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
-def _write_index_html(figures: list[FigureResult], out_dir: Path) -> Path:
-    sections_order = [
-        ("Learning curves", "learning"),
-        ("Feasibility and constraints", "feasibility"),
-        ("EVRP operational behavior", "operations"),
-        ("MARL coordination", "coordination"),
-        ("Cyclic schedule analysis", "cycles"),
-    ]
-    by_section: dict[str, list[FigureResult]] = {s: [] for s, _ in sections_order}
+def _write_index_html(figures: list[FigureResult], out_dir: Path, ma_window: int) -> Path:
+    by_section: dict[str, list[FigureResult]] = {s: [] for s in DASHBOARD_SECTIONS}
     for f in figures:
         by_section.setdefault(f.section, []).append(f)
 
@@ -683,37 +650,41 @@ def _write_index_html(figures: list[FigureResult], out_dir: Path) -> Path:
         "header{padding:1.5rem 2rem;background:#1e293b;border-bottom:1px solid #334155}",
         "main{padding:1.5rem 2rem;max-width:1200px;margin:0 auto}",
         "h1{margin:0;font-size:1.5rem} .sub{color:#94a3b8;font-size:.9rem;margin-top:.35rem}",
-        "section{margin:2rem 0} h2{font-size:1.1rem;color:#93c5fd;border-bottom:1px solid #334155;padding-bottom:.4rem}",
+        "section{margin:2rem 0} h2{font-size:1.05rem;color:#93c5fd;border-bottom:1px solid #334155;padding-bottom:.4rem}",
         ".grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(480px,1fr));gap:1.25rem;margin-top:1rem}",
         ".card{background:#1e293b;border:1px solid #334155;border-radius:8px;padding:1rem}",
+        ".req{border-left:3px solid #f59e0b}",
         ".card h3{font-size:.95rem;margin:0 0 .5rem} .card p{font-size:.8rem;color:#94a3b8;margin:.25rem 0 .75rem}",
         ".card img{width:100%;border-radius:4px;background:#fff}",
-        ".skip{color:#f87171;font-size:.85rem}",
+        ".skip{color:#f87171;font-size:.85rem} .tag{font-size:.7rem;color:#f59e0b}",
         "a{color:#60a5fa}",
         "</style></head><body>",
         "<header><h1>MARL EVRP Training Dashboard</h1>",
-        "<p class='sub'>Training metrics only — Schneider R _21, 20 instances × 20 cycles. "
-        "No validation or held-out test data.</p></header><main>",
+        f"<p class='sub'>Schneider RC _21 — training only · MA window = {ma_window} · "
+        "no validation or test data</p></header><main>",
     ]
-    for title, _ in sections_order:
+    for title in DASHBOARD_SECTIONS:
         items = by_section.get(title, [])
         if not items:
             continue
-        parts.append(f"<section id='{title.lower().replace(' ','-')}'><h2>{title}</h2><div class='grid'>")
+        sid = title.split(".", 1)[0]
+        parts.append(f"<section id='s{sid}'><h2>{title}</h2><div class='grid'>")
         for f in items:
-            parts.append("<div class='card'>")
-            parts.append(f"<h3>{f.name}</h3><p>{f.description}</p>")
+            cls = "card req" if f.required else "card"
+            parts.append(f"<div class='{cls}'>")
+            req_tag = " <span class='tag'>critical</span>" if f.required else ""
+            parts.append(f"<h3>{f.name}{req_tag}</h3><p>{f.description}</p>")
             if f.generated and f.png_path:
                 rel = Path(f.png_path).name
                 parts.append(f"<img src='{rel}' alt='{f.name}' loading='lazy'>")
                 if f.svg_path:
                     parts.append(f"<p><a href='{Path(f.svg_path).name}'>SVG</a></p>")
             else:
-                parts.append(f"<p class='skip'>Unavailable — {f.skip_reason or 'metrics missing'}</p>")
+                parts.append(f"<p class='skip'>Skipped — {f.skip_reason or 'metrics missing'}</p>")
             parts.append("</div>")
         parts.append("</div></section>")
     parts.append(
-        "<section><h2>Index</h2><p>See <a href='figures_index.md'>figures_index.md</a> for metrics and status.</p></section>"
+        "<section><h2>Index</h2><p>See <a href='figures_index.md'>figures_index.md</a>.</p></section>"
     )
     parts.append("</main></body></html>")
     html_path = out_dir / "index.html"
@@ -728,16 +699,15 @@ def generate_training_dashboard_from_config(
     holdout_meta: dict | None = None,
     moving_avg_window: int | None = None,
     save_svg: bool = True,
+    skip_train_count_check: bool = False,
 ) -> DashboardReport:
     """Load metrics from config paths / rows and write dashboard artifacts."""
     out_cfg = config.get("outputs") or {}
     figures_dir = Path(out_cfg.get("figures", "outputs/figures")) / "training"
-    tcfg = config.get("training") or {}
     ds_cfg = config.get("dataset") or {}
-    ma = int(moving_avg_window or tcfg.get("dashboard_ma_window", DEFAULT_MA_WINDOW))
 
     holdout = list((holdout_meta or {}).get("eval_instances") or ds_cfg.get("eval_instances") or [])
-    train_inst = list(ds_cfg.get("train_instances") or [])
+    train_inst = list((holdout_meta or {}).get("train_instances") or ds_cfg.get("train_instances") or [])
 
     if rows:
         df = pd.DataFrame(rows)
@@ -753,7 +723,16 @@ def generate_training_dashboard_from_config(
             train_instances=train_inst or None, holdout_instances=holdout or None,
         )
 
-    report = generate_training_dashboard(df, figures_dir, moving_avg_window=ma, save_svg=save_svg)
+    if skip_train_count_check:
+        ma = int(moving_avg_window or ds_cfg.get("expected_train_count") or REQUIRED_RC21_TRAIN_COUNT)
+        n_train = ma
+    else:
+        ma = int(moving_avg_window) if moving_avg_window else resolve_dashboard_ma_window(config, df, holdout_meta)
+        n_train = ma
+
+    report = generate_training_dashboard(
+        df, figures_dir, moving_avg_window=ma, n_train_instances=n_train, save_svg=save_svg,
+    )
     n_gen = sum(1 for f in report.figures if f.generated)
     LOGGER.info(
         "Training dashboard: %d/%d figures → %s (open index.html)",

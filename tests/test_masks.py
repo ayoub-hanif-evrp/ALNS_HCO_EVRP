@@ -5,7 +5,7 @@ import numpy as np
 
 from src.env.evrptw_env import EVRPTWEnv
 from src.env.ev_state import EVState
-from src.env.masks import compute_feasible_mask, customer_feasible
+from src.env.masks import compute_feasible_mask, customer_feasible, depot_return_feasible
 
 
 def _fresh_env(instance, m=2):
@@ -105,14 +105,36 @@ def test_station_self_loop_masked(small_instance):
     assert reasons[s] == "station_self_loop"
 
 
+def test_depot_return_window_blocks_customer(small_instance):
+    inst = small_instance
+    ev = EVState.initial(0, inst.depot_index, inst.vehicle.battery_capacity, inst.vehicle.load_capacity)
+    j = inst.customer_indices[0]
+    depot = inst.depot_index
+    # Simulate EV already at customer, too late to return before depot closes.
+    ev.current_node = j
+    travel_back = inst.travel_time_matrix[j, depot]
+    due = inst.nodes[depot].due_time
+    ev.current_time = due - travel_back + 1.0
+    ok, reason = depot_return_feasible(inst, j, ev.current_time, use_horizon_check=True)
+    assert not ok
+    assert reason == "depot_window_late"
+
+
+def test_depot_return_feasible_helper(small_instance):
+    inst = small_instance
+    j = inst.customer_indices[0]
+    ok, _ = depot_return_feasible(inst, j, 0.0, use_horizon_check=True)
+    assert ok
+
+
 def test_depot_blocked_at_start_when_customers_feasible(small_instance):
     inst = small_instance
-    env = _fresh_env(inst)
+    env = _fresh_env(small_instance)
     ev = env.evs[0]
     mask, reasons = env.feasible_mask(ev)
-    # At route start with feasible customers, depot must be blocked.
+    # At route start on depot, recharge is a self-loop and must be blocked.
     assert not mask[inst.depot_index]
-    assert reasons[inst.depot_index] == "depot_blocked_at_start"
+    assert reasons[inst.depot_index] == "depot_self_loop"
 
 
 def test_stations_masked_when_all_served(small_instance):
@@ -126,5 +148,5 @@ def test_stations_masked_when_all_served(small_instance):
     mask, reasons = env.feasible_mask(ev)
     for s in inst.charging_station_indices:
         assert not mask[s]
-    # Depot should be allowed (reachable) so the EV can return.
-    assert mask[inst.depot_index] or reasons.get(inst.depot_index) == "battery_cannot_reach"
+    # Depot recharge blocked when all customers are served (auto-close handles return).
+    assert not mask[inst.depot_index]

@@ -1,10 +1,10 @@
 # =============================================================================
-# MAIN TRAINING — Schneider EVRPTW, R class, full (_21) instances
+# DEFAULT TRAINING — Schneider EVRPTW, RC class, full (_21) instances
 #   python main_train.py
 #   python main_dashboard.py
 #
-# Train: 20 R _21 instances × 20 passes = 400 epochs (sequential, no eval).
-# Held out for later testing: r101_21, r104_21, r209_21
+# Schneider RC _21: 16 instances total → 13 train + 3 held out (not 23 like R class).
+# Set dataset.expected_train_count: 20 only if you add more RC _21 instances.
 # =============================================================================
 
 seed: 42
@@ -13,33 +13,21 @@ deterministic: false
 
 dataset:
   path: dataset/Schneider/evrptw_instances
+  class_filter: ["RC"]
   train_size_filter: ["_21"]
   eval_size_filter: ["_21"]
-  train_instances:
-    - r102_21
-    - r103_21
-    - r105_21
-    - r106_21
-    - r107_21
-    - r108_21
-    - r109_21
-    - r110_21
-    - r111_21
-    - r112_21
-    - r201_21
-    - r202_21
-    - r203_21
-    - r204_21
-    - r205_21
-    - r206_21
-    - r207_21
-    - r208_21
-    - r210_21
-    - r211_21
+  auto_discover_rc21: true
+  expected_train_count: 13
+  expected_eval_count: 3
+  fail_if_train_count_mismatch: true
   eval_instances:
-    - r101_21
-    - r104_21
-    - r209_21
+    - rc101_21
+    - rc104_21
+    - rc208_21
+
+optimizer:
+  actor_lr: 0.0001
+  critic_lr: 0.0001
 
 training:
   method: actor_critic
@@ -47,33 +35,51 @@ training:
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  passes: 20
+  cycles: 100
   shuffle_within_pass: false
   reward_scale: 1000.0
   log_every: 1
-  checkpoint_every: 20
+  checkpoint_every: 0
   dashboard_ma_window: 20
   min_decisions_warn: 10
-  use_amp: true
+  use_amp: false
   gradient_accumulation_steps: 1
+  use_local_search_in_training: false
+  critic_warmup_steps: 0
+  critic_updates_per_step: 1
+  debug_overfit_one_instance: false
+  overfit_instance_name: rc102_21
+  debug_overfit_updates: 500
+  fail_on_overfit_regression: true
 
 rl:
-  gamma: 1.0
-  critic_coef: 0.5
-  q_critic_coef: 0.5
-  critic_learning_rate: 0.0001
-  gae_lambda: 0.95
-  counterfactual_mix: 0.5
-  potential_eta_served: 5.0
-  potential_eta_remaining_demand: 2.0
-  potential_eta_battery_risk: 3.0
-  potential_eta_time_risk: 3.0
-  battery_safe_ratio: 0.2
-  use_pomo: false
-  pomo_K: 1
-  pomo_mix_rho: 0.1
-  normalize_advantages: true
+  use_step_rewards: true
+  use_gae: true
   use_counterfactual_critic: false
+  use_pomo: false
+  use_potential_shaping: false
+  gamma: 1.0
+  gae_lambda: 0.95
+  normalize_advantages: true
+  normalize_returns_for_critic: true
+  critic_coef: 0.5
+  use_served_customer_bonus: true
+  served_bonus_mode: penalty_equivalent
+  served_bonus_coef: 0.5
+  use_early_depot_penalty: true
+  early_depot_penalty_coef: 1.0
+  use_step_penalty: true
+  step_penalty: 0.01
+  use_depot_logit_penalty: true
+  depot_logit_penalty: 2.0
+  depot_penalty_until_served_ratio: 0.95
+  terminal_penalty_schedule:
+    enabled: true
+    start_coef: 0.25
+    end_coef: 1.0
+    warmup_cycles: 20
+  q_eval_mode: topk
+  max_q_actions: 64
   detach_critic_inputs: true
 
 model:
@@ -84,9 +90,6 @@ model:
   dropout: 0.1
   use_ev_communication: true
   use_edge_aware_encoder: false
-  edge_features: [distance, travel_time, energy]
-  edge_bias_hidden_dim: 64
-  edge_bias_per_head: true
 
 decoding:
   mode: sampling
@@ -121,6 +124,11 @@ fleet_search:
   enabled: true
   extra_margin: 6
   selection_mode: hierarchical
+
+debug:
+  objective_mismatch_warn_threshold: 0.05
+  fail_on_large_objective_mismatch: false
+  allow_all_advanced_modules: false
 
 outputs:
   root: outputs

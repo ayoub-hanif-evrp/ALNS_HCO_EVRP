@@ -15,18 +15,20 @@ from src.training.rollout import run_episode, run_multi_sample
 INFEASIBILITY_PENALTY = 10000.0
 
 
-def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, use_horizon, max_steps_factor):
+def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, use_horizon, use_depot_charging, max_steps_factor):
     def runner(instance, m):
         if mode == "multi_sample":
             res = run_multi_sample(
                 instance, policy, m, weights, n_samples=n_samples, device=device,
                 charging_portions=charging_portions, use_horizon_check=use_horizon,
+                use_depot_charging=use_depot_charging,
                 max_steps_factor=max_steps_factor,
             )
         else:
             res = run_episode(
                 instance, policy, m, weights, mode="greedy", device=device,
                 charging_portions=charging_portions, use_horizon_check=use_horizon,
+                use_depot_charging=use_depot_charging,
                 max_steps_factor=max_steps_factor,
             )
         return FleetCandidate(m=m, feasible=res.feasible, objective=res.objective, summary=res.summary, result=res)
@@ -76,6 +78,7 @@ def validate_class(
     n_samples: int = 16,
     charging_portions=None,
     use_horizon: bool = True,
+    use_depot_charging: bool = True,
     max_steps_factor: int = 6,
     extra_margin: int = 5,
     selection_mode: str = "hierarchical",
@@ -91,7 +94,8 @@ def validate_class(
         return {}
 
     runner = _neural_runner(
-        policy, weights, mode, device, n_samples, charging_portions, use_horizon, max_steps_factor
+        policy, weights, mode, device, n_samples, charging_portions,
+        use_horizon, use_depot_charging, max_steps_factor,
     )
     costs, feas, dist, evs = [], [], [], []
     durations, charge, price, wait = [], [], [], []
