@@ -1,0 +1,68 @@
+{
+  "ok": true,
+  "cached": false,
+  "instance_name": "rc102_21",
+  "epoch": 52,
+  "cycle": 5,
+  "checkpoint": "best.pt",
+  "checkpoint_epoch": null,
+  "checkpoint_note": "best.pt \u2014 no history checkpoint \u2264 epoch 52",
+  "objective": 411066.1925475464,
+  "served_ratio": 0.71,
+  "feasible": false,
+  "unserved_customers": 29,
+  "used_evs": 18,
+  "total_distance": 2285.0994725227356,
+  "trace_path": "outputs\\traces\\maps\\rc102_21_epoch_52.json",
+  "figures_dir": "outputs\\figures\\maps\\rc102_21\\epoch_52",
+  "figures": [
+    {
+      "file": "live_solution_map.png",
+      "title": "Route map",
+      "exists": true,
+      "mtime": 1783204979
+    },
+    {
+      "file": "live_route_timeline.png",
+      "title": "Route timeline",
+      "exists": true,
+      "mtime": 1783204981
+    },
+    {
+      "file": "live_battery_trajectory.png",
+      "title": "Battery trajectory",
+      "exists": true,
+      "mtime": 1783204983
+    },
+    {
+      "file": "live_unserved_over_decisions.png",
+      "title": "Unserved over decisions",
+      "exists": true,
+      "mtime": 1783204983
+    },
+    {
+      "file": "live_action_sequence.png",
+      "title": "Action sequence",
+      "exists": true,
+      "mtime": 1783204985
+    },
+    {
+      "file": "live_feasible_actions.png",
+      "title": "Feasible actions over decisions",
+      "exists": true,
+      "mtime": 1783204985
+    },
+    {
+      "file": "live_service_slack.png",
+      "title": "Time-window slack at service",
+      "exists": true,
+      "mtime": 1783204986
+    },
+    {
+      "file": "live_ev_route_balance.png",
+      "title": "Per-EV route balance",
+      "exists": true,
+      "mtime": 1783204987
+    }
+  ]
+}
