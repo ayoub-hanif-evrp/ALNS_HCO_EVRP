@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from src.env.cost import CostWeights, SolutionSummary
 from src.env.reward import CostSnapshot, StepInfo
-from src.training.reward_shaping import TerminalPenaltySchedule, TrainingRewardCalculator, TrainingRewardConfig
+from src.training.reward_shaping import (
+    StepContext,
+    TerminalPenaltySchedule,
+    TrainingRewardCalculator,
+    TrainingRewardConfig,
+)
 
 
 def _weights() -> CostWeights:
@@ -72,3 +77,25 @@ def test_early_depot_penalty():
     out = calc.shape_step(step, before=before, after=after, node_type="route_close", customer_served=False)
     assert calc.stats.early_depot_returns == 1
     assert out.reward < 0.0
+
+
+def test_newly_expired_customer_penalty():
+    w = _weights()
+    cfg = TrainingRewardConfig(
+        reward_scale=1000.0,
+        use_newly_expired_customer_penalty=True,
+        newly_expired_customer_penalty=1.0,
+    )
+    calc = TrainingRewardCalculator(w, cfg, num_customers=100, cycle_id=1)
+    ctx = StepContext(expired_before=2, expired_after=5)
+    step = StepInfo(
+        ev_id=0, selected_node=1, node_type="station", previous_node=0,
+        reward=-0.01, raw_reward=-0.01,
+    )
+    out = calc.shape_step(
+        step, before=CostSnapshot(), after=CostSnapshot(),
+        node_type="station", customer_served=False, ctx=ctx,
+    )
+    assert calc.stats.newly_expired_customers == 3
+    assert out.reward < -0.01
+    assert out.extra["newly_expired_customers"] == 3.0

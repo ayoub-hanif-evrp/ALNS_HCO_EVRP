@@ -324,51 +324,6 @@ def load_run_config(outputs_root: Path | None = None, fallback: Path | None = No
 
 def training_plan_from_config(cfg: dict) -> dict:
     tcfg = cfg.get("training") or {}
-    ccfg = cfg.get("curriculum") or {}
-
-    mode = str(ccfg.get("mode", "")).lower()
-    if mode == "cyclic":
-        cycles = int(ccfg.get("cycles", 5))
-        class_order = [c.upper() for c in ccfg.get("class_order", ["C", "R", "RC"])]
-        # Approximate total from config comment; exact count is in run summary / metrics length.
-        per_cycle_hint = int(ccfg.get("steps_per_cycle_hint", 0)) or None
-        total = (per_cycle_hint * cycles) if per_cycle_hint else 0
-        return {
-            "phases": [],
-            "phase_names": {1: "C", 2: "R", 3: "RC"},
-            "curriculum_stages": [1, 2, 3],
-            "total_training_updates": total,
-            "total_epochs": total,
-            "batch_size": 1,
-            "method": str(tcfg.get("method", "actor_critic")),
-            "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
-            "training_mode": "cyclic",
-            "cycles": cycles,
-            "class_order": class_order,
-        }
-
-    curriculum = cfg.get("curriculum")
-    if curriculum:
-        from src.training.curriculum import phases_from_config
-
-        phases = phases_from_config(curriculum)
-        phase_rows = [
-            {"id": p.index, "name": p.name, "max_episodes": p.epochs, "classes": p.classes}
-            for p in phases
-        ]
-        total = sum(int(p.epochs) for p in phases)
-        return {
-            "phases": phase_rows,
-            "phase_names": {int(p.index): p.name for p in phases},
-            "curriculum_stages": [int(p.index) for p in phases],
-            "total_training_updates": total,
-            "total_epochs": total,
-            "batch_size": int(tcfg.get("batch_size", 0) or 0),
-            "method": str(tcfg.get("method", "actor_critic")),
-            "learning_rate": float(tcfg.get("learning_rate", 0.0) or 0.0),
-            "training_mode": "curriculum",
-        }
-
     epochs = int(tcfg.get("epochs", 0) or 0)
     passes = int(tcfg.get("cycles") or tcfg.get("passes") or 0)
     train_names = list((cfg.get("dataset") or {}).get("train_instances") or [])
@@ -377,8 +332,6 @@ def training_plan_from_config(cfg: dict) -> dict:
         epochs = passes * n_train
     return {
         "phases": [],
-        "phase_names": {1: "flat_actor_critic"},
-        "curriculum_stages": [1],
         "total_training_updates": epochs,
         "total_epochs": epochs,
         "batch_size": int(tcfg.get("batch_size", 0) or 0),

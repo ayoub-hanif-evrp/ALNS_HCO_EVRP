@@ -28,7 +28,7 @@ def clear_training_outputs(out_cfg: dict) -> None:
 
     results_dir = Path(out_cfg.get("results", root / "results"))
     results_dir.mkdir(parents=True, exist_ok=True)
-    for pattern in ("*.csv", "*.json", "*.txt"):
+    for pattern in ("*.csv", "*.json", "*.jsonl", "*.txt"):
         _clear_files(results_dir, (pattern,))
 
     figures_training = Path(out_cfg.get("figures", root / "figures")) / "training"

@@ -11,6 +11,12 @@ seed: 42
 device: cuda
 deterministic: false
 
+constraints:
+  time_windows_mode: hard_original
+  allow_late_service: false
+  relax_time_windows: false
+  modify_instance_time_windows: false
+
 dataset:
   path: dataset/Schneider/evrptw_instances
   class_filter: ["RC"]
@@ -51,6 +57,7 @@ training:
   overfit_instance_name: rc102_21
   debug_overfit_updates: 500
   fail_on_overfit_regression: true
+  generate_static_dashboard: true
 
 rl:
   use_step_rewards: true
@@ -66,10 +73,25 @@ rl:
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent
   served_bonus_coef: 0.5
+  use_urgency_bonus: true
+  urgency_bonus_coef: 0.5
+  use_newly_expired_customer_penalty: true
+  newly_expired_customer_penalty: 1.0
+  use_time_waste_penalty: true
+  time_waste_penalty_coef: 0.05
+  time_waste_scale: 1.0
+  use_unnecessary_station_penalty: true
+  unnecessary_station_penalty: 1.0
   use_early_depot_penalty: true
-  early_depot_penalty_coef: 1.0
-  use_step_penalty: true
+  early_depot_penalty_coef: 2.0
+  use_step_penalty: false
   step_penalty: 0.01
+  use_urgent_customer_rank_penalty: true
+  urgent_rank_penalty_coef: 0.2
+  urgent_rank_k: 10
+  use_customer_priority_logit_bias: true
+  customer_logit_bonus: 1.0
+  unnecessary_station_logit_penalty: 1.5
   use_depot_logit_penalty: true
   depot_logit_penalty: 2.0
   depot_penalty_until_served_ratio: 0.95

@@ -10,15 +10,9 @@ from types import SimpleNamespace
 import torch
 
 from src.data.evrptw_dataset import EVRPTWDataset, split_dataset
-from src.data.instance_class import instance_class
+from src.data.instance_class import CLASSES, class_filter_for, instance_class
 from src.data.instance_loader import load_capacity_from_config
-from src.training.curriculum import active_train_classes
-from src.training.fixed_mini import (
-    all_fixed_names,
-    assert_disjoint_train_eval,
-    build_fixed_mini_datasets,
-    resolve_fixed_train_instances,
-)
+from src.data.rc21_split import resolve_rc21_split
 from src.env.cost import CostWeights
 from src.evaluation.baselines import (
     NearestFeasiblePolicy,
@@ -42,6 +36,47 @@ from src.utils.plotting import (
 from src.utils.seed import describe_device, resolve_device, set_seed
 
 LOGGER = get_logger()
+
+
+def _eval_class_filter(cfg: dict) -> set[str]:
+    ds = cfg.get("dataset") or {}
+    if ds.get("class_filter"):
+        return set(class_filter_for(ds["class_filter"]))
+    return set(CLASSES)
+
+
+def _load_eval_dataset(config: dict) -> EVRPTWDataset:
+    ds_cfg = config["dataset"]
+    seed = int(config.get("seed", 42))
+    load_cap = load_capacity_from_config(config)
+
+    if ds_cfg.get("auto_discover_rc21"):
+        train_names, eval_names, _meta = resolve_rc21_split(config)
+        _train_ds, eval_ds = split_dataset(
+            ds_cfg["path"],
+            train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
+            seed=seed,
+            train_filter=ds_cfg.get("train_size_filter"),
+            eval_filter=ds_cfg.get("eval_size_filter"),
+            train_instances=train_names,
+            eval_instances=eval_names,
+            class_filter=ds_cfg.get("class_filter"),
+            load_capacity=load_cap,
+        )
+        return eval_ds
+
+    _train_ds, eval_ds = split_dataset(
+        ds_cfg["path"],
+        train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
+        seed=seed,
+        train_filter=ds_cfg.get("train_size_filter"),
+        eval_filter=ds_cfg.get("eval_size_filter"),
+        train_instances=ds_cfg.get("train_instances"),
+        eval_instances=ds_cfg.get("eval_instances"),
+        class_filter=ds_cfg.get("class_filter"),
+        load_capacity=load_cap,
+    )
+    return eval_ds
 
 
 def _neural_runner(policy, weights, mode, device, n_samples, charging_portions, use_horizon, use_depot_charging, max_steps_factor):
@@ -86,32 +121,10 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
     LOGGER.info(f"Evaluation on device: {describe_device(device)}")
 
     ds_cfg = config["dataset"]
-    seed = int(config.get("seed", 42))
-    ccfg = config.get("curriculum") or {}
-    if str(ccfg.get("mode", "")).lower() == "fixed_mini":
-        full_ds = EVRPTWDataset(
-            ds_cfg["path"],
-            load_capacity=load_capacity_from_config(config),
-        )
-        fixed_by_class = resolve_fixed_train_instances(full_ds.names, config, seed)
-        fixed_names = all_fixed_names(fixed_by_class)
-        _train_ds, eval_ds = build_fixed_mini_datasets(full_ds, fixed_names)
-        assert_disjoint_train_eval(fixed_names, eval_ds.names)
-        LOGGER.info(f"Fixed-mini eval: {len(eval_ds)} instances (excludes {len(fixed_names)} train)")
-    else:
-        _train_ds, eval_ds = split_dataset(
-            ds_cfg["path"],
-            train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
-            seed=seed,
-            train_filter=ds_cfg.get("train_size_filter"),
-            eval_filter=ds_cfg.get("eval_size_filter"),
-            train_instances=ds_cfg.get("train_instances"),
-            eval_instances=ds_cfg.get("eval_instances"),
-            load_capacity=load_capacity_from_config(config),
-        )
+    eval_ds = _load_eval_dataset(config)
     LOGGER.info(f"Evaluation instances: {len(eval_ds)}")
 
-    eval_class_filter = set(active_train_classes(config))
+    eval_class_filter = _eval_class_filter(config)
     eval_indices = [
         i for i in range(len(eval_ds))
         if instance_class(eval_ds.names[i]) in eval_class_filter

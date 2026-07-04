@@ -90,13 +90,13 @@ def customer_feasible(
         return False, "battery_would_strand"
 
     arrival = ev.current_time + travel[i, j]
-    due = instance.nodes[j].due_time
-    if arrival > due + EPS:
+    ready = float(instance.nodes[j].ready_time)
+    due = float(instance.nodes[j].due_time)
+    service_start = max(arrival, ready)
+    if service_start > due + EPS:
         return False, "time_window_late"
 
     if use_horizon_check:
-        ready = instance.nodes[j].ready_time
-        service_start = max(arrival, ready)
         departure = service_start + instance.nodes[j].service_time
         ok, reason = depot_return_feasible(instance, j, departure, use_horizon_check=use_horizon_check)
         if not ok:

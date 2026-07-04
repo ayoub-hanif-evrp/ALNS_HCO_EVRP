@@ -2,7 +2,7 @@
 
 Research-grade reinforcement learning solver for the **Electric Vehicle Routing Problem with Time Windows and Recharging Stations (E-VRPTW)**.
 
-The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses **centralized actor-critic** (step rewards, GAE, counterfactual Q, POMO) with curriculum learning over instance classes **C**, **R**, and **RC**.
+The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses **centralized actor-critic** (step rewards, GAE) on Schneider **RC _21** instances with flat cyclic scheduling.
 
 ## Features
 
@@ -10,7 +10,8 @@ The policy uses a **Transformer encoder–decoder** with **asynchronous multi-ag
 - Event-driven multi-EV decoding (acting EV = smallest `current_time`)
 - Hard masks for battery, capacity, time windows, anti-stranding, and reservations
 - Weighted cost function **J(π)** with fleet, distance, duration, charging time, **Hanif charging price**, waiting, and feasibility penalties
-- Progressive curriculum (C → RC → R) with Phase 0 sanity checks
+- Flat cyclic training on 13 Schneider RC `_21` train instances (3 held out for eval)
+- Phase 0 sanity checks (optional via `--phase0-only`)
 - Live NiceGUI + Plotly training dashboard with grouped metric sections
 - Per-class validation and multi-checkpoint saving (`best_C.pt`, `best_R.pt`, …)
 
@@ -30,7 +31,7 @@ Transformer_MARL_EVRP/
 │   ├── data/                 # Loaders, Hanif parser/converter, dataset splits
 │   ├── env/                  # EVRPTW environment, masks, cost function
 │   ├── models/               # Transformer policy
-│   ├── training/             # Actor-critic, curriculum, validation, Phase 0
+│   ├── training/             # Actor-critic, flat schedule, validation, Phase 0
 │   ├── evaluation/           # Fleet search, baselines, metrics
 │   └── webapp/               # Live dashboard
 ├── tests/
@@ -97,17 +98,13 @@ This writes `dataset/converted_hanif_data/` (60 instances, 1000 customers each, 
 python -m pytest tests/ -v
 ```
 
-### 3. Train (C-only Hanif curriculum)
+### 3. Train (Schneider RC _21)
 
 ```powershell
 python main_train.py
 ```
 
-Training uses **only class C** clustered Hanif instances. Within class C, the curriculum tiers are **C1_*** (easier) and **C2_*** (harder) — both contain **1000 customers**; the `_10_` in names is Homberger grouping, not customer count.
-
-Stages: **C1 pretrain → C2 full → C1+C2 mixed (30/70) → hard C fine-tuning**.
-
-Validation is reported separately for **C1**, **C2**, and **all C** (raw reward drops at C1→C2 transitions are expected).
+Trains on **13 RC _21** instances in cyclic order (configurable `cycles` in `configs/train.yaml`). Use `--overfit` for a single-instance sanity check.
 
 **Terminal 2** — live dashboard:
 
@@ -115,7 +112,7 @@ Validation is reported separately for **C1**, **C2**, and **all C** (raw reward 
 python main_dashboard.py
 ```
 
-Open **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, curriculum cycles, model size, etc.
+Open **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, training cycles, model size, etc.
 
 ### 4. Evaluate
 
@@ -129,8 +126,8 @@ See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which pa
 
 | Config | Purpose |
 |--------|---------|
-| `configs/train.yaml` | **Primary** — C-only Hanif curriculum (C1→C2→mixed→hard), actor-critic |
-| `configs/train_fixed15.yaml` | Fixed 15-instance curriculum |
+| `configs/train.yaml` | **Primary** — Schneider RC _21 flat actor-critic |
+| `configs/train_schneider_RC21_safe.yaml` | Explicit copy of safe baseline config |
 | `configs/default.yaml` | Flat actor-critic (legacy small tests) |
 
 ### Training algorithm
@@ -191,7 +188,7 @@ Use the **Sections** jump bar to scroll to each block.
 
 ## Phase 0 checks
 
-Before curriculum training, the runner validates loaders, matrices, masks, battery/capacity/TW logic, and depot return:
+Before training, optional Phase 0 checks validate loaders, matrices, masks, battery/capacity/TW logic, and depot return:
 
 ```powershell
 python main_train.py --phase0-only

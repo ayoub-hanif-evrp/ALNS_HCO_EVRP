@@ -1,7 +1,14 @@
-"""Flat training schedules (no curriculum stages)."""
+"""Flat training schedules."""
 from __future__ import annotations
 
 import random
+
+
+def sample_fleet_size(instance, extra_margin: int, rng: random.Random) -> int:
+    """Sample fleet size m in [m_min, m_min + extra_margin] (capped by #customers)."""
+    m_min = instance.m_min
+    m_max = min(instance.num_customers, m_min + extra_margin)
+    return rng.randint(m_min, max(m_min, m_max))
 
 
 def build_sequential_schedule(

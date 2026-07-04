@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 
 from src.data.instance_class import instance_class
+from src.env.constraints import ConstraintConfig
 from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
@@ -21,6 +22,8 @@ def validate_training_config(config: dict) -> list[str]:
     rcfg = config.get("rl") or {}
     mcfg = config.get("model") or {}
     dbg = config.get("debug") or {}
+    constraint_cfg = ConstraintConfig.from_config(config)
+    constraint_cfg.validate_or_fail()
 
     train_names = list(ds.get("train_instances") or [])
     eval_names = list(ds.get("eval_instances") or [])
@@ -73,10 +76,16 @@ def validate_training_config(config: dict) -> list[str]:
 
 def apply_safe_training_defaults(config: dict) -> dict:
     """Fill missing safe-baseline keys without overriding explicit user values."""
+    config.setdefault("constraints", {})
     config.setdefault("rl", {})
     config.setdefault("model", {})
     config.setdefault("training", {})
     config.setdefault("debug", {})
+    ccfg = config["constraints"]
+    ccfg.setdefault("time_windows_mode", "hard_original")
+    ccfg.setdefault("allow_late_service", False)
+    ccfg.setdefault("relax_time_windows", False)
+    ccfg.setdefault("modify_instance_time_windows", False)
     rcfg = config["rl"]
     rcfg.setdefault("use_step_rewards", True)
     rcfg.setdefault("use_gae", True)
@@ -91,8 +100,23 @@ def apply_safe_training_defaults(config: dict) -> dict:
     rcfg.setdefault("served_bonus_mode", "penalty_equivalent")
     rcfg.setdefault("served_bonus_coef", 0.5)
     rcfg.setdefault("use_early_depot_penalty", True)
-    rcfg.setdefault("early_depot_penalty_coef", 1.0)
-    rcfg.setdefault("use_step_penalty", True)
+    rcfg.setdefault("early_depot_penalty_coef", 2.0)
+    rcfg.setdefault("use_urgency_bonus", True)
+    rcfg.setdefault("urgency_bonus_coef", 0.5)
+    rcfg.setdefault("use_newly_expired_customer_penalty", True)
+    rcfg.setdefault("newly_expired_customer_penalty", 1.0)
+    rcfg.setdefault("use_time_waste_penalty", True)
+    rcfg.setdefault("time_waste_penalty_coef", 0.05)
+    rcfg.setdefault("time_waste_scale", 1.0)
+    rcfg.setdefault("use_unnecessary_station_penalty", True)
+    rcfg.setdefault("unnecessary_station_penalty", 1.0)
+    rcfg.setdefault("use_urgent_customer_rank_penalty", True)
+    rcfg.setdefault("urgent_rank_penalty_coef", 0.2)
+    rcfg.setdefault("urgent_rank_k", 10)
+    rcfg.setdefault("use_customer_priority_logit_bias", True)
+    rcfg.setdefault("customer_logit_bonus", 1.0)
+    rcfg.setdefault("unnecessary_station_logit_penalty", 1.5)
+    rcfg.setdefault("use_step_penalty", False)
     rcfg.setdefault("step_penalty", 0.01)
     rcfg.setdefault("use_depot_logit_penalty", True)
     rcfg.setdefault("depot_logit_penalty", 2.0)
@@ -105,4 +129,5 @@ def apply_safe_training_defaults(config: dict) -> dict:
     config["model"].setdefault("use_edge_aware_encoder", False)
     config["training"].setdefault("use_local_search_in_training", False)
     config["training"].setdefault("method", "actor_critic")
+    config["training"].setdefault("generate_static_dashboard", True)
     return config

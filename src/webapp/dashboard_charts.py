@@ -20,9 +20,7 @@ from src.webapp.plot_style import (
     CLASS_COLORS,
     CLASS_ORDER,
     COMPONENT_COLORS,
-    CURRICULUM_STAGE_COLORS,
     OVERALL_LINE_COLOR,
-    curriculum_stage_color,
 )
 
 CHART_LAYOUT = dict(
@@ -548,6 +546,20 @@ def _action_fraction_series(df: pd.DataFrame) -> list[tuple[str, str]]:
     return series
 
 
+def _tw_diagnosis_series(df: pd.DataFrame) -> list[tuple[str, str]]:
+    series: list[tuple[str, str]] = []
+    for col, label in [
+        ("masked_by_time_window_count", "TW-masked customers"),
+        ("newly_expired_customers", "newly expired"),
+        ("served_customer_slack", "served slack"),
+        ("avg_waiting_time", "waiting time"),
+        ("feasible_customer_ratio", "feasible customer ratio"),
+    ]:
+        if col in df.columns and df[col].notna().any():
+            series.append((col, label))
+    return series
+
+
 def _grad_param_series(df: pd.DataFrame) -> list[tuple[str, str]]:
     series: list[tuple[str, str]] = []
     for col, label in [
@@ -591,6 +603,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
     returns = _return_comparison_series(df)
     decomp = _reward_decomp_series(df)
     actions = _action_fraction_series(df)
+    tw_diag = _tw_diagnosis_series(df)
     grads = _grad_param_series(df)
     adv = _advantage_series(df)
     ops = _ops_series(df)
@@ -668,8 +681,32 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
             ],
         },
         {
+            "id": "time_window_diagnosis",
+            "title": "3. Time-window diagnosis",
+            "nav": "Time windows",
+            "subtitle": "Why customers become unserved under original hard Schneider time windows.",
+            "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": tw_diag[:4],
+                    "title": "Masking, expiry, slack & waiting",
+                    "desc": "TW-masked count and newly expired customers should fall as the policy learns urgency.",
+                    "ylabel": "Value",
+                    "wide": True,
+                }] if len(tw_diag) >= 2 else []),
+                *([{
+                    "type": "series_ma",
+                    "col": "feasible_customer_ratio",
+                    "title": "Feasible customer ratio",
+                    "desc": "Share of unserved customers still reachable in time at each decision.",
+                    "ylabel": "Ratio",
+                    "wide": True,
+                }] if "feasible_customer_ratio" in df.columns else []),
+            ],
+        },
+        {
             "id": "constraint_violations",
-            "title": "3. Constraint violations",
+            "title": "4. Constraint violations",
             "nav": "Constraints",
             "subtitle": "EVRP hard constraints — all should trend to zero for feasible solutions.",
             "charts": [
@@ -685,7 +722,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
         },
         {
             "id": "routing_operations",
-            "title": "4. Routing & fleet",
+            "title": "5. Routing & fleet",
             "nav": "Routing",
             "subtitle": "Operational metrics reported in TERRAN and related EVRP-DRL papers.",
             "charts": [
@@ -716,7 +753,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
         },
         {
             "id": "rl_optimization",
-            "title": "5. RL optimization",
+            "title": "6. RL optimization",
             "nav": "RL opt.",
             "subtitle": "Actor-critic learning signals — shaped vs raw return and loss stability.",
             "charts": [
@@ -746,7 +783,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
         },
         {
             "id": "reward_diagnosis",
-            "title": "6. Reward shaping",
+            "title": "7. Reward shaping",
             "nav": "Reward",
             "subtitle": "Penalty decomposition — terminal unserved should shrink as coverage improves.",
             "charts": [
@@ -769,7 +806,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
         },
         {
             "id": "action_behavior",
-            "title": "7. Policy behavior",
+            "title": "8. Policy behavior",
             "nav": "Policy",
             "subtitle": "Action mix and premature route closures.",
             "charts": [
@@ -789,11 +826,18 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
                     "ylabel": "Count per episode",
                     "wide": True,
                 },
+                {
+                    "type": "series_ma",
+                    "col": "unnecessary_station_actions",
+                    "title": "Unnecessary station visits",
+                    "desc": "Station actions when at least one customer was feasible (should decrease).",
+                    "ylabel": "Count per episode",
+                },
             ],
         },
         {
             "id": "actor_critic_health",
-            "title": "8. Actor-critic diagnostics",
+            "title": "9. Actor-critic diagnostics",
             "nav": "AC health",
             "subtitle": "Gradient norms and advantage statistics.",
             "charts": [
@@ -816,7 +860,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
         },
         {
             "id": "per_instance",
-            "title": "9. Per-instance learning",
+            "title": "10. Per-instance learning",
             "nav": "Instances",
             "subtitle": f"Instance × cycle heatmaps ({n_inst} train instances).",
             "charts": [
@@ -847,10 +891,8 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
 
 
 def get_training_chart_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
-    """Pick live dashboard sections for the active training mode."""
-    if plan.get("training_mode") == "flat":
-        return build_flat_training_sections(df, plan)
-    return TRAINING_CHART_SECTIONS
+    """Live dashboard sections for flat RC _21 training."""
+    return build_flat_training_sections(df, plan)
 
 
 def class_contiguous_regions(df: pd.DataFrame) -> list[tuple[float, float, str]]:
@@ -885,90 +927,13 @@ def add_class_regions(fig: go.Figure, df: pd.DataFrame, *, max_x: float | None =
         )
 
 
-def _curriculum_stage_col(df: pd.DataFrame) -> str | None:
-    if "curriculum_stage" in df.columns and df["curriculum_stage"].notna().any():
-        return "curriculum_stage"
-    if "phase_name" in df.columns and df["phase_name"].notna().any():
-        return "phase_name"
-    return None
-
-
-def curriculum_contiguous_regions(df: pd.DataFrame) -> list[tuple[float, float, str, int]]:
-    """Return (x0, x1, stage_name, stage_index) for each curriculum block."""
-    col = _curriculum_stage_col(df)
-    if col is None or df.empty:
-        return []
-    x = _x_series(df).to_numpy()
-    stages = df[col].astype(str).to_numpy()
-    regions: list[tuple[float, float, str, int]] = []
-    start = 0
-    stage_idx = 1
-    for i in range(1, len(stages) + 1):
-        if i == len(stages) or stages[i] != stages[start]:
-            regions.append((float(x[start]) - 0.5, float(x[i - 1]) + 0.5, stages[start], stage_idx))
-            start = i
-            stage_idx += 1
-    return regions
-
-
-def add_curriculum_stage_regions(
-    fig: go.Figure,
-    df: pd.DataFrame,
-    *,
-    max_x: float | None = None,
-    show_legend: bool = True,
-) -> None:
-    """Shade curriculum stages with distinct colors and boundary lines."""
-    mx = max_x if max_x is not None else float(_x_series(df).max())
-    seen_legend: set[str] = set()
-    for x0, x1, stage_name, stage_idx in curriculum_contiguous_regions(df):
-        if x0 > mx + 1:
-            break
-        color = curriculum_stage_color(stage_name, stage_idx)
-        fig.add_vrect(
-            x0=x0,
-            x1=min(x1, mx + 0.5),
-            fillcolor=color,
-            opacity=0.12,
-            layer="below",
-            line_width=0,
-        )
-        if x0 > 0.5:
-            fig.add_vline(x=x0 + 0.5, line_dash="dash", line_color=color, line_width=1.5, opacity=0.65)
-        if show_legend and stage_name not in seen_legend:
-            seen_legend.add(stage_name)
-            fig.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    mode="markers",
-                    name=stage_name.replace("_", " "),
-                    marker=dict(size=10, color=color, symbol="square"),
-                )
-            )
-
-
 def add_chart_regions(fig: go.Figure, df: pd.DataFrame, *, max_x: float | None = None) -> None:
-    """Prefer curriculum-stage shading when logged; else class C/R/RC bands."""
-    if _curriculum_stage_col(df) is not None:
-        add_curriculum_stage_regions(fig, df, max_x=max_x)
-    else:
-        add_class_regions(fig, df, max_x=max_x)
+    """Shade contiguous C / R / RC blocks when instance class is logged."""
+    add_class_regions(fig, df, max_x=max_x)
 
 
 def _stage_marker_colors(df: pd.DataFrame) -> list[str]:
-    col = _curriculum_stage_col(df)
-    if col is None:
-        return _marker_colors(df)
-    colors: list[str] = []
-    stage_ids: dict[str, int] = {}
-    next_id = 1
-    for name in df[col].astype(str):
-        if name not in stage_ids:
-            stage_ids[name] = next_id
-            next_id += 1
-        colors.append(curriculum_stage_color(name, stage_ids[name]))
-    return colors
+    return _marker_colors(df)
 
 
 def _add_class_markers(fig: go.Figure, df: pd.DataFrame, col: str) -> None:
@@ -1314,119 +1279,6 @@ def fig_cost_term(df: pd.DataFrame, spec: dict) -> go.Figure:
     return fig
 
 
-def _cost_term_specs(terms: list[dict], *, wide: bool = True) -> list[dict]:
-    specs: list[dict] = []
-    for term in terms:
-        specs.append({
-            "type": "cost_term",
-            "col": term["col"],
-            "raw_col": term.get("raw_col"),
-            "title": str(term["short"]),
-            "ylabel": "Weighted",
-            "raw_ylabel": str(term.get("raw_ylabel") or "Raw"),
-            "wide": wide,
-            "term_key": term["key"],
-        })
-    return specs
-
-
-def _terms_by_keys(terms: list[dict], keys: list[str]) -> list[dict]:
-    by_key = {str(t["key"]): t for t in terms}
-    return [by_key[k] for k in keys if k in by_key]
-
-
-def _section_from_cost_terms(
-    section_id: str,
-    title: str,
-    subtitle: str,
-    term_keys: list[str],
-    terms_list: list[dict],
-    *,
-    wide: bool = True,
-) -> dict[str, Any]:
-    return {
-        "id": section_id,
-        "title": title,
-        "subtitle": subtitle,
-        "charts": _cost_term_specs(_terms_by_keys(terms_list, term_keys), wide=wide),
-    }
-
-
-def _build_cost_function_sections() -> list[dict[str, Any]]:
-    """One dashboard card (div) per cost-function theme — not one giant objective block."""
-    return [
-        {
-            "id": "cost_total",
-            "title": "Total objective J(π)",
-            "nav": "Total J",
-            "subtitle": "R(π) = −J / reward_scale during training. Lower cost is better.",
-            "charts": [
-                {
-                    "type": "rolling_band",
-                    "col": "cost",
-                    "mean_col": "rolling_cost_mean",
-                    "std_col": "",
-                    "title": "Total cost J",
-                    "desc": "Sum of all weighted objective terms + penalties",
-                    "ylabel": "J",
-                    "wide": True,
-                },
-                {
-                    "type": "rolling_band",
-                    "col": "raw_episode_return",
-                    "mean_col": "rolling_raw_return_mean",
-                    "std_col": "rolling_raw_return_std",
-                    "title": "Training reward (scaled)",
-                    "desc": "R = −J / reward_scale",
-                    "ylabel": "Reward",
-                    "classic": True,
-                    "wide": True,
-                },
-            ],
-        },
-        _section_from_cost_terms(
-            "cost_fleet_routing",
-            "Fleet & routing",
-            "λ-weighted fleet size, travel distance, and route duration.",
-            ["vehicle", "distance", "duration"],
-            COST_OBJECTIVE_TERMS,
-            wide=True,
-        ),
-        _section_from_cost_terms(
-            "cost_charging",
-            "Charging",
-            "Charging time and station energy price — separate from route distance.",
-            ["charging", "charging_price"],
-            COST_OBJECTIVE_TERMS,
-            wide=True,
-        ),
-        _section_from_cost_terms(
-            "cost_waiting",
-            "Waiting time",
-            "Customer waiting due to early arrival at time windows.",
-            ["waiting"],
-            COST_OBJECTIVE_TERMS,
-            wide=True,
-        ),
-        _section_from_cost_terms(
-            "pen_service",
-            "Service penalties",
-            "Unserved customers, duplicate visits, and global infeasibility — target zero.",
-            ["unserved", "duplicate", "infeasible"],
-            COST_PENALTY_TERMS,
-            wide=False,
-        ),
-        _section_from_cost_terms(
-            "pen_constraints",
-            "Constraint penalties",
-            "Time windows, battery, capacity, depot return, and reservations — target zero.",
-            ["late", "battery", "capacity", "depot", "reserved"],
-            COST_PENALTY_TERMS,
-            wide=False,
-        ),
-    ]
-
-
 def fig_reward_components(df: pd.DataFrame, plan: dict) -> go.Figure:
     del plan
     penalty_keys = [c for c in COST_COLUMNS if c.startswith("mean_pen_")]
@@ -1740,110 +1592,6 @@ def build_chart_figure(df: pd.DataFrame, plan: dict, spec: dict[str, Any]) -> go
     )
 
 
-TRAINING_CHART_SECTIONS: list[dict[str, Any]] = [
-    *_build_cost_function_sections(),
-    {
-        "id": "coverage",
-        "title": "Solution quality",
-        "subtitle": "Customer coverage and feasibility — independent of cost weights.",
-        "charts": [
-            {"type": "served_coverage", "title": "Customers served (%)", "wide": True},
-            {
-                "type": "class_metric",
-                "col": "feasibility_rate",
-                "title": "Feasibility rate",
-                "desc": "Share of episodes with zero penalty terms",
-                "ylabel": "Rate",
-                "y_range": (0, 1.05),
-                "wide": True,
-            },
-            {
-                "type": "class_metric",
-                "col": "served_ratio",
-                "title": "Served ratio",
-                "ylabel": "Ratio",
-                "y_range": (0, 1.05),
-            },
-        ],
-    },
-    {
-        "id": "fleet_ops",
-        "title": "Fleet utilization",
-        "subtitle": "Raw operational metrics — EV count, distance per customer, charging share.",
-        "charts": [
-            {
-                "type": "class_metric",
-                "col": "avg_used_evs",
-                "title": "Used EVs",
-                "ylabel": "Count",
-                "wide": True,
-            },
-            {
-                "type": "class_metric",
-                "col": "distance_per_customer",
-                "title": "Distance per customer",
-                "ylabel": "Distance",
-            },
-            {
-                "type": "class_metric",
-                "col": "charging_time_share",
-                "title": "Charging time share",
-                "ylabel": "Share",
-                "y_range": (0, 1.05),
-            },
-        ],
-    },
-    {
-        "id": "per_class_reward",
-        "title": "Per-class · reward & cost",
-        "subtitle": "Trailing-window mean by instance class (C · R · RC).",
-        "charts": [
-            {
-                "type": "per_class_bars",
-                "title": "Reward & total J by class",
-                "wide": True,
-                "metrics": [
-                    ("reward", "Reward", None),
-                    ("cost", "Cost J", None),
-                ],
-            },
-        ],
-    },
-    {
-        "id": "per_class_coverage",
-        "title": "Per-class · coverage & feasibility",
-        "subtitle": "Trailing-window mean by instance class (C · R · RC).",
-        "charts": [
-            {
-                "type": "per_class_bars",
-                "title": "Coverage & feasibility by class",
-                "wide": True,
-                "metrics": [
-                    ("served_ratio", "Served", "pct"),
-                    ("feasibility_rate", "Feasible", "pct"),
-                ],
-            },
-        ],
-    },
-    {
-        "id": "optimization",
-        "title": "Policy optimization",
-        "subtitle": "Actor-critic diagnostics. Background bands = curriculum stage (colored) or class block.",
-        "charts": [
-            {"type": "optimization_panel", "title": "Optimization overview", "wide": True},
-            {"type": "class_metric", "col": "loss", "title": "Total loss", "ylabel": "Loss", "wide": True},
-            {"type": "class_metric", "col": "policy_loss", "title": "Policy loss", "ylabel": "Loss"},
-            {"type": "class_metric", "col": "entropy", "title": "Entropy", "ylabel": "nats"},
-            {"type": "class_metric", "col": "grad_norm", "title": "Gradient norm", "ylabel": "‖∇‖"},
-        ],
-    },
-]
-
-
-def section_by_id() -> dict[str, dict[str, Any]]:
-    return {s["id"]: s for s in TRAINING_CHART_SECTIONS}
-
-
 _WIDE_CHART_TYPES = frozenset({
     "cost_breakdown",
     "cost_term",
@@ -1869,8 +1617,3 @@ def is_wide_chart(spec: dict[str, Any]) -> bool:
     if spec.get("wide"):
         return True
     return spec.get("type") in _WIDE_CHART_TYPES
-
-
-TRAINING_CHARTS: list[dict[str, Any]] = [
-    spec for section in TRAINING_CHART_SECTIONS for spec in section["charts"]
-]

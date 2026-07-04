@@ -64,6 +64,20 @@ def test_capacity_exceeded_is_masked(small_instance):
     assert reason == "capacity_exceeded"
 
 
+def test_time_window_late_when_service_start_exceeds_due(small_instance):
+    """service_start = max(arrival, ready) must be <= due."""
+    inst = small_instance
+    env = _fresh_env(inst)
+    ev = env.evs[0]
+    j = inst.customer_indices[0]
+    node = inst.nodes[j]
+    travel = float(inst.travel_time_matrix[ev.current_node, j])
+    ev.current_time = float(node.due_time) - travel + 1.0
+    ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, use_horizon_check=False)
+    assert not ok
+    assert reason == "time_window_late"
+
+
 def test_time_window_late_is_masked(small_instance):
     inst = small_instance
     env = _fresh_env(inst)

@@ -107,14 +107,37 @@ class TransformerEVRPTWPolicy(nn.Module):
         mode: str = "sampling",
         *,
         depot_logit_penalty: float = 0.0,
+        customer_logit_bonus: float = 0.0,
+        station_logit_penalty: float = 0.0,
+        use_dynamic_temporal_bias: bool = True,
     ) -> ActionOutput:
         """Select the next node (and charging portion if a station) for the EV."""
         device = node_embeddings.device
         decoder_context = self._contexts(env, ev, node_embeddings)
 
         scores = self.pointer.node_scores(decoder_context, node_embeddings)  # [N]
+        if use_dynamic_temporal_bias:
+            from src.env.tw_diagnostics import compute_dynamic_action_features
+
+            dyn = torch.tensor(
+                compute_dynamic_action_features(env, ev),
+                device=device,
+                dtype=scores.dtype,
+            )
+            scores = scores + self.pointer.dynamic_score_bias(dyn)
         mask_t = torch.tensor(feasible_mask, dtype=torch.bool, device=device)
         masked_scores = scores.masked_fill(~mask_t, NEG_INF)
+        inst = env.instance
+        if customer_logit_bonus > 0.0:
+            masked_scores = masked_scores.clone()
+            for j in inst.customer_indices:
+                if mask_t[j]:
+                    masked_scores[j] = masked_scores[j] + float(customer_logit_bonus)
+        if station_logit_penalty > 0.0:
+            masked_scores = masked_scores.clone()
+            for s in inst.charging_station_indices:
+                if mask_t[s]:
+                    masked_scores[s] = masked_scores[s] - float(station_logit_penalty)
         if depot_logit_penalty > 0.0:
             depot_idx = int(env.instance.depot_index)
             if mask_t[depot_idx]:

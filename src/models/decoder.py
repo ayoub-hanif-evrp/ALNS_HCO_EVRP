@@ -6,6 +6,8 @@ import math
 import torch
 import torch.nn as nn
 
+from src.env.tw_diagnostics import DYNAMIC_ACTION_FEAT_DIM
+
 # Length of EVRPTWEnv.global_features.
 GLOBAL_FEATURE_DIM = 9
 
@@ -43,6 +45,11 @@ class PointerDecoder(nn.Module):
             nn.ReLU(),
             nn.Linear(embedding_dim, num_charging_portions),
         )
+        self.dynamic_proj = nn.Linear(DYNAMIC_ACTION_FEAT_DIM, 1)
+
+    def dynamic_score_bias(self, dynamic_feats: torch.Tensor) -> torch.Tensor:
+        """Per-node temporal feasibility bias [N]."""
+        return self.dynamic_proj(dynamic_feats).squeeze(-1)
 
     def decoder_context(
         self,

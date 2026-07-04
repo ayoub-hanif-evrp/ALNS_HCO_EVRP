@@ -8,7 +8,7 @@ import torch.nn as nn
 from src.env.cost import CostWeights, training_reward
 from src.models.critic import QCritic, ValueCritic
 from src.training.actor_critic import RLConfig, actor_critic_loss
-from src.training.curriculum import Phase, sample_phase_m
+from src.training.flat_schedule import sample_fleet_size
 from src.training.rl_memory import cuda_memory_stats, reset_cuda_peak_stats
 from src.training.rollout_ac import run_pomo_episodes
 from src.utils.logging_utils import get_logger
@@ -53,7 +53,7 @@ def actor_critic_train_step(
     use_horizon: bool,
     use_depot_charging: bool,
     max_steps_factor: int,
-    phase: Phase,
+    extra_margin: int,
     rng,
     rl_cfg: RLConfig,
     entropy_coef: float,
@@ -101,6 +101,9 @@ def actor_critic_train_step(
     served_bonus_list, early_depot_list = [], []
     early_depot_penalty_list, step_penalty_list, terminal_unserved_penalty_list = [], [], []
     terminal_coef_list = []
+    newly_expired_list, tw_masked_list, urgency_bonus_list = [], [], []
+    unnecessary_station_list, expired_pen_list, time_waste_list = [], [], []
+    feasible_cust_ratio_list, served_slack_list = [], []
     frac_customer_list, frac_station_list, frac_depot_list = [], [], []
 
     actor_params_before = _flat_params(policy)
@@ -115,7 +118,7 @@ def actor_critic_train_step(
 
     for idx in batch_idx:
         instance = train_ds[idx]
-        m = sample_phase_m(instance, phase.extra_margin, rng)
+        m = sample_fleet_size(instance, extra_margin, rng)
 
         rollouts, _ = run_pomo_episodes(
             instance, policy, m, weights, rl_cfg,
@@ -179,6 +182,14 @@ def actor_critic_train_step(
             frac_customer_list.append(float(ts.get("fraction_customer_actions", 0.0)))
             frac_station_list.append(float(ts.get("fraction_station_actions", 0.0)))
             frac_depot_list.append(float(ts.get("fraction_depot_actions", 0.0)))
+            newly_expired_list.append(float(ts.get("newly_expired_customers", 0.0)))
+            tw_masked_list.append(float(ts.get("masked_by_time_window_count", 0.0)))
+            urgency_bonus_list.append(float(ts.get("urgency_bonus_total", 0.0)))
+            unnecessary_station_list.append(float(ts.get("unnecessary_station_actions", 0.0)))
+            expired_pen_list.append(float(ts.get("expired_customer_penalty_total", 0.0)))
+            time_waste_list.append(float(ts.get("time_waste_penalty_total", 0.0)))
+            feasible_cust_ratio_list.append(float(ts.get("feasible_customer_ratio", 0.0)))
+            served_slack_list.append(float(ts.get("served_customer_slack", 0.0)))
             _collect_episode_metrics(
                 result, trajectory, instance, raw_costs, feas_flags, used_evs_list, dist_list,
                 charge_list, price_list, wait_list, unserved_list, duration_list,
@@ -303,7 +314,17 @@ def actor_critic_train_step(
         "objective_mismatch": float(np.mean(mismatch_list)) if mismatch_list else 0.0,
         "relative_objective_mismatch": float(np.mean(rel_mismatch_list)) if rel_mismatch_list else 0.0,
         "final_objective": float(np.mean(raw_costs)),
+        "final_original_objective": float(np.mean(raw_costs)),
         "reconstructed_objective": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
+        "reconstructed_training_cost": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
+        "newly_expired_customers": float(np.mean(newly_expired_list)) if newly_expired_list else 0.0,
+        "masked_by_time_window_count": float(np.mean(tw_masked_list)) if tw_masked_list else 0.0,
+        "urgency_bonus_total": float(np.mean(urgency_bonus_list)) if urgency_bonus_list else 0.0,
+        "unnecessary_station_actions": float(np.mean(unnecessary_station_list)) if unnecessary_station_list else 0.0,
+        "expired_customer_penalty_total": float(np.mean(expired_pen_list)) if expired_pen_list else 0.0,
+        "time_waste_penalty_total": float(np.mean(time_waste_list)) if time_waste_list else 0.0,
+        "feasible_customer_ratio": float(np.mean(feasible_cust_ratio_list)) if feasible_cust_ratio_list else 0.0,
+        "served_customer_slack": float(np.mean(served_slack_list)) if served_slack_list else 0.0,
         "num_decisions": float(np.mean(num_decisions_list)) if num_decisions_list else 0.0,
         "mean_feasible_actions": float(np.mean(feas_action_list)) if feas_action_list else 0.0,
         "mean_q_candidates": float(np.mean(q_cand_list)) if q_cand_list else 0.0,

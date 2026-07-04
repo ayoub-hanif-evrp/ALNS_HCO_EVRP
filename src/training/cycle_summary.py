@@ -11,8 +11,19 @@ def _mean(rows: list[dict], key: str, default: float = 0.0) -> float:
     return float(np.mean(vals)) if vals else default
 
 
+def dedupe_metric_rows(rows: list[dict], key: str = "epoch") -> list[dict]:
+    """Keep the last row per unique key (defensive against duplicate logging)."""
+    if not rows:
+        return rows
+    if key not in rows[0]:
+        return rows
+    by_key: dict[Any, dict] = {}
+    for row in rows:
+        by_key[row[key]] = row
+    return [by_key[k] for k in sorted(by_key.keys())]
+
+
 def aggregate_cycle(rows: list[dict], *, cycle_id: int) -> dict[str, Any]:
-    """Mean metrics over one full pass through training instances."""
     if not rows:
         return {"cycle_id": cycle_id}
     return {
@@ -40,4 +51,9 @@ def aggregate_cycle(rows: list[dict], *, cycle_id: int) -> dict[str, Any]:
         "mean_objective_mismatch": _mean(rows, "objective_mismatch"),
         "mean_relative_objective_mismatch": _mean(rows, "relative_objective_mismatch"),
         "mean_feasible_action_ratio": _mean(rows, "feasible_action_ratio"),
+        "mean_masked_by_time_window": _mean(rows, "masked_by_time_window_count"),
+        "mean_newly_expired_customers": _mean(rows, "newly_expired_customers"),
+        "mean_served_customer_slack": _mean(rows, "served_customer_slack"),
+        "mean_unnecessary_station_actions": _mean(rows, "unnecessary_station_actions"),
+        "mean_feasible_customer_ratio": _mean(rows, "feasible_customer_ratio"),
     }

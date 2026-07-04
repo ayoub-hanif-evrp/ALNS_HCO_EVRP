@@ -20,7 +20,7 @@ from src.webapp.dashboard_data import (
     progress_from_metrics,
     training_plan_from_config,
 )
-from src.webapp.plot_style import STAGE_COLORS, curriculum_stage_color
+from src.webapp.plot_style import STAGE_COLORS
 
 _PAGE = "w-full max-w-[1400px] mx-auto px-6"
 _SECTION = "w-full rounded-xl border border-slate-200 bg-white shadow-sm mb-5"
@@ -223,8 +223,6 @@ def create_dashboard(
 
             total = int(plan.get("total_training_updates") or status.get("total_epochs") or len(df) or 0)
             cur = int(status.get("training_update") or status.get("epoch") or 0)
-            is_cyclic = plan.get("training_mode") == "cyclic"
-            is_flat = plan.get("training_mode") == "flat"
 
             # ---- Status ----
             status_panel.clear()
@@ -245,12 +243,7 @@ def create_dashboard(
                             ui.linear_progress(value=min(cur / max(total, 1), 1.0)).classes("w-full")
                             if status.get("finished"):
                                 ui.label("Training complete").classes("text-sm font-medium text-emerald-600")
-                            elif is_cyclic:
-                                cycles = plan.get("cycles", 5)
-                                ui.label(f"Cyclic: C → R → RC × {cycles}").classes(
-                                    "text-sm font-medium text-slate-700"
-                                )
-                            elif is_flat:
+                            else:
                                 n_inst = plan.get("n_train_instances") or "—"
                                 passes = plan.get("passes") or "—"
                                 ui.label(f"Flat training: {n_inst} instances × {passes} passes").classes(
@@ -258,10 +251,8 @@ def create_dashboard(
                                 )
                             phase_label = status.get("training_phase_name") or status.get("stage_name")
                             if phase_label:
-                                st = int(status.get("curriculum_stage") or 0)
-                                color = curriculum_stage_color(str(phase_label), st)
-                                ui.label(str(phase_label).replace("_", " ")).classes("text-sm font-medium").style(
-                                    f"color:{color}"
+                                ui.label(str(phase_label).replace("_", " ")).classes(
+                                    "text-sm font-medium text-slate-700"
                                 )
                             if not df.empty and "instance_name" in df.columns:
                                 last_inst = df.iloc[-1].get("instance_name")
@@ -272,28 +263,14 @@ def create_dashboard(
 
                         with ui.column().classes("p-5 gap-2"):
                             ui.label("Schedule").classes("text-xs font-bold text-slate-400")
-                            if plan.get("phases"):
-                                for ph in plan["phases"]:
-                                    name = str(ph.get("name", "")).replace("_", " ")
-                                    steps = int(ph.get("max_episodes", 0))
-                                    color = curriculum_stage_color(str(ph.get("name", "")), int(ph.get("id", 0)))
-                                    ui.label(f"● {name} ({steps} epochs)").classes("text-xs").style(
-                                        f"color:{color}; font-weight:600"
-                                    )
-                            elif is_cyclic:
-                                order = " → ".join(plan.get("class_order") or ["C", "R", "RC"])
-                                ui.label(f"{order} · 1 instance = 1 iteration").classes(
-                                    "text-xs text-slate-500"
-                                )
-                            elif is_flat:
-                                n_inst = plan.get("n_train_instances") or 20
-                                passes = plan.get("passes") or 20
-                                ui.label(
-                                    f"{n_inst} RC _21 train instances · {passes} cycles · MA window {ma_window}"
-                                ).classes("text-xs text-slate-500")
-                                ui.label("Held-out (not used in training): rc101_21, rc104_21, rc208_21").classes(
-                                    "text-[10px] text-slate-400"
-                                )
+                            n_inst = plan.get("n_train_instances") or 20
+                            passes = plan.get("passes") or plan.get("cycles") or 20
+                            ui.label(
+                                f"{n_inst} RC _21 train instances · {passes} cycles · MA window {ma_window}"
+                            ).classes("text-xs text-slate-500")
+                            ui.label("Held-out (not used in training): rc101_21, rc104_21, rc208_21").classes(
+                                "text-[10px] text-slate-400"
+                            )
                             algo = str(plan.get("method", "actor_critic")).replace("_", "-")
                             _field("Algorithm", f"Actor-critic ({algo})")
                             ui.label("outputs/results/training_metrics.csv").classes(

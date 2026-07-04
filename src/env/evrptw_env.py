@@ -31,12 +31,15 @@ class EVRPTWEnv:
         use_horizon_check: bool = True,
         use_depot_charging: bool = True,
         max_steps_factor: int = 6,
+        *,
+        hard_time_windows: bool = True,
     ):
         self.instance = instance
         self.m = m
         self.charging_portions = charging_portions or [0.25, 0.50, 0.75, 1.0]
         self.use_horizon_check = use_horizon_check
         self.use_depot_charging = bool(use_depot_charging)
+        self.hard_time_windows = bool(hard_time_windows)
         self.max_steps = max(50, max_steps_factor * max(instance.num_customers, 1))
         self.reset()
 
@@ -206,10 +209,17 @@ class EVRPTWEnv:
         waiting = max(0.0, ready - arrival)
         service_start = max(arrival, ready)
         departure = service_start + node.service_time
-        lateness = max(0.0, arrival - due)
-        self.total_lateness += lateness
+        lateness = max(0.0, service_start - due)
         if lateness > EPS:
+            if self.hard_time_windows:
+                self.infeasible = True
+                self.infeasibility_reasons.append(
+                    f"hard_tw_violation ev={ev.ev_id} node={j} t={ev.current_time:.2f} "
+                    f"travel={t:.2f} arrival={arrival:.2f} ready={ready:.2f} due={due:.2f} "
+                    f"service_start={service_start:.2f}"
+                )
             self.time_window_violation_count += 1
+        self.total_lateness += lateness
 
         ev.remaining_capacity -= node.demand
         if ev.remaining_capacity < -EPS:

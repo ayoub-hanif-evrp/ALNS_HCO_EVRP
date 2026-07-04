@@ -11,13 +11,14 @@ import torch
 from src.data.evrptw_dataset import split_dataset
 from src.data.instance_loader import load_capacity_from_config
 from src.data.rc21_split import log_rc21_split_startup, resolve_rc21_split
+from src.env.constraints import ConstraintConfig, log_constraint_startup
+from src.data.immutability import log_dataset_immutability
 from src.env.cost import CostWeights
 from src.models.policy import TransformerEVRPTWPolicy
 from src.training.ac_train import actor_critic_train_step, build_critics, critic_parameters
 from src.training.actor_critic import RLConfig
 from src.training.config_validation import apply_safe_training_defaults, validate_training_config
-from src.training.cycle_summary import aggregate_cycle
-from src.training.curriculum import Phase
+from src.training.cycle_summary import aggregate_cycle, dedupe_metric_rows
 from src.training.flat_schedule import build_sequential_schedule
 from src.utils.logging_utils import CsvLogger, JsonlLogger, get_logger, write_csv
 from src.utils.output_cleanup import clear_training_outputs
@@ -98,6 +99,8 @@ def train(config: dict) -> dict:
     """Run flat actor-critic training (no curriculum schedule)."""
     config = apply_safe_training_defaults(dict(config))
     validate_training_config(config)
+    constraint_cfg = ConstraintConfig.from_config(config)
+    log_constraint_startup(constraint_cfg)
 
     deterministic = bool(config.get("deterministic", False))
     seed = int(config.get("seed", 42))
@@ -128,6 +131,7 @@ def train(config: dict) -> dict:
     )
     cycles = _resolve_cycles(tcfg)
     log_rc21_split_startup(split_meta, cycles if cycles > 0 else int(tcfg.get("debug_overfit_updates", 300)))
+    log_dataset_immutability(config, train_names)
 
     charging_portions = config["problem"]["charging_portions"]
     weights = CostWeights.from_config(config["cost"])
@@ -151,7 +155,6 @@ def train(config: dict) -> dict:
     max_steps_factor = int(decode_cfg.get("max_steps_factor", 6))
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
     use_depot_charging = bool(config["problem"].get("use_depot_charging", True))
-    phase = Phase(0, "flat", [], extra_margin)
 
     out_cfg = config["outputs"]
     clear_training_outputs(out_cfg)
@@ -223,7 +226,7 @@ def train(config: dict) -> dict:
         record = actor_critic_train_step(
             policy, value_critic, q_critic, optimizer, critic_optimizer,
             train_ds, batch_idx, weights, device, charging_portions,
-            use_horizon, use_depot_charging, max_steps_factor, phase, rng, rl_cfg,
+            use_horizon, use_depot_charging, max_steps_factor, extra_margin, rng, rl_cfg,
             entropy_coef, grad_clip,
             min_decisions_warn=min_decisions_warn,
             global_epoch=epoch,
@@ -317,7 +320,7 @@ def train(config: dict) -> dict:
         value_critic=value_critic, q_critic=q_critic,
     )
 
-    rows = jsonl.read()
+    rows = dedupe_metric_rows(jsonl.read())
 
     if bool(tcfg.get("debug_overfit_one_instance", False)) and rows:
         _check_overfit_improvement(rows, tcfg)
@@ -336,17 +339,14 @@ def train(config: dict) -> dict:
 
     from src.training.training_dashboard import DashboardReport, generate_training_dashboard_from_config
 
-    if bool(tcfg.get("generate_static_dashboard", False)):
+    dash_report = DashboardReport()
+    if rows:
         try:
             dash_report = generate_training_dashboard_from_config(
                 config, rows=rows, holdout_meta=holdout_meta,
             )
         except ValueError as exc:
-            LOGGER.error("Static training dashboard not generated: %s", exc)
-            dash_report = DashboardReport()
-    else:
-        LOGGER.info("Live dashboard only — run: python main_dashboard.py")
-        dash_report = DashboardReport()
+            LOGGER.error("Training dashboard not generated: %s", exc)
     summary["training_dashboard"] = {
         "html": dash_report.html_path,
         "figures_index": dash_report.index_md_path,
@@ -396,12 +396,23 @@ def _check_overfit_improvement(rows: list[dict], tcfg: dict) -> None:
     late_obj = _mean(late, "final_objective")
     early_ev = _mean(early, "critic_explained_variance")
     late_ev = _mean(late, "critic_explained_variance")
+    early_expired = _mean(early, "newly_expired_customers")
+    late_expired = _mean(late, "newly_expired_customers")
+    early_stations = _mean(early, "unnecessary_station_actions")
+    late_stations = _mean(late, "unnecessary_station_actions")
 
     LOGGER.info(
-        "Overfit check | served %.3f -> %.3f | objective %.0f -> %.0f | ev %.4f -> %.4f",
+        "Overfit check | served %.3f -> %.3f | objective %.0f -> %.0f | ev %.4f -> %.4f | "
+        "expired %.1f -> %.1f | bad stations %.1f -> %.1f",
         early_served, late_served, early_obj, late_obj, early_ev, late_ev,
+        early_expired, late_expired, early_stations, late_stations,
     )
-    improved = (late_served > early_served + 0.02) or (late_obj < early_obj * 0.98)
+    improved = (
+        (late_served > early_served + 0.02)
+        or (late_obj < early_obj * 0.98)
+        or (late_expired < early_expired - 0.5)
+        or (late_stations < early_stations - 0.5)
+    )
     if not improved:
         msg = (
             "One-instance overfit did NOT improve (served ratio / objective). "

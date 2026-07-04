@@ -8,8 +8,14 @@ import torch
 from src.env.cost import CostWeights, training_reward
 from src.env.evrptw_env import EVRPTWEnv
 from src.env.reward import StepRewardCalculator, snapshot_env
+from src.env.tw_diagnostics import (
+    aggregate_mask_reasons,
+    count_time_expired_customers,
+    station_is_necessary,
+    urgent_rank_stats,
+)
 from src.training.actor_critic import RLConfig, apply_potential_shaping, compute_potential
-from src.training.reward_shaping import TrainingRewardCalculator, TrainingRewardConfig
+from src.training.reward_shaping import StepContext, TrainingRewardCalculator, TrainingRewardConfig
 from src.training.trajectory import StepRecord, Trajectory
 from src.training.rl_memory import select_q_candidates
 from src.utils.logging_utils import get_logger
@@ -52,6 +58,7 @@ def run_episode_trajectory(
     collect_trajectory: bool = False,
     cycle_id: int = 1,
     training_mode: bool = True,
+    hard_time_windows: bool = True,
 ) -> tuple[EpisodeResult, Trajectory | None]:
     """Run episode; optionally collect per-step rewards and critic trajectory."""
     env = EVRPTWEnv(
@@ -61,6 +68,7 @@ def run_episode_trajectory(
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         max_steps_factor=max_steps_factor,
+        hard_time_windows=hard_time_windows,
     )
     node_embeddings = policy.encode(instance, device=device)
 
@@ -94,16 +102,56 @@ def run_episode_trajectory(
             continue
 
         before = snapshot_env(env)
-        depot_pen = train_calc.depot_logit_penalty(env) if train_calc is not None else 0.0
-        feasible_mask, _ = env.feasible_mask(ev)
+        expired_before = count_time_expired_customers(env)
+        mask_counts, feasible_mask, _ = aggregate_mask_reasons(
+            instance, env, ev, use_horizon_check=use_horizon_check, use_depot_charging=use_depot_charging
+        )
+        cust_bonus, st_pen, dep_pen = (0.0, 0.0, 0.0)
+        if train_calc is not None:
+            unserved_ratio = 1.0 - env.num_served_customers / max(instance.num_customers, 1)
+            cust_bonus, st_pen, dep_pen = train_calc.training_logit_adjustments(
+                env, ev, feasible_mask, unserved_ratio=unserved_ratio,
+            )
         action = policy.select_action(
             env, ev, node_embeddings, feasible_mask, mode=mode,
-            depot_logit_penalty=depot_pen,
+            depot_logit_penalty=dep_pen,
+            customer_logit_bonus=cust_bonus,
+            station_logit_penalty=st_pen,
+            use_dynamic_temporal_bias=training_mode,
         )
         info = env.apply_action(ev, action.node, action.charge_portion)
         after = snapshot_env(env)
+        expired_after = count_time_expired_customers(env)
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
+
+        rank_stats = urgent_rank_stats(env, ev, action.node, feasible_mask)
+        inst = env.instance
+        st_necessary = True
+        if node_type == "station":
+            st_necessary = station_is_necessary(
+                inst, ev, env.served_mask, env.reserved_mask, use_depot_charging
+            )
+        travel_t = float(info.get("delta_travel_time", 0.0))
+        wait_t = float(info.get("waiting", 0.0))
+        charge_t = float(info.get("charging_time", 0.0))
+        service_t = float(inst.nodes[action.node].service_time) if inst.nodes[action.node].is_customer and served else 0.0
+        ctx = StepContext(
+            expired_before=expired_before,
+            expired_after=expired_after,
+            mask_counts=mask_counts.to_dict(),
+            action_time_consumed=travel_t + wait_t + service_t + charge_t,
+            travel_time=travel_t,
+            waiting_time=wait_t,
+            service_time=service_t,
+            charging_time=charge_t,
+            station_necessary=st_necessary,
+            served_slack=rank_stats.served_customer_slack,
+            mean_feasible_slack=rank_stats.mean_feasible_customer_slack,
+            min_feasible_slack=rank_stats.min_feasible_customer_slack,
+            urgency_rank=rank_stats.selected_customer_slack_rank,
+            urgent_rank_k=train_calc.cfg.urgent_rank_k if train_calc else 10,
+        )
 
         step_info = None
         raw_r = 0.0
@@ -125,7 +173,7 @@ def run_episode_trajectory(
                 )
                 step_info = reward_calculator.shape_step(
                     step_info, before=before, after=after,
-                    node_type=node_type, customer_served=served,
+                    node_type=node_type, customer_served=served, ctx=ctx,
                 )
             else:
                 step_info = reward_calculator.step_reward(
@@ -213,8 +261,11 @@ def run_episode_trajectory(
         _, rel_mismatch, ok = train_calc.base.verify_alignment(base_infos, j)
         trajectory.objective = j
         trajectory.reconstructed_objective = sum(s.delta_objective for s in base_infos)
+        trajectory.reconstructed_training_cost = trajectory.reconstructed_objective
         trajectory.objective_mismatch = abs(trajectory.reconstructed_objective - j)
         trajectory.relative_objective_mismatch = rel_mismatch
+        trajectory.final_original_objective = float(j)
+        trajectory.shaped_training_return = float(training_stats.get("shaped_training_return", 0.0))
         trajectory.reward_breakdown = _aggregate_reward_breakdown(step_infos)
         if not ok:
             LOGGER.debug(
@@ -312,6 +363,7 @@ def run_pomo_episodes(
             collect_trajectory=True,
             cycle_id=cycle_id,
             training_mode=True,
+            hard_time_windows=True,
         )
         assert traj is not None
         tr = float(getattr(traj, "training_stats", {}).get(

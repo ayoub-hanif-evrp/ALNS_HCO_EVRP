@@ -8,10 +8,6 @@ Safe baseline (default): Schneider RC _21, actor-critic + step rewards + GAE.
 Overfit sanity test on one instance:
 
     python main_train.py --config configs/train_schneider_RC21_safe.yaml --overfit
-
-Schneider curriculum (optional):
-
-    python main_train.py --config configs/curriculum.yaml --curriculum
 """
 from __future__ import annotations
 
@@ -28,16 +24,13 @@ def parse_args() -> argparse.Namespace:
         default="configs/train.yaml",
         help="Path to YAML config (default: safe Schneider RC _21).",
     )
-    parser.add_argument("--epochs", type=int, default=None, help="Override number of epochs (flat mode).")
+    parser.add_argument("--epochs", type=int, default=None, help="Override number of epochs.")
     parser.add_argument("--cycles", type=int, default=None, help="Override training cycles.")
     parser.add_argument("--device", type=str, default=None, help="Override device (cpu/cuda/auto).")
     parser.add_argument("--seed", type=int, default=None, help="Override random seed.")
-    parser.add_argument("--curriculum", action="store_true", help="Run phased curriculum training.")
     parser.add_argument("--overfit", action="store_true", help="Debug: train one RC instance only.")
     parser.add_argument("--phase0-only", action="store_true", help="Run only the Phase 0 checks and exit.")
     parser.add_argument("--force", action="store_true", help="Train even if Phase 0 checks fail.")
-    parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint (fixed_mini).")
-    parser.add_argument("--run-dir", type=str, default=None, help="Run directory with fixed_train_manifest.json.")
     return parser.parse_args()
 
 
@@ -68,18 +61,6 @@ def main() -> None:
 
     if args.phase0_only:
         _run_phase0_only(config)
-        return
-
-    if args.curriculum or config.get("curriculum"):
-        from src.training.curriculum_train import train_curriculum
-
-        train_curriculum(
-            config,
-            run_phase0=True,
-            force=args.force,
-            resume_checkpoint=args.resume,
-            resume_run_dir=args.run_dir,
-        )
         return
 
     from src.training.train_rl import train
