@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from src.training.actor_critic import RLConfig, actor_critic_loss
-from src.training.trajectory import StepRecord, Trajectory
+from src.training.trajectory import EpisodeTransition, Trajectory
 
 
 def test_actor_loss_gradients_flow():
@@ -15,8 +15,9 @@ def test_actor_loss_gradients_flow():
     ctx = torch.randn(d, requires_grad=False)
     log_p = torch.tensor(-1.2, requires_grad=True)
     ent = torch.tensor(0.5)
-    traj.steps.append(
-        StepRecord(
+    traj.transitions.append(
+        EpisodeTransition(
+            is_policy_action=True,
             decoder_context=ctx,
             feasible_mask=np.ones(5, dtype=bool),
             node=1,

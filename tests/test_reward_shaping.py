@@ -46,6 +46,22 @@ def test_served_bonus_on_new_customer():
     assert calc.stats.new_customers_served == 1
 
 
+def test_urgency_bonus_positive_for_tight_customer():
+    w = _weights()
+    cfg = TrainingRewardConfig(reward_scale=1000.0, urgency_bonus_coef=0.5)
+    calc = TrainingRewardCalculator(w, cfg, num_customers=100, cycle_id=1)
+    ctx = StepContext(
+        served_slack=10.0,
+        min_feasible_slack=10.0,
+        max_feasible_slack=100.0,
+        mean_feasible_slack=50.0,
+        urgency_rank=1,
+    )
+    bonus = calc._urgency_bonus(ctx)
+    assert bonus > 0.0
+    assert bonus >= 0.5 * calc.served_bonus_value() * 0.5
+
+
 def test_terminal_penalty_schedule():
     w = _weights()
     sched = TerminalPenaltySchedule(enabled=True, start_coef=0.25, end_coef=1.0, warmup_cycles=20)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from src.data.instance_class import instance_class
 from src.env.constraints import ConstraintConfig
@@ -95,7 +96,7 @@ def apply_safe_training_defaults(config: dict) -> dict:
     rcfg.setdefault("normalize_advantages", True)
     rcfg.setdefault("gamma", 1.0)
     rcfg.setdefault("gae_lambda", 0.95)
-    rcfg.setdefault("normalize_returns_for_critic", True)
+    rcfg.setdefault("normalize_returns_for_critic", False)
     rcfg.setdefault("use_served_customer_bonus", True)
     rcfg.setdefault("served_bonus_mode", "penalty_equivalent")
     rcfg.setdefault("served_bonus_coef", 0.5)
@@ -130,4 +131,21 @@ def apply_safe_training_defaults(config: dict) -> dict:
     config["training"].setdefault("use_local_search_in_training", False)
     config["training"].setdefault("method", "actor_critic")
     config["training"].setdefault("generate_static_dashboard", True)
+    dcfg = config.setdefault("dashboard", {})
+    dcfg.setdefault("save_representative_traces", True)
+    dcfg.setdefault("num_random_solution_maps", 1)
+    dcfg.setdefault("include_best_final_cycle", True)
+    dcfg.setdefault("include_worst_final_cycle", True)
+    dcfg.setdefault("include_best_overall", True)
+    dcfg.setdefault("live_random_diagnostics", False)
+    dcfg.setdefault("live_random_interval_sec", 45)
+    dcfg.setdefault("live_refresh_min_epoch_delta", 1)
+    mcfg = config.setdefault("maps_dashboard", {})
+    mcfg.setdefault("port", 8081)
+    mcfg.setdefault("cache_snapshots", True)
+    mcfg.setdefault("use_cached_if_present", True)
+    config["training"].setdefault("live_checkpoint_every", 1)
+    config["training"].setdefault("maps_checkpoint_every", 10)
+    out_cfg = config.setdefault("outputs", {})
+    out_cfg.setdefault("traces", str(Path(out_cfg.get("root", "outputs")) / "traces"))
     return config

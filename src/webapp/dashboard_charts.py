@@ -421,7 +421,9 @@ def _violation_series(df: pd.DataFrame) -> list[tuple[str, str]]:
     for col, label in [
         ("unserved_customers", "unserved"),
         ("avg_battery_violation", "battery"),
-        ("avg_lateness", "time window"),
+        ("customer_lateness", "customer TW"),
+        ("depot_lateness", "depot TW"),
+        ("avg_lateness", "total lateness"),
         ("avg_capacity_violation", "capacity"),
         ("avg_depot_violation", "depot return"),
         ("avg_duplicate_visits", "duplicate"),

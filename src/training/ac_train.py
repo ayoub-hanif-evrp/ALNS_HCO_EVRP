@@ -83,6 +83,7 @@ def actor_critic_train_step(
     served_rate_list, customers_list = [], []
     breakdowns: list[dict] = []
     lateness_list, battery_viol_list, capacity_viol_list = [], [], []
+    customer_lateness_list, depot_lateness_list = [], []
     depot_viol_list, duplicate_list = [], []
     route_balance_list, station_visits_list, min_battery_list = [], [], []
     num_nodes_list = []
@@ -198,6 +199,7 @@ def actor_critic_train_step(
                 rel_mismatch_list, lateness_list, battery_viol_list, capacity_viol_list, depot_viol_list,
                 duplicate_list, route_balance_list, station_visits_list, min_battery_list,
                 num_nodes_list, reconstructed_list, breakdown_acc,
+                customer_lateness_list, depot_lateness_list,
             )
             del out
 
@@ -316,7 +318,10 @@ def actor_critic_train_step(
         "final_objective": float(np.mean(raw_costs)),
         "final_original_objective": float(np.mean(raw_costs)),
         "reconstructed_objective": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
+        "reconstructed_original_objective": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
         "reconstructed_training_cost": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
+        "original_objective_mismatch": float(np.mean(mismatch_list)) if mismatch_list else 0.0,
+        "relative_original_objective_mismatch": float(np.mean(rel_mismatch_list)) if rel_mismatch_list else 0.0,
         "newly_expired_customers": float(np.mean(newly_expired_list)) if newly_expired_list else 0.0,
         "masked_by_time_window_count": float(np.mean(tw_masked_list)) if tw_masked_list else 0.0,
         "urgency_bonus_total": float(np.mean(urgency_bonus_list)) if urgency_bonus_list else 0.0,
@@ -329,6 +334,8 @@ def actor_critic_train_step(
         "mean_feasible_actions": float(np.mean(feas_action_list)) if feas_action_list else 0.0,
         "mean_q_candidates": float(np.mean(q_cand_list)) if q_cand_list else 0.0,
         "avg_lateness": float(np.mean(lateness_list)) if lateness_list else 0.0,
+        "customer_lateness": float(np.mean(customer_lateness_list)) if customer_lateness_list else 0.0,
+        "depot_lateness": float(np.mean(depot_lateness_list)) if depot_lateness_list else 0.0,
         "avg_battery_violation": float(np.mean(battery_viol_list)) if battery_viol_list else 0.0,
         "avg_capacity_violation": float(np.mean(capacity_viol_list)) if capacity_viol_list else 0.0,
         "avg_depot_violation": float(np.mean(depot_viol_list)) if depot_viol_list else 0.0,
@@ -362,6 +369,7 @@ def _collect_episode_metrics(
     rel_mismatch_list, lateness_list, battery_viol_list, capacity_viol_list, depot_viol_list,
     duplicate_list, route_balance_list, station_visits_list, min_battery_list,
     num_nodes_list, reconstructed_list, breakdown_acc,
+    customer_lateness_list, depot_lateness_list,
 ):
     summary = result.summary
     raw_costs.append(float(result.objective))
@@ -383,6 +391,8 @@ def _collect_episode_metrics(
         + summary.unserved_customers
     )
     lateness_list.append(summary.total_lateness)
+    customer_lateness_list.append(float(getattr(summary, "customer_lateness", 0.0)))
+    depot_lateness_list.append(float(getattr(summary, "depot_lateness", 0.0)))
     battery_viol_list.append(summary.total_battery_violation)
     capacity_viol_list.append(summary.total_capacity_violation)
     depot_viol_list.append(float(summary.depot_return_violation))
@@ -406,8 +416,8 @@ def _collect_episode_metrics(
         shaping_means.append(float(np.mean([s.shaping_reward for s in trajectory.steps])))
     if trajectory.terminal_info:
         terminal_reward_means.append(float(trajectory.terminal_info.reward))
-    mismatch_list.append(float(trajectory.objective_mismatch))
-    rel_mismatch_list.append(float(getattr(trajectory, "relative_objective_mismatch", 0.0)))
-    reconstructed_list.append(float(getattr(trajectory, "reconstructed_objective", result.objective)))
+    mismatch_list.append(float(getattr(trajectory, "original_objective_mismatch", trajectory.objective_mismatch)))
+    rel_mismatch_list.append(float(getattr(trajectory, "relative_original_objective_mismatch", getattr(trajectory, "relative_objective_mismatch", 0.0))))
+    reconstructed_list.append(float(getattr(trajectory, "reconstructed_original_objective", getattr(trajectory, "reconstructed_objective", result.objective))))
     for k, v in (getattr(trajectory, "reward_breakdown", None) or {}).items():
         breakdown_acc[k] = breakdown_acc.get(k, 0.0) + float(v)

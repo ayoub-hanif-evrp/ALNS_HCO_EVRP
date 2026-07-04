@@ -1,7 +1,9 @@
 """Extended rollout with step rewards and trajectory collection for actor-critic."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 
@@ -11,18 +13,20 @@ from src.env.reward import StepRewardCalculator, snapshot_env
 from src.env.tw_diagnostics import (
     aggregate_mask_reasons,
     count_time_expired_customers,
-    station_is_necessary,
+    selected_station_is_necessary,
     urgent_rank_stats,
 )
 from src.training.actor_critic import RLConfig, apply_potential_shaping, compute_potential
 from src.training.reward_shaping import StepContext, TrainingRewardCalculator, TrainingRewardConfig
-from src.training.trajectory import StepRecord, Trajectory
+from src.training.trajectory import EpisodeTransition, Trajectory
 from src.training.rl_memory import select_q_candidates
 from src.utils.logging_utils import get_logger
 
-from .rollout import EpisodeResult, _is_better, _step_or_close
+from src.training.rollout_transitions import record_transition_reward
+from .rollout import EpisodeResult, _is_better
 
 LOGGER = get_logger()
+DEBUG_ASSERT_DIR = Path("logs/consistency_assertions")
 
 
 def _aggregate_reward_breakdown(step_infos: list) -> dict[str, float]:
@@ -38,6 +42,13 @@ def _aggregate_reward_breakdown(step_infos: list) -> dict[str, float]:
         for k in keys:
             out[k] += float(extra.get(k, 0.0))
     return out
+
+
+def _save_assert_debug_row(row: dict) -> None:
+    DEBUG_ASSERT_DIR.mkdir(parents=True, exist_ok=True)
+    path = DEBUG_ASSERT_DIR / "assert_failures.jsonl"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, default=str) + "\n")
 
 
 def run_episode_trajectory(
@@ -59,6 +70,7 @@ def run_episode_trajectory(
     cycle_id: int = 1,
     training_mode: bool = True,
     hard_time_windows: bool = True,
+    global_epoch: int = 0,
 ) -> tuple[EpisodeResult, Trajectory | None]:
     """Run episode; optionally collect per-step rewards and critic trajectory."""
     env = EVRPTWEnv(
@@ -87,23 +99,60 @@ def run_episode_trajectory(
     log_prob_sum = torch.zeros((), device=device)
     entropy_sum = torch.zeros((), device=device)
     num_decisions = 0
+    depot_recharge_actions = 0
+    depot_finish_actions = 0
+    depot_mode_entropy_sum = 0.0
+    depot_mode_finish_prob_sum = 0.0
+    depot_mode_recharge_prob_sum = 0.0
     trajectory = Trajectory() if collect_trajectory else None
     if trajectory is not None:
         trajectory.node_embeddings = node_embeddings.detach()
     step_infos = []
     phi_prev = compute_potential(env, rl_cfg) if rl_cfg is not None and rl_cfg.use_potential_shaping else 0.0
+    phi_holder = [phi_prev]
+    original_step_infos: list = []
+
+    def _append_env_transition(before, info: dict, ctx: StepContext | None = None) -> None:
+        raw_r, shaping, shaped_r, step_info = record_transition_reward(
+            env=env,
+            before=before,
+            info=info,
+            reward_calculator=reward_calculator,
+            train_calc=train_calc,
+            rl_cfg=rl_cfg,
+            step_infos=step_infos,
+            ctx=ctx,
+            phi_prev_holder=phi_holder,
+        )
+        original_step_infos.append(step_info)
+        if collect_trajectory and trajectory is not None:
+            trajectory.transitions.append(
+                EpisodeTransition(
+                    is_policy_action=False,
+                    shaped_reward=shaped_r,
+                    raw_reward=raw_r,
+                    shaping_reward=shaping,
+                    step_info=step_info,
+                    action_type=str(info.get("type", "auto_close")),
+                    ev_id=int(info.get("ev_id", -1)),
+                )
+            )
 
     while not env.is_done():
         ev = env.select_acting_ev()
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
-        if _step_or_close(env, ev):
+        before_close = snapshot_env(env)
+        close_info = env.try_auto_close_route(ev)
+        if close_info is not None:
+            _append_env_transition(before_close, close_info)
             continue
 
         before = snapshot_env(env)
-        expired_before = count_time_expired_customers(env)
-        mask_counts, feasible_mask, _ = aggregate_mask_reasons(
+        pre_context = env.snapshot_decision_context(ev)
+        pre_expired = count_time_expired_customers(env)
+        mask_counts, feasible_mask, mask_reasons = aggregate_mask_reasons(
             instance, env, ev, use_horizon_check=use_horizon_check, use_depot_charging=use_depot_charging
         )
         cust_bonus, st_pen, dep_pen = (0.0, 0.0, 0.0)
@@ -119,25 +168,54 @@ def run_episode_trajectory(
             station_logit_penalty=st_pen,
             use_dynamic_temporal_bias=training_mode,
         )
-        info = env.apply_action(ev, action.node, action.charge_portion)
-        after = snapshot_env(env)
+        pre_rank = urgent_rank_stats(env, ev, action.node, feasible_mask)
+        inst = env.instance
+        pre_st_necessary = True
+        pre_st_diag: dict[str, float] = {}
+        if inst.nodes[action.node].is_charging_station:
+            pre_st_necessary, pre_st_diag = selected_station_is_necessary(env, ev, action.node)
+
+        pre_action_features = env.compute_action_features(
+            ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
+        )
+
+        if env.hard_time_windows:
+            try:
+                env.assert_pre_action_consistency(
+                    ev, action.node, action.charge_portion, action.depot_finish,
+                    feasible_mask, mask_reasons, global_epoch=global_epoch,
+                )
+            except AssertionError as exc:
+                _save_assert_debug_row({
+                    "epoch": global_epoch,
+                    "instance": getattr(instance, "instance_name", "?"),
+                    "ev_id": ev.ev_id,
+                    "action_type": pre_action_features.get("action_type"),
+                    "from_node": ev.current_node,
+                    "to_node": action.node,
+                    "charge_portion": action.charge_portion,
+                    "depot_finish": action.depot_finish,
+                    "error": str(exc),
+                    **pre_context,
+                    **pre_action_features,
+                    "mask_reason": mask_reasons.get(action.node, ""),
+                    "feasible_mask": feasible_mask.tolist(),
+                })
+                raise
+
+        info = env.apply_action(
+            ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
+        )
         expired_after = count_time_expired_customers(env)
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
 
-        rank_stats = urgent_rank_stats(env, ev, action.node, feasible_mask)
-        inst = env.instance
-        st_necessary = True
-        if node_type == "station":
-            st_necessary = station_is_necessary(
-                inst, ev, env.served_mask, env.reserved_mask, use_depot_charging
-            )
         travel_t = float(info.get("delta_travel_time", 0.0))
         wait_t = float(info.get("waiting", 0.0))
         charge_t = float(info.get("charging_time", 0.0))
         service_t = float(inst.nodes[action.node].service_time) if inst.nodes[action.node].is_customer and served else 0.0
         ctx = StepContext(
-            expired_before=expired_before,
+            expired_before=pre_expired,
             expired_after=expired_after,
             mask_counts=mask_counts.to_dict(),
             action_time_consumed=travel_t + wait_t + service_t + charge_t,
@@ -145,64 +223,44 @@ def run_episode_trajectory(
             waiting_time=wait_t,
             service_time=service_t,
             charging_time=charge_t,
-            station_necessary=st_necessary,
-            served_slack=rank_stats.served_customer_slack,
-            mean_feasible_slack=rank_stats.mean_feasible_customer_slack,
-            min_feasible_slack=rank_stats.min_feasible_customer_slack,
-            urgency_rank=rank_stats.selected_customer_slack_rank,
+            station_necessary=pre_st_necessary,
+            served_slack=pre_rank.served_customer_slack,
+            mean_feasible_slack=pre_rank.mean_feasible_customer_slack,
+            min_feasible_slack=pre_rank.min_feasible_customer_slack,
+            max_feasible_slack=pre_rank.max_feasible_customer_slack,
+            urgency_rank=pre_rank.selected_customer_slack_rank,
             urgent_rank_k=train_calc.cfg.urgent_rank_k if train_calc else 10,
         )
+        for k, v in pre_st_diag.items():
+            ctx.mask_counts[k] = ctx.mask_counts.get(k, 0.0) + float(v)
 
-        step_info = None
-        raw_r = 0.0
-        shaping = 0.0
-        shaped_r = 0.0
-        if reward_calculator is not None:
-            if isinstance(reward_calculator, TrainingRewardCalculator):
-                step_info = reward_calculator.base.step_reward(
-                    before,
-                    after,
-                    ev_id=int(info.get("ev_id", ev.ev_id)),
-                    selected_node=action.node,
-                    node_type=node_type,
-                    previous_node=int(info.get("previous_node", ev.current_node)),
-                    delta_travel_time=float(info.get("delta_travel_time", 0.0)),
-                    delta_energy_used=float(info.get("delta_energy_used", 0.0)),
-                    charged_energy=float(info.get("charged_energy", 0.0)),
-                    customer_served=served,
-                )
-                step_info = reward_calculator.shape_step(
-                    step_info, before=before, after=after,
-                    node_type=node_type, customer_served=served, ctx=ctx,
-                )
-            else:
-                step_info = reward_calculator.step_reward(
-                    before,
-                    after,
-                    ev_id=int(info.get("ev_id", ev.ev_id)),
-                    selected_node=action.node,
-                    node_type=node_type,
-                    previous_node=int(info.get("previous_node", ev.current_node)),
-                    delta_travel_time=float(info.get("delta_travel_time", 0.0)),
-                    delta_energy_used=float(info.get("delta_energy_used", 0.0)),
-                    charged_energy=float(info.get("charged_energy", 0.0)),
-                    customer_served=served,
-                )
-            raw_r = step_info.raw_reward
-            if rl_cfg is not None and rl_cfg.use_potential_shaping:
-                phi_new = compute_potential(env, rl_cfg)
-                shaped_r, shaping = apply_potential_shaping(raw_r, phi_prev, phi_new, rl_cfg.gamma)
-                step_info.shaping_reward = shaping
-                step_info.reward = shaped_r + (step_info.reward - raw_r)
-                phi_prev = phi_new
-            else:
-                shaped_r = step_info.reward
-                step_info.shaping_reward = 0.0
-            step_infos.append(step_info)
+        raw_r, shaping, shaped_r, step_info = record_transition_reward(
+            env=env,
+            before=before,
+            info=info,
+            reward_calculator=reward_calculator,
+            train_calc=train_calc,
+            rl_cfg=rl_cfg,
+            step_infos=step_infos,
+            ctx=ctx,
+            phi_prev_holder=phi_holder,
+            node_type=node_type,
+            customer_served=served,
+        )
+        original_step_infos.append(step_info)
 
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
         num_decisions += 1
+        if action.depot_finish:
+            depot_finish_actions += 1
+        elif inst.nodes[action.node].is_depot:
+            depot_recharge_actions += 1
+        if action.depot_mode_entropy is not None:
+            depot_mode_entropy_sum += float(action.depot_mode_entropy.detach())
+        if action.depot_mode_finish_prob is not None:
+            depot_mode_finish_prob_sum += action.depot_mode_finish_prob
+            depot_mode_recharge_prob_sum += action.depot_mode_recharge_prob or 0.0
 
         if collect_trajectory and trajectory is not None:
             cand_idx = None
@@ -215,8 +273,9 @@ def run_episode_trajectory(
                     rl_cfg,
                 )
                 cand_probs = action.node_probs[torch.tensor(cand_idx, device=action.node_probs.device)].detach().cpu()
-            trajectory.steps.append(
-                StepRecord(
+            trajectory.transitions.append(
+                EpisodeTransition(
+                    is_policy_action=True,
                     decoder_context=action.decoder_context if action.decoder_context is not None else policy.decoder_context(env, ev, node_embeddings),
                     feasible_mask=feasible_mask.copy(),
                     node=action.node,
@@ -226,18 +285,20 @@ def run_episode_trajectory(
                     node_probs=None,
                     q_candidate_indices=cand_idx,
                     q_candidate_probs=cand_probs,
-                    reward=raw_r,
                     raw_reward=raw_r,
                     shaping_reward=shaping,
-                    shaped_reward=float(step_info.reward) if step_info is not None else shaped_r,
+                    shaped_reward=shaped_r,
                     step_info=step_info,
                     charge_portion=action.charge_portion,
+                    action_type=node_type,
                 )
             )
 
     for ev in env.evs:
         if not ev.finished:
-            env.auto_close_route(ev)
+            before_close = snapshot_env(env)
+            close_info = env.auto_close_route(ev, forced=True, return_info=True)
+            _append_env_transition(before_close, close_info)
 
     done_reason = env.get_done_reason()
     j, breakdown, summary = env.score(weights)
@@ -249,25 +310,37 @@ def run_episode_trajectory(
         trajectory.terminal_info = terminal_info
         step_infos.append(terminal_info)
         training_stats = train_calc.finalize(j)
+        training_stats["depot_recharge_actions"] = float(depot_recharge_actions)
+        training_stats["depot_finish_actions"] = float(depot_finish_actions)
+        if num_decisions > 0 and depot_mode_entropy_sum > 0:
+            n_depot_modes = depot_finish_actions + depot_recharge_actions
+            if n_depot_modes > 0:
+                training_stats["depot_mode_entropy"] = depot_mode_entropy_sum / n_depot_modes
+                training_stats["depot_mode_finish_prob"] = depot_mode_finish_prob_sum / n_depot_modes
+                training_stats["depot_mode_recharge_prob"] = depot_mode_recharge_prob_sum / n_depot_modes
         trajectory.training_stats = training_stats
-        # Alignment uses objective-aligned deltas only (pre-shaping step + full terminal objective)
-        base_infos = []
-        for s in step_infos[:-1]:
-            base_infos.append(s)
+        original_infos = [s for s in step_infos if s is not None and not getattr(s, "terminal", False)]
         raw_terminal = StepRewardCalculator(weights, reward_scale=rl_cfg.reward_scale).terminal_adjustment(
             before_terminal, summary,
         )
-        base_infos.append(raw_terminal)
-        _, rel_mismatch, ok = train_calc.base.verify_alignment(base_infos, j)
+        original_infos.append(raw_terminal)
+        recon_original = sum(s.delta_objective for s in original_infos)
+        rel_orig = abs(recon_original - j) / max(1.0, abs(j))
+        trajectory.reconstructed_original_objective = recon_original
+        trajectory.original_objective_mismatch = abs(recon_original - j)
+        trajectory.relative_original_objective_mismatch = rel_orig
+        _, rel_mismatch, ok = train_calc.base.verify_alignment(original_infos, j)
         trajectory.objective = j
-        trajectory.reconstructed_objective = sum(s.delta_objective for s in base_infos)
-        trajectory.reconstructed_training_cost = trajectory.reconstructed_objective
-        trajectory.objective_mismatch = abs(trajectory.reconstructed_objective - j)
-        trajectory.relative_objective_mismatch = rel_mismatch
-        trajectory.final_original_objective = float(j)
-        trajectory.shaped_training_return = float(training_stats.get("shaped_training_return", 0.0))
+        trajectory.reconstructed_objective = recon_original
+        trajectory.objective_mismatch = trajectory.original_objective_mismatch
+        trajectory.relative_objective_mismatch = rel_orig
         trajectory.reward_breakdown = _aggregate_reward_breakdown(step_infos)
-        if not ok:
+        if rel_orig > 0.01:
+            LOGGER.warning(
+                "Original objective mismatch rel=%.4f (final J=%.4f, reconstructed=%.4f)",
+                rel_orig, j, recon_original,
+            )
+        elif not ok:
             LOGGER.debug(
                 "Objective mismatch rel=%.4f (final J=%.4f, reconstructed=%.4f)",
                 rel_mismatch, j, trajectory.reconstructed_objective,

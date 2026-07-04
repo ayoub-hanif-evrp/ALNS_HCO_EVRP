@@ -45,6 +45,11 @@ class PointerDecoder(nn.Module):
             nn.ReLU(),
             nn.Linear(embedding_dim, num_charging_portions),
         )
+        self.depot_mode_head = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_dim // 2),
+            nn.ReLU(),
+            nn.Linear(embedding_dim // 2, 2),
+        )
         self.dynamic_proj = nn.Linear(DYNAMIC_ACTION_FEAT_DIM, 1)
 
     def dynamic_score_bias(self, dynamic_feats: torch.Tensor) -> torch.Tensor:
@@ -86,3 +91,7 @@ class PointerDecoder(nn.Module):
         scalars = torch.tensor([battery_norm, time_norm], device=device, dtype=decoder_context.dtype)
         x = torch.cat([decoder_context, station_embedding, scalars], dim=-1)
         return self.charge_head(x)
+
+    def depot_mode_logits(self, decoder_context: torch.Tensor) -> torch.Tensor:
+        """Logits for depot sub-mode: [recharge, finish]."""
+        return self.depot_mode_head(decoder_context)

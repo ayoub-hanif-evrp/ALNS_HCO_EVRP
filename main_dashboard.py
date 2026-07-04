@@ -4,8 +4,13 @@ This is the primary training monitor. Run in a second terminal while training:
 
     python main_dashboard.py
 
-Open http://localhost:8080 — graphs refresh automatically from
-``outputs/logs/train_log.jsonl`` (training instances only; no test/holdout data).
+Open http://localhost:8080 — scalar training metrics auto-refresh every 3s.
+
+For route maps and solution-behavior diagnostics (manual instance/epoch selection):
+
+    python main_maps_dashboard.py
+
+Open http://localhost:8081
 """
 from __future__ import annotations
 

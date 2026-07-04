@@ -35,7 +35,13 @@ def test_energy_cannot_reach_is_masked(small_instance):
     mask, reasons = env.feasible_mask(ev)
     for j in small_instance.customer_indices:
         assert not mask[j]
-        assert reasons[j] in {"battery_cannot_reach", "battery_would_strand"}
+        assert reasons[j] in {
+            "battery_cannot_reach",
+            "battery_would_strand",
+            "customer_infeasible_after_service_battery",
+            "customer_infeasible_no_safe_continuation",
+            "customer_infeasible_no_reachable_station_or_depot",
+        }
 
 
 def test_battery_would_strand_rule(small_instance):
@@ -48,9 +54,15 @@ def test_battery_would_strand_rule(small_instance):
     min_after = min(inst.energy_matrix[j, r] for r in inst.rechargeable_indices)
     # Enough to reach j, but not enough to then reach any recharge node.
     ev.remaining_battery = energy_to_j + 0.5 * min_after
-    ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, True)
+    ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, True,
+                                   env.use_depot_charging, env.charging_portions)
     assert not ok
-    assert reason == "battery_would_strand"
+    assert reason in {
+        "battery_would_strand",
+        "customer_infeasible_no_safe_continuation",
+        "customer_infeasible_no_reachable_station_or_depot",
+        "customer_infeasible_after_service_battery",
+    }
 
 
 def test_capacity_exceeded_is_masked(small_instance):
@@ -103,9 +115,14 @@ def test_early_arrival_is_feasible_with_waiting(small_instance):
     if target is None:
         return  # nothing to assert for this instance
     ev.current_time = 0.0
-    ok, reason = customer_feasible(inst, ev, target, env.served_mask, env.reserved_mask, use_horizon_check=False)
+    ok, reason = customer_feasible(inst, ev, target, env.served_mask, env.reserved_mask, use_horizon_check=False,
+                                   use_depot_charging=env.use_depot_charging, charging_portions=env.charging_portions)
     # Early arrival is allowed (waiting), not infeasible due to the window.
-    assert ok or reason in {"battery_would_strand", "battery_cannot_reach"}
+    assert ok or reason in {
+        "battery_would_strand", "battery_cannot_reach",
+        "customer_infeasible_no_safe_continuation",
+        "customer_infeasible_no_reachable_station_or_depot",
+    }
 
 
 def test_station_self_loop_masked(small_instance):
@@ -146,9 +163,9 @@ def test_depot_blocked_at_start_when_customers_feasible(small_instance):
     env = _fresh_env(small_instance)
     ev = env.evs[0]
     mask, reasons = env.feasible_mask(ev)
-    # At route start on depot, recharge is a self-loop and must be blocked.
+    # At route start on depot, recharge is a self-loop and finish is not allowed yet.
     assert not mask[inst.depot_index]
-    assert reasons[inst.depot_index] == "depot_self_loop"
+    assert reasons[inst.depot_index] in {"depot_self_loop", "depot_finish_at_start"}
 
 
 def test_stations_masked_when_all_served(small_instance):
@@ -162,5 +179,25 @@ def test_stations_masked_when_all_served(small_instance):
     mask, reasons = env.feasible_mask(ev)
     for s in inst.charging_station_indices:
         assert not mask[s]
-    # Depot recharge blocked when all customers are served (auto-close handles return).
-    assert not mask[inst.depot_index]
+    # After all customers served, depot finish may be feasible when away from depot.
+    if ev.current_node != inst.depot_index:
+        assert mask[inst.depot_index] or reasons[inst.depot_index] == "all_customers_done"
+    else:
+        assert not mask[inst.depot_index]
+
+
+def test_must_close_only_when_mask_empty(small_instance):
+    inst = small_instance
+    env = _fresh_env(inst)
+    ev = env.evs[0]
+    mask, _ = env.feasible_mask(ev)
+    assert env.should_close_route(ev) == (not mask.any())
+    from src.env.masks import must_close_route
+
+    assert must_close_route(
+        inst, ev, env.served_mask, env.reserved_mask,
+        use_depot_charging=env.use_depot_charging,
+        use_horizon_check=env.use_horizon_check,
+        charging_portions=env.charging_portions,
+        num_served_customers=env.num_served_customers,
+    ) == (not mask.any())

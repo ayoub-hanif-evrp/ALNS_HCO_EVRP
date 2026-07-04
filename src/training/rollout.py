@@ -26,8 +26,8 @@ class EpisodeResult:
     fleet_size: int = 0
 
 
-def _step_or_close(env: EVRPTWEnv, ev) -> bool:
-    """Close the route if required; return True if the EV was closed without a policy step."""
+def _step_or_close(env: EVRPTWEnv, ev) -> dict | None:
+    """Close the route if required; return close info or None."""
     return env.try_auto_close_route(ev)
 
 

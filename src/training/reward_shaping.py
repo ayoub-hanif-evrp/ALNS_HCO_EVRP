@@ -38,6 +38,7 @@ class StepContext:
     served_slack: float = 0.0
     mean_feasible_slack: float = 0.0
     min_feasible_slack: float = 0.0
+    max_feasible_slack: float = 0.0
     urgency_rank: int = -1
     urgent_rank_k: int = 10
     customer_logit_bonus_applied: float = 0.0
@@ -196,8 +197,11 @@ class TrainingRewardCalculator:
     def _urgency_bonus(self, ctx: StepContext) -> float:
         if not self.cfg.use_urgency_bonus or ctx.served_slack <= 0:
             return 0.0
-        horizon_slack = max(ctx.min_feasible_slack, ctx.served_slack, 1e-6)
-        score = 1.0 - min(1.0, ctx.served_slack / horizon_slack)
+        # Normalize tightness against the loosest feasible customer, not min (which equals served for ranked slack).
+        ref_slack = max(ctx.max_feasible_slack, ctx.mean_feasible_slack, 1e-6)
+        score = 1.0 - min(1.0, ctx.served_slack / ref_slack)
+        if ctx.urgency_rank > 0 and ctx.urgency_rank <= 5:
+            score = max(score, 1.0 - (ctx.urgency_rank - 1) / 5.0)
         return self.cfg.urgency_bonus_coef * self.served_bonus_value() * score
 
     def shape_step(
@@ -258,7 +262,7 @@ class TrainingRewardCalculator:
                 self.stats.unnecessary_station_penalty_total += station_pen
 
         early_pen = 0.0
-        if self.cfg.use_early_depot_penalty and node_type == "route_close":
+        if self.cfg.use_early_depot_penalty and node_type in ("route_close", "depot_finish"):
             unserved_before = self.num_customers - before.num_served_customers
             if unserved_before > 0:
                 unserved_ratio = unserved_before / self.num_customers
@@ -367,7 +371,7 @@ class TrainingRewardCalculator:
         unserved_ratio: float,
     ) -> tuple[float, float, float]:
         """Return (customer_bonus, station_penalty, depot_penalty) for logit bias."""
-        from src.env.tw_diagnostics import station_is_necessary
+        from src.env.tw_diagnostics import selected_station_is_necessary
 
         cust_bonus = 0.0
         st_pen = 0.0
@@ -380,10 +384,10 @@ class TrainingRewardCalculator:
             cust_bonus = self.cfg.customer_logit_bonus
         if self.cfg.use_customer_priority_logit_bias:
             for s in inst.charging_station_indices:
-                if feasible_mask[s] and not station_is_necessary(
-                    inst, ev, env.served_mask, env.reserved_mask, env.use_depot_charging
-                ):
-                    st_pen = max(st_pen, self.cfg.unnecessary_station_logit_penalty)
+                if feasible_mask[s]:
+                    necessary, _ = selected_station_is_necessary(env, ev, s)
+                    if not necessary:
+                        st_pen = max(st_pen, self.cfg.unnecessary_station_logit_penalty)
         self.stats.mask_reason_totals["customer_logit_bonus_applied"] = (
             self.stats.mask_reason_totals.get("customer_logit_bonus_applied", 0.0) + cust_bonus
         )

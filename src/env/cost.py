@@ -47,6 +47,10 @@ class SolutionSummary:
     unserved_customers: int = 0
     duplicate_customer_visits: int = 0
     total_lateness: float = 0.0
+    customer_lateness: float = 0.0
+    depot_lateness: float = 0.0
+    customer_tw_violations: int = 0
+    depot_tw_violations: int = 0
     total_battery_violation: float = 0.0
     total_capacity_violation: float = 0.0
     depot_return_violation: int = 0

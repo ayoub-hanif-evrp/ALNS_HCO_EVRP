@@ -1,0 +1,15 @@
+{
+  "generated_at": 1783203644.8424067,
+  "generating": false,
+  "epoch": 39,
+  "cycle": 4,
+  "instance_name": "rc102_21",
+  "instance_idx": 0,
+  "checkpoint": "best.pt",
+  "objective": 554465.1356744155,
+  "served_ratio": 0.57,
+  "feasible": false,
+  "unserved_customers": 43,
+  "used_evs": 21,
+  "error": null
+}

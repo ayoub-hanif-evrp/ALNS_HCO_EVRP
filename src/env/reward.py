@@ -15,6 +15,10 @@ class CostSnapshot:
     total_charging_time: float = 0.0
     total_charging_price: float = 0.0
     total_lateness: float = 0.0
+    customer_lateness: float = 0.0
+    depot_lateness: float = 0.0
+    customer_tw_violations: int = 0
+    depot_tw_violations: int = 0
     total_battery_violation: float = 0.0
     total_capacity_violation: float = 0.0
     duplicate_customer_visits: int = 0
@@ -66,6 +70,10 @@ def snapshot_env(env) -> CostSnapshot:
         total_charging_time=float(env.total_charging_time),
         total_charging_price=float(env.total_charging_price),
         total_lateness=float(env.total_lateness),
+        customer_lateness=float(getattr(env, "customer_lateness", 0.0)),
+        depot_lateness=float(getattr(env, "depot_lateness", 0.0)),
+        customer_tw_violations=int(getattr(env, "customer_tw_violation_count", 0)),
+        depot_tw_violations=int(getattr(env, "depot_tw_violation_count", 0)),
         total_battery_violation=float(env.total_battery_violation),
         total_capacity_violation=float(env.total_capacity_violation),
         duplicate_customer_visits=int(env.duplicate_customer_visits),
@@ -189,6 +197,10 @@ class StepRewardCalculator:
             total_charging_time=summary.total_charging_time,
             total_charging_price=summary.total_charging_price,
             total_lateness=summary.total_lateness,
+            customer_lateness=getattr(summary, "customer_lateness", 0.0),
+            depot_lateness=getattr(summary, "depot_lateness", 0.0),
+            customer_tw_violations=getattr(summary, "customer_tw_violations", 0),
+            depot_tw_violations=getattr(summary, "depot_tw_violations", 0),
             total_battery_violation=summary.total_battery_violation,
             total_capacity_violation=summary.total_capacity_violation,
             duplicate_customer_visits=summary.duplicate_customer_visits,

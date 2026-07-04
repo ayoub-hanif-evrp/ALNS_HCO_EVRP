@@ -25,3 +25,16 @@ def small_instance():
     from src.data.instance_loader import load_instance
 
     return load_instance(DATASET_PATH / SMALL_INSTANCE)
+
+
+@pytest.fixture
+def model_cfg() -> dict:
+    return {
+        "embedding_dim": 32,
+        "heads": 4,
+        "encoder_layers": 2,
+        "feedforward_dim": 64,
+        "dropout": 0.0,
+        "use_ev_communication": False,
+        "use_edge_aware_encoder": False,
+    }

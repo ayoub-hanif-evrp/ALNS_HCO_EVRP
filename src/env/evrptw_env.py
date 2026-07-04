@@ -17,7 +17,7 @@ import numpy as np
 from .cost import CostWeights, SolutionSummary, compute_cost, is_feasible
 from .ev_state import EVState
 from .event_queue import select_next_ev
-from .masks import compute_feasible_mask, must_close_route
+from .masks import compute_feasible_mask
 
 EPS = 1e-6
 
@@ -64,13 +64,24 @@ class EVRPTWEnv:
         self.total_charging_time = 0.0
         self.total_charging_price = 0.0
         self.total_lateness = 0.0
+        self.customer_lateness = 0.0
+        self.depot_lateness = 0.0
         self.total_battery_violation = 0.0
         self.total_capacity_violation = 0.0
         self.depot_return_violation = 0
         self.duplicate_customer_visits = 0
         # Event counts (distinct from magnitude sums above).
         self.time_window_violation_count = 0
+        self.customer_tw_violation_count = 0
+        self.depot_tw_violation_count = 0
         self.battery_violation_count = 0
+        self.customer_move_battery_violation = 0.0
+        self.station_move_battery_violation = 0.0
+        self.depot_return_battery_violation = 0.0
+        self.auto_close_battery_violation = 0.0
+        self.forced_auto_close_count = 0
+        self.depot_recharge_count = 0
+        self.depot_finish_count = 0
         self.capacity_violation_count = 0
         self.infeasible = False
         self.infeasibility_reasons: list[str] = []
@@ -93,18 +104,150 @@ class EVRPTWEnv:
             ev,
             self.use_horizon_check,
             self.use_depot_charging,
+            self.charging_portions,
         )
 
+    def compute_mask_info(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
+        """Pre-action feasible mask and per-node infeasibility reasons."""
+        return self.feasible_mask(ev)
+
+    def snapshot_decision_context(self, ev: EVState) -> dict:
+        """Immutable decision context before ``apply_action``."""
+        inst = self.instance
+        return {
+            "time_before": float(ev.current_time),
+            "battery_before": float(ev.remaining_battery),
+            "capacity_before": float(ev.remaining_capacity),
+            "from_node": int(ev.current_node),
+            "num_served": int(self.num_served_customers),
+        }
+
+    def compute_action_features(
+        self,
+        ev: EVState,
+        selected_node: int,
+        charge_portion: float | None = None,
+        *,
+        depot_finish: bool = False,
+    ) -> dict:
+        """Pre-action features for the selected node/mode."""
+        from src.env.tw_diagnostics import customer_service_start
+
+        inst = self.instance
+        node = inst.nodes[selected_node]
+        out: dict = {
+            "to_node": int(selected_node),
+            "selected_charge_portion": charge_portion,
+            "depot_finish": bool(depot_finish),
+        }
+        if node.is_customer:
+            arr, wait, ss, slack = customer_service_start(inst, ev, selected_node)
+            due = float(node.due_time)
+            e = float(inst.energy_matrix[ev.current_node, selected_node])
+            out.update({
+                "action_type": "customer",
+                "arrival_time": arr,
+                "service_start": ss,
+                "due_time": due,
+                "waiting_time": wait,
+                "selected_customer_slack": slack,
+                "battery_after_est": float(ev.remaining_battery - e),
+            })
+        elif node.is_charging_station:
+            out["action_type"] = "station"
+        elif node.is_depot:
+            out["action_type"] = "depot_finish" if depot_finish else "depot_recharge"
+        else:
+            out["action_type"] = "unknown"
+        return out
+
+    def assert_pre_action_consistency(
+        self,
+        ev: EVState,
+        selected_node: int,
+        charge_portion: float | None,
+        depot_finish: bool,
+        feasible_mask: np.ndarray,
+        mask_reasons: dict[int, str],
+        *,
+        global_epoch: int = 0,
+    ) -> None:
+        """Hard-mode checks that the selected action matches the feasible mask."""
+        from src.env.charge_masks import feasible_charge_portions
+
+        inst = self.instance
+        if not feasible_mask[selected_node]:
+            raise AssertionError(
+                f"Selected infeasible node {selected_node}: {mask_reasons.get(selected_node, '?')}"
+            )
+        node = inst.nodes[selected_node]
+        if node.is_customer:
+            from src.env.tw_diagnostics import customer_service_start
+
+            _, _, service_start, _ = customer_service_start(inst, ev, selected_node)
+            due = float(node.due_time)
+            assert service_start <= due + EPS, (
+                f"customer TW: service_start={service_start} > due={due}"
+            )
+            e = float(inst.energy_matrix[ev.current_node, selected_node])
+            battery_after = ev.remaining_battery - e
+            assert battery_after >= -EPS, f"battery after customer would be {battery_after}"
+        if node.is_charging_station or (node.is_depot and not depot_finish):
+            mask, reasons = feasible_charge_portions(
+                inst, ev, selected_node, self.served_mask, self.reserved_mask,
+                portions=self.charging_portions,
+                use_horizon_check=self.use_horizon_check,
+                use_depot_charging=self.use_depot_charging,
+            )
+            if charge_portion is not None:
+                idx = self.charging_portions.index(charge_portion)
+                assert mask[idx], f"charge portion infeasible: {reasons[idx]}"
+        _ = global_epoch
+
+    def _record_battery_shortfall(self, ev: EVState, shortfall: float, category: str) -> None:
+        if shortfall <= EPS:
+            return
+        self.total_battery_violation += shortfall
+        self.battery_violation_count += 1
+        if category == "customer":
+            self.customer_move_battery_violation += shortfall
+        elif category == "station":
+            self.station_move_battery_violation += shortfall
+        elif category == "auto_close":
+            self.auto_close_battery_violation += shortfall
+        else:
+            self.depot_return_battery_violation += shortfall
+
+    def _record_customer_lateness(
+        self, ev: EVState, j: int, lateness: float, *, travel: float, arrival: float,
+        ready: float, due: float, service_start: float,
+    ) -> None:
+        if lateness <= EPS:
+            return
+        self.customer_lateness += lateness
+        self.total_lateness += lateness
+        self.time_window_violation_count += 1
+        self.customer_tw_violation_count += 1
+        if self.hard_time_windows:
+            self.infeasible = True
+            self.infeasibility_reasons.append(
+                f"hard_tw_violation ev={ev.ev_id} node={j} t={ev.current_time:.2f} "
+                f"travel={travel:.2f} arrival={arrival:.2f} ready={ready:.2f} due={due:.2f} "
+                f"service_start={service_start:.2f}"
+            )
+
+    def _record_depot_lateness(self, lateness: float) -> None:
+        if lateness <= EPS:
+            return
+        self.depot_lateness += lateness
+        self.total_lateness += lateness
+        self.time_window_violation_count += 1
+        self.depot_tw_violation_count += 1
+
     def should_close_route(self, ev: EVState) -> bool:
-        """True when the EV must return to depot (no customer service possible)."""
-        return must_close_route(
-            self.instance,
-            ev,
-            self.served_mask,
-            self.reserved_mask,
-            use_depot_charging=self.use_depot_charging,
-            use_horizon_check=self.use_horizon_check,
-        )
+        """True when the full feasible mask has no selectable action."""
+        mask, _ = self.feasible_mask(ev)
+        return not mask.any()
 
     def all_customers_served(self) -> bool:
         return self.num_served_customers >= self.instance.num_customers
@@ -143,7 +286,14 @@ class EVRPTWEnv:
     # ------------------------------------------------------------------ #
     # Action application (physics)
     # ------------------------------------------------------------------ #
-    def apply_action(self, ev: EVState, node: int, charge_portion: float | None = None) -> dict:
+    def apply_action(
+        self,
+        ev: EVState,
+        node: int,
+        charge_portion: float | None = None,
+        *,
+        depot_finish: bool = False,
+    ) -> dict:
         """Apply the EV's chosen next node and return an info dict.
 
         For customers, the reservation is taken (if not already) and resolved to
@@ -161,9 +311,14 @@ class EVRPTWEnv:
         elif node_obj.is_charging_station:
             info = self._apply_recharge(ev, node, charge_portion, free=False)
         elif node_obj.is_depot:
-            if not (self.use_depot_charging and inst.depot_has_charging):
-                raise ValueError("Depot visits require use_depot_charging and depot_has_charging")
-            info = self._apply_recharge(ev, node, charge_portion, free=True)
+            if depot_finish:
+                info = self.apply_depot_finish(ev)
+                self.depot_finish_count += 1
+            else:
+                if not (self.use_depot_charging and inst.depot_has_charging):
+                    raise ValueError("Depot recharge requires use_depot_charging and depot_has_charging")
+                info = self._apply_recharge(ev, node, charge_portion, free=True)
+                self.depot_recharge_count += 1
         else:  # pragma: no cover - node types are exhaustive
             raise ValueError(f"Unknown node type for node {node}")
 
@@ -200,9 +355,7 @@ class EVRPTWEnv:
 
         arrival = ev.current_time + t
         ev.remaining_battery -= e
-        if ev.remaining_battery < -EPS:
-            self.total_battery_violation += -ev.remaining_battery
-            self.battery_violation_count += 1
+        self._record_battery_shortfall(ev, max(0.0, -ev.remaining_battery), "customer")
 
         ready = node.ready_time
         due = node.due_time
@@ -210,16 +363,13 @@ class EVRPTWEnv:
         service_start = max(arrival, ready)
         departure = service_start + node.service_time
         lateness = max(0.0, service_start - due)
-        if lateness > EPS:
-            if self.hard_time_windows:
-                self.infeasible = True
-                self.infeasibility_reasons.append(
-                    f"hard_tw_violation ev={ev.ev_id} node={j} t={ev.current_time:.2f} "
-                    f"travel={t:.2f} arrival={arrival:.2f} ready={ready:.2f} due={due:.2f} "
-                    f"service_start={service_start:.2f}"
-                )
-            self.time_window_violation_count += 1
-        self.total_lateness += lateness
+        if self.hard_time_windows and lateness > EPS:
+            raise RuntimeError(
+                f"Hard TW violation on customer {j}: service_start={service_start:.4f} > due={due:.4f}"
+            )
+        self._record_customer_lateness(
+            ev, j, lateness, travel=t, arrival=arrival, ready=ready, due=due, service_start=service_start,
+        )
 
         ev.remaining_capacity -= node.demand
         if ev.remaining_capacity < -EPS:
@@ -255,6 +405,10 @@ class EVRPTWEnv:
             "departure": departure,
             "waiting": waiting,
             "lateness": lateness,
+            "customer_lateness": lateness,
+            "depot_lateness": 0.0,
+            "service_start": service_start,
+            "service_end": departure,
         }
 
     def _charging_rate_at(self, node: int) -> float:
@@ -295,9 +449,8 @@ class EVRPTWEnv:
 
         arrival = ev.current_time + t
         ev.remaining_battery -= e
-        if ev.remaining_battery < -EPS:
-            self.total_battery_violation += -ev.remaining_battery
-            self.battery_violation_count += 1
+        cat = "depot" if inst.nodes[node].is_depot else "station"
+        self._record_battery_shortfall(ev, max(0.0, -ev.remaining_battery), cat)
         battery_after_arrival = ev.remaining_battery
 
         missing = max(0.0, vp.battery_capacity - battery_after_arrival)
@@ -308,9 +461,7 @@ class EVRPTWEnv:
         if inst.nodes[node].is_depot:
             waiting = max(0.0, inst.nodes[node].ready_time - arrival)
             lateness = max(0.0, arrival - inst.nodes[node].due_time)
-            if lateness > EPS:
-                self.time_window_violation_count += 1
-            self.total_lateness += lateness
+            self._record_depot_lateness(lateness)
             self.total_waiting_time += waiting
             ev.total_waiting_time += waiting
             charge_start = max(arrival, inst.nodes[node].ready_time)
@@ -356,7 +507,10 @@ class EVRPTWEnv:
             "charging_price": charge_price,
             "waiting": waiting,
             "lateness": lateness,
+            "customer_lateness": 0.0,
+            "depot_lateness": lateness if inst.nodes[node].is_depot else 0.0,
             "delta_distance": d,
+            "charge_portion": portion,
         }
 
     def _finalize_depot_arrival(
@@ -370,9 +524,7 @@ class EVRPTWEnv:
         node = self.instance.nodes[depot]
         waiting = max(0.0, node.ready_time - arrival)
         lateness = max(0.0, arrival - node.due_time)
-        if lateness > EPS:
-            self.time_window_violation_count += 1
-        self.total_lateness += lateness
+        self._record_depot_lateness(lateness)
         self.total_waiting_time += waiting
         ev.total_waiting_time += waiting
         service_start = max(arrival, node.ready_time)
@@ -382,31 +534,49 @@ class EVRPTWEnv:
         self.total_distance += distance
         return waiting, lateness, departure
 
-    def auto_close_route(self, ev: EVState) -> dict:
+    def apply_depot_finish(self, ev: EVState) -> dict:
+        """Policy-chosen route finish: return to depot if needed and mark EV finished."""
+        return self.auto_close_route(
+            ev, forced=False, return_info=True, action_type="depot_finish", count_step=False,
+        )
+
+    def auto_close_route(
+        self,
+        ev: EVState,
+        *,
+        forced: bool = True,
+        return_info: bool = True,
+        action_type: str = "auto_close_depot",
+        count_step: bool = True,
+    ) -> dict:
         """End the EV route with a mandatory return to the depot when required."""
         inst = self.instance
         depot = inst.depot_index
-        self.step_count += 1
+        if count_step:
+            self.step_count += 1
         previous_node = ev.current_node
+        battery_before = ev.remaining_battery
+        time_before = ev.current_time
+        if forced:
+            self.forced_auto_close_count += 1
 
         if ev.current_node == depot:
             ev.finished = True
             ev.active = False
-            return {
-                "type": "route_close",
-                "node": depot,
-                "arrival": ev.current_time,
-                "delta_distance": 0.0,
-                "delta_travel_time": 0.0,
-                "delta_energy_used": 0.0,
-            }
+            return self._close_info_dict(
+                ev, previous_node, depot, action_type,
+                delta_distance=0.0, delta_travel_time=0.0, delta_energy=0.0,
+                arrival=ev.current_time, waiting=0.0, lateness=0.0,
+                battery_before=battery_before, battery_after=ev.remaining_battery,
+                route_closed=True, forced=forced,
+            )
 
         d, t, e = self._move_energy_time(ev, depot)
         arrival = ev.current_time + t
         ev.remaining_battery -= e
-        if ev.remaining_battery < -EPS:
-            self.total_battery_violation += -ev.remaining_battery
-            self.battery_violation_count += 1
+        shortfall = max(0.0, -ev.remaining_battery)
+        self._record_battery_shortfall(ev, shortfall, "auto_close")
+        if shortfall > EPS:
             self.depot_return_violation += 1
             self.infeasible = True
             self.infeasibility_reasons.append(
@@ -424,31 +594,58 @@ class EVRPTWEnv:
         ev.finished = True
         ev.active = False
         self.current_event_time = max(self.current_event_time, ev.current_time)
+        return self._close_info_dict(
+            ev, previous_node, depot, action_type,
+            delta_distance=d, delta_travel_time=t, delta_energy=e,
+            arrival=arrival, waiting=waiting, lateness=lateness,
+            battery_before=battery_before, battery_after=ev.remaining_battery,
+            route_closed=True, forced=forced, departure=departure, time_before=time_before,
+        )
+
+    def _close_info_dict(
+        self, ev, from_node, to_node, action_type, *, delta_distance, delta_travel_time,
+        delta_energy, arrival, waiting, lateness, battery_before, battery_after,
+        route_closed, forced, departure=None, time_before=None,
+    ) -> dict:
+        inst = self.instance
+        depot = inst.depot_index
+        due = float(inst.nodes[depot].due_time)
         return {
-            "type": "route_close",
-            "node": depot,
+            "type": "route_close" if action_type == "auto_close_depot" else action_type,
+            "action_type": action_type,
+            "node": to_node,
+            "from_node": from_node,
+            "to_node": to_node,
             "arrival": arrival,
-            "departure": departure,
+            "departure": departure if departure is not None else arrival,
             "waiting": waiting,
             "lateness": lateness,
+            "customer_lateness": 0.0,
+            "depot_lateness": lateness,
+            "route_closed": route_closed,
+            "forced_auto_close": forced,
             "ev_id": ev.ev_id,
-            "previous_node": previous_node,
-            "delta_travel_time": t,
-            "delta_energy_used": e,
-            "delta_distance": d,
+            "previous_node": from_node,
+            "delta_travel_time": delta_travel_time,
+            "delta_energy_used": delta_energy,
+            "delta_distance": delta_distance,
+            "delta_duration": (ev.current_time - time_before) if time_before is not None else delta_travel_time,
+            "delta_waiting": waiting,
+            "delta_lateness": lateness,
+            "battery_before": battery_before,
+            "battery_after": battery_after,
+            "depot_due_time": due,
             "customer_served": False,
+            "charging_time": 0.0,
+            "charged_energy": 0.0,
         }
 
-    def try_auto_close_route(self, ev: EVState) -> bool:
-        """Close the route when service is impossible; return True if closed."""
-        if self.should_close_route(ev):
-            self.auto_close_route(ev)
-            return True
+    def try_auto_close_route(self, ev: EVState) -> dict | None:
+        """Close the route only when the full feasible mask is empty."""
         mask, _ = self.feasible_mask(ev)
-        if not mask.any():
-            self.auto_close_route(ev)
-            return True
-        return False
+        if mask.any():
+            return None
+        return self.auto_close_route(ev, forced=True, return_info=True)
 
     def finish_idle_ev(self, ev: EVState) -> None:
         """Deprecated alias: always close with mandatory depot return."""
@@ -537,6 +734,10 @@ class EVRPTWEnv:
             unserved_customers=unserved,
             duplicate_customer_visits=self.duplicate_customer_visits,
             total_lateness=self.total_lateness,
+            customer_lateness=self.customer_lateness,
+            depot_lateness=self.depot_lateness,
+            customer_tw_violations=self.customer_tw_violation_count,
+            depot_tw_violations=self.depot_tw_violation_count,
             total_battery_violation=self.total_battery_violation,
             total_capacity_violation=self.total_capacity_violation,
             depot_return_violation=self.depot_return_violation,

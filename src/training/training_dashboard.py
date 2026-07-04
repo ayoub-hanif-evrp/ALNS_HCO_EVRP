@@ -27,6 +27,7 @@ DASHBOARD_SECTIONS = [
     "5. Critic and actor health",
     "6. Per-instance learning",
     "7. EVRP operational metrics",
+    "8. Solution behavior diagnostics",
 ]
 
 
@@ -636,7 +637,13 @@ def _write_index_md(figures: list[FigureResult], out_dir: Path, ma_window: int) 
     return path
 
 
-def _write_index_html(figures: list[FigureResult], out_dir: Path, ma_window: int) -> Path:
+def _write_index_html(
+    figures: list[FigureResult],
+    out_dir: Path,
+    ma_window: int,
+    *,
+    extra_html: str = "",
+) -> Path:
     by_section: dict[str, list[FigureResult]] = {s: [] for s in DASHBOARD_SECTIONS}
     for f in figures:
         by_section.setdefault(f.section, []).append(f)
@@ -676,13 +683,24 @@ def _write_index_html(figures: list[FigureResult], out_dir: Path, ma_window: int
             parts.append(f"<h3>{f.name}{req_tag}</h3><p>{f.description}</p>")
             if f.generated and f.png_path:
                 rel = Path(f.png_path).name
-                parts.append(f"<img src='{rel}' alt='{f.name}' loading='lazy'>")
-                if f.svg_path:
-                    parts.append(f"<p><a href='{Path(f.svg_path).name}'>SVG</a></p>")
+                if rel.endswith(".html"):
+                    parts.append(f"<p><a href='{rel}'>Open table: {f.name}</a></p>")
+                else:
+                    parts.append(f"<img src='{rel}' alt='{f.name}' loading='lazy'>")
+                    if f.svg_path:
+                        parts.append(f"<p><a href='{Path(f.svg_path).name}'>SVG</a></p>")
             else:
                 parts.append(f"<p class='skip'>Skipped — {f.skip_reason or 'metrics missing'}</p>")
             parts.append("</div>")
         parts.append("</div></section>")
+    if extra_html:
+        parts.append(
+            "<section id='s8-table'><h2>8. Solution behavior diagnostics — Final-cycle table</h2>"
+            "<style>.diag-table{border-collapse:collapse;width:100%;font-size:12px}"
+            "th,td{border:1px solid #334155;padding:4px 8px}th{background:#1e293b;color:#e2e8f0}"
+            "td{color:#e2e8f0}</style>"
+            f"{extra_html}</section>"
+        )
     parts.append(
         "<section><h2>Index</h2><p>See <a href='figures_index.md'>figures_index.md</a>.</p></section>"
     )
@@ -690,6 +708,20 @@ def _write_index_html(figures: list[FigureResult], out_dir: Path, ma_window: int
     html_path = out_dir / "index.html"
     html_path.write_text("\n".join(parts), encoding="utf-8")
     return html_path
+
+
+def regenerate_dashboard_index(
+    report: DashboardReport,
+    out_dir: Path,
+    *,
+    extra_html: str = "",
+) -> DashboardReport:
+    """Rewrite index.html and figures_index.md after appending extra figures."""
+    report.index_md_path = str(_write_index_md(report.figures, out_dir, report.ma_window))
+    report.html_path = str(
+        _write_index_html(report.figures, out_dir, report.ma_window, extra_html=extra_html)
+    )
+    return report
 
 
 def generate_training_dashboard_from_config(

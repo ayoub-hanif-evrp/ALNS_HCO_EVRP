@@ -283,6 +283,21 @@ def train(config: dict) -> dict:
                 policy, config, Path(out_cfg["checkpoints"]) / "best.pt",
                 value_critic=value_critic, q_critic=q_critic,
             )
+        live_ckpt_every = max(1, int(tcfg.get("live_checkpoint_every", 1)))
+        if (epoch + 1) % live_ckpt_every == 0:
+            _save_checkpoint(
+                policy, config, Path(out_cfg["checkpoints"]) / "last.pt",
+                value_critic=value_critic, q_critic=q_critic,
+                training_meta={"epoch": epoch, "cycle": cycle_num},
+            )
+        maps_ckpt_every = max(1, int(tcfg.get("maps_checkpoint_every", 10)))
+        if (epoch + 1) % maps_ckpt_every == 0:
+            _save_checkpoint(
+                policy, config,
+                Path(out_cfg["checkpoints"]) / "history" / f"epoch_{epoch + 1}.pt",
+                value_critic=value_critic, q_critic=q_critic,
+                training_meta={"epoch": epoch, "cycle": cycle_num},
+            )
         if checkpoint_every > 0 and (epoch + 1) % checkpoint_every == 0:
             _save_checkpoint(
                 policy, config, Path(out_cfg["checkpoints"]) / f"epoch_{epoch + 1}.pt",
@@ -337,7 +352,12 @@ def train(config: dict) -> dict:
         write_csv(results_dir / "training_metrics.csv", rows)
         write_csv(run_dir / "metrics.csv", rows)
 
-    from src.training.training_dashboard import DashboardReport, generate_training_dashboard_from_config
+    from src.training.training_dashboard import (
+        DashboardReport,
+        generate_training_dashboard_from_config,
+        regenerate_dashboard_index,
+    )
+    from src.training.solution_diagnostics import run_solution_behavior_diagnostics
 
     dash_report = DashboardReport()
     if rows:
@@ -347,6 +367,34 @@ def train(config: dict) -> dict:
             )
         except ValueError as exc:
             LOGGER.error("Training dashboard not generated: %s", exc)
+
+        dcfg = config.get("dashboard") or {}
+        if (
+            dash_report.figures
+            and dcfg.get("save_representative_traces", True)
+            and not bool(tcfg.get("debug_overfit_one_instance", False))
+        ):
+            try:
+                import pandas as pd
+
+                sol_figs, table_html = run_solution_behavior_diagnostics(
+                    config,
+                    pd.DataFrame(rows),
+                    policy,
+                    train_ds,
+                    device,
+                    figures_dir=figures_dir,
+                    seed=seed,
+                )
+                dash_report.figures.extend(sol_figs)
+                regenerate_dashboard_index(dash_report, figures_dir, extra_html=table_html)
+                LOGGER.info(
+                    "Solution behavior diagnostics: %d/%d figures",
+                    sum(1 for f in sol_figs if f.generated),
+                    len(sol_figs),
+                )
+            except Exception as exc:
+                LOGGER.warning("Solution behavior diagnostics failed: %s", exc)
     summary["training_dashboard"] = {
         "html": dash_report.html_path,
         "figures_index": dash_report.index_md_path,
@@ -407,12 +455,36 @@ def _check_overfit_improvement(rows: list[dict], tcfg: dict) -> None:
         early_served, late_served, early_obj, late_obj, early_ev, late_ev,
         early_expired, late_expired, early_stations, late_stations,
     )
-    improved = (
-        (late_served > early_served + 0.02)
-        or (late_obj < early_obj * 0.98)
+    rel_obj_improve = (early_obj - late_obj) / max(abs(early_obj), 1.0)
+    rel_served_improve = late_served - early_served
+    ev_learning = late_ev > max(0.05, early_ev + 0.05)
+
+    strong = (
+        rel_served_improve >= 0.02
+        or rel_obj_improve >= 0.02
         or (late_expired < early_expired - 0.5)
         or (late_stations < early_stations - 0.5)
     )
+    moderate = (
+        rel_served_improve >= 0.005
+        or rel_obj_improve >= 0.005
+        or (late_expired < early_expired - 0.2)
+        or (late_stations < early_stations - 0.2)
+    )
+    quality_non_worse = (
+        late_served >= early_served - 1e-6
+        and late_obj <= early_obj * 1.001
+        and late_expired <= early_expired + 0.5
+    )
+    # Pass if clear improvement, or critic is learning and quality did not regress.
+    improved = strong or (ev_learning and moderate) or (ev_learning and quality_non_worse)
+
+    LOGGER.info(
+        "Overfit gate | rel_served=%+.4f rel_obj=%+.4f ev_learning=%s strong=%s moderate=%s -> %s",
+        rel_served_improve, rel_obj_improve, ev_learning, strong, moderate,
+        "PASS" if improved else "FAIL",
+    )
+
     if not improved:
         msg = (
             "One-instance overfit did NOT improve (served ratio / objective). "

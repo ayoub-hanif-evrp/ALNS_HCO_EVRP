@@ -62,7 +62,7 @@ class RLConfig:
     use_customer_priority_logit_bias: bool = True
     customer_logit_bonus: float = 1.0
     unnecessary_station_logit_penalty: float = 1.5
-    normalize_returns_for_critic: bool = True
+    normalize_returns_for_critic: bool = False
     terminal_penalty_schedule: "TerminalPenaltySchedule | None" = None
     q_critic_warmup_epochs: int = 0
     q_critic_enable_after_epoch: int | None = None
@@ -201,15 +201,17 @@ def compute_gae(
     gamma: float,
     lam: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """GAE over a full reward sequence; ``values[t]`` may be zero for non-critic steps."""
     T = rewards.numel()
     advantages = torch.zeros_like(rewards)
     last_gae = 0.0
     for t in range(T - 1, -1, -1):
         next_v = 0.0 if t == T - 1 else float(values[t + 1].detach())
-        delta = float(rewards[t]) + gamma * next_v - float(values[t].detach())
+        cur_v = float(values[t].detach()) if t < values.numel() else 0.0
+        delta = float(rewards[t]) + gamma * next_v - cur_v
         last_gae = delta + gamma * lam * last_gae
         advantages[t] = last_gae
-    returns = advantages + values.detach()
+    returns = advantages + values[:T].detach()
     return advantages, returns
 
 
@@ -265,39 +267,56 @@ def actor_critic_loss(
     global_epoch: int = 0,
     use_q_critic: bool | None = None,
 ) -> ActorCriticLossOut:
-    steps = trajectory.steps
+    pol_steps = trajectory.policy_transitions()
+    all_trans = trajectory.transitions
     z = torch.zeros((), device=device, requires_grad=True)
-    if not steps:
+    if not pol_steps:
         return ActorCriticLossOut(z, z, z, z, z, z, z, 0.0, 0.0)
 
     detach = rl_cfg.detach_critic_inputs
     contexts = _maybe_detach(trajectory.stack_contexts(), detach)
     log_probs = trajectory.stack_log_probs()
     entropies = trajectory.stack_entropies()
-    values = value_critic(contexts)
+    policy_values = value_critic(contexts)
 
-    step_rewards = [s.shaped_reward for s in steps]
+    rewards_list = trajectory.reward_sequence()
+    rewards = torch.tensor(rewards_list, dtype=torch.float32, device=device)
+
+    # Build value sequence aligned with rewards (non-policy steps use V=0).
+    value_seq: list[torch.Tensor] = []
+    pol_idx = 0
+    for tr in all_trans:
+        if tr.is_policy_action:
+            value_seq.append(policy_values[pol_idx])
+            pol_idx += 1
+        else:
+            value_seq.append(torch.zeros((), device=device))
     if trajectory.terminal_info is not None:
-        step_rewards.append(trajectory.terminal_info.reward)
-    rewards = torch.tensor(step_rewards, dtype=torch.float32, device=device)
-
-    if rewards.numel() > values.numel():
-        values = torch.cat([values, torch.zeros(1, device=device)])
+        value_seq.append(torch.zeros((), device=device))
+    values = torch.stack(value_seq) if value_seq else torch.zeros(0, device=device)
 
     if rl_cfg.use_gae:
-        advantages, returns = compute_gae(
-            rewards[: values.numel()], values, rl_cfg.gamma, rl_cfg.gae_lambda,
+        advantages_full, returns_full = compute_gae(
+            rewards, values, rl_cfg.gamma, rl_cfg.gae_lambda,
         )
     else:
-        returns = torch.zeros_like(rewards[: values.numel()])
+        returns_full = torch.zeros_like(rewards)
         running = 0.0
-        for t in range(returns.numel() - 1, -1, -1):
+        for t in range(returns_full.numel() - 1, -1, -1):
             running = float(rewards[t]) + rl_cfg.gamma * running
-            returns[t] = running
-        advantages = returns - values[: returns.numel()].detach()
-    actor_adv = advantages[: len(steps)]
-    critic_returns = returns[: len(steps)]
-    critic_values = values[: len(steps)]
+            returns_full[t] = running
+        advantages_full = returns_full - values[: returns_full.numel()].detach()
+
+    # Map policy-step advantages/returns from chronological indices.
+    pol_adv_list: list[torch.Tensor] = []
+    pol_ret_list: list[torch.Tensor] = []
+    for i, tr in enumerate(all_trans):
+        if tr.is_policy_action:
+            pol_adv_list.append(advantages_full[i])
+            pol_ret_list.append(returns_full[i])
+    actor_adv = torch.stack(pol_adv_list)
+    critic_returns = torch.stack(pol_ret_list)
+    critic_values = policy_values[: len(pol_steps)]
 
     if rl_cfg.normalize_returns_for_critic and critic_returns.numel() > 1:
         critic_returns = normalize_tensor(critic_returns)
@@ -313,8 +332,8 @@ def actor_critic_loss(
     if active_q and q_critic is not None and trajectory.node_embeddings is not None:
         H = _maybe_detach(trajectory.node_embeddings, detach)
         batch_size = max(1, int(rl_cfg.q_record_batch_size))
-        for start in range(0, len(steps), batch_size):
-            batch = steps[start : start + batch_size]
+        for start in range(0, len(pol_steps), batch_size):
+            batch = pol_steps[start : start + batch_size]
             for i, rec in enumerate(batch, start=start):
                 if rec.q_candidate_indices is None:
                     continue

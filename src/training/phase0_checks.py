@@ -20,6 +20,22 @@ from src.evaluation.baselines import NearestFeasiblePolicy, run_heuristic_episod
 
 EPS = 1e-4
 
+# Customer masked because service would strand the EV (legacy + continuation-aware reasons).
+ANTI_STRANDING_REASONS = frozenset({
+    "battery_would_strand",
+    "customer_infeasible_no_safe_continuation",
+    "customer_infeasible_no_reachable_station_or_depot",
+    "customer_infeasible_after_service_battery",
+    "customer_infeasible_after_service_time",
+})
+
+
+def _customer_feasible(env, instance, ev, j):
+    return customer_feasible(
+        instance, ev, j, env.served_mask, env.reserved_mask, env.use_horizon_check,
+        env.use_depot_charging, env.charging_portions,
+    )
+
 
 @dataclass
 class CheckResult:
@@ -170,12 +186,10 @@ def check_battery_reach(instance) -> CheckResult:
     j = instance.customer_indices[0]
     need = float(instance.energy_matrix[ev.current_node, j])
     ev.remaining_battery = max(0.0, need - max(need * 0.5, 1.0))  # not enough to reach
-    ok, reason = customer_feasible(
-        instance, ev, j, env.served_mask, env.reserved_mask, env.use_horizon_check
-    )
+    ok, reason = _customer_feasible(env, instance, ev, j)
     return _ok(
         "battery_cannot_reach",
-        (not ok) and reason in ("battery_cannot_reach", "battery_would_strand"),
+        (not ok) and reason in ("battery_cannot_reach", *ANTI_STRANDING_REASONS),
         f"battery={ev.remaining_battery:.3f} < energy_to_j={need:.3f}, reason={reason}",
     )
 
@@ -190,12 +204,10 @@ def check_anti_stranding(instance) -> CheckResult:
     if min_after <= EPS:
         return _ok("anti_stranding", True, "customer co-located with a recharge node; trivially safe")
     ev.remaining_battery = energy_to_j + 0.5 * min_after  # can reach j, cannot escape
-    ok, reason = customer_feasible(
-        instance, ev, j, env.served_mask, env.reserved_mask, env.use_horizon_check
-    )
+    ok, reason = _customer_feasible(env, instance, ev, j)
     return _ok(
         "anti_stranding_masked",
-        (not ok) and reason == "battery_would_strand",
+        (not ok) and reason in ANTI_STRANDING_REASONS,
         f"battery={ev.remaining_battery:.3f}, reach={energy_to_j:.3f}, escape={min_after:.3f}, reason={reason}",
     )
 
@@ -208,12 +220,10 @@ def check_capacity(instance) -> CheckResult:
              instance.customer_indices[0])
     demand = instance.nodes[j].demand
     ev.remaining_capacity = max(0.0, demand - max(demand * 0.5, 0.5))  # below demand
-    ok, reason = customer_feasible(
-        instance, ev, j, env.served_mask, env.reserved_mask, env.use_horizon_check
-    )
+    ok, reason = _customer_feasible(env, instance, ev, j)
     return _ok(
         "capacity_exceeded_masked",
-        (not ok) and reason in ("capacity_exceeded", "battery_cannot_reach", "battery_would_strand"),
+        (not ok) and reason in ("capacity_exceeded", "battery_cannot_reach", *ANTI_STRANDING_REASONS),
         f"remaining_cap={ev.remaining_capacity:.3f} < demand={demand:.3f}, reason={reason}",
     )
 
@@ -225,9 +235,7 @@ def check_time_window_late(instance) -> CheckResult:
     ev.remaining_battery = instance.vehicle.battery_capacity
     ev.remaining_capacity = instance.vehicle.load_capacity
     ev.current_time = instance.nodes[j].due_time + 100.0  # guaranteed late
-    ok, reason = customer_feasible(
-        instance, ev, j, env.served_mask, env.reserved_mask, env.use_horizon_check
-    )
+    ok, reason = _customer_feasible(env, instance, ev, j)
     return _ok(
         "late_arrival_infeasible",
         (not ok) and reason in ("time_window_late", "horizon_exceeded"),

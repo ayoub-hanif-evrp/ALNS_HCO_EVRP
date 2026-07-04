@@ -1,7 +1,8 @@
 # =============================================================================
 # DEFAULT TRAINING — Schneider EVRPTW, RC class, full (_21) instances
 #   python main_train.py
-#   python main_dashboard.py
+#   python main_dashboard.py      # scalar metrics (auto-refresh)
+#   python main_maps_dashboard.py # route maps & solution behavior (manual)
 #
 # Schneider RC _21: 16 instances total → 13 train + 3 held out (not 23 like R class).
 # Set dataset.expected_train_count: 20 only if you add more RC _21 instances.
@@ -58,6 +59,8 @@ training:
   debug_overfit_updates: 500
   fail_on_overfit_regression: true
   generate_static_dashboard: true
+  live_checkpoint_every: 1
+  maps_checkpoint_every: 10
 
 rl:
   use_step_rewards: true
@@ -68,7 +71,7 @@ rl:
   gamma: 1.0
   gae_lambda: 0.95
   normalize_advantages: true
-  normalize_returns_for_critic: true
+  normalize_returns_for_critic: false
   critic_coef: 0.5
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent
@@ -159,3 +162,17 @@ outputs:
   logs: outputs/logs
   results: outputs/results
   routes: outputs/routes
+  traces: outputs/traces
+
+dashboard:
+  save_representative_traces: true
+  num_random_solution_maps: 1
+  include_best_final_cycle: true
+  include_worst_final_cycle: true
+  include_best_overall: true
+  live_random_diagnostics: false
+
+maps_dashboard:
+  port: 8081
+  cache_snapshots: true
+  use_cached_if_present: true

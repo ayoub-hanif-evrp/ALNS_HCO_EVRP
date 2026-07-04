@@ -62,7 +62,7 @@ rl:
   gamma: 1.0
   gae_lambda: 0.95
   normalize_advantages: true
-  normalize_returns_for_critic: true
+  normalize_returns_for_critic: false
   critic_coef: 0.5
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent

@@ -47,15 +47,65 @@ def depot_return_feasible(
 
 
 def _min_energy_to_recharge(instance, j: int) -> float:
-    """Minimum energy needed to go from node j to any rechargeable node.
-
-    Rechargeable nodes are the depot plus all charging stations. The depot is
-    included, so a customer that can be reached and then left toward the depot
-    is not considered stranded.
-    """
+    """Minimum energy needed to go from node j to any rechargeable node."""
     energy = instance.energy_matrix
     rec = instance.rechargeable_indices
     return float(min(energy[j, r] for r in rec))
+
+
+def _safe_continuation_after_customer(
+    instance,
+    j: int,
+    service_end: float,
+    battery_after: float,
+    capacity_after: float,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> tuple[bool, str]:
+    """Check depot return or station+charge continuation after serving customer j."""
+    from .charge_masks import feasible_charge_portions, safe_depot_return_from
+
+    if battery_after < -EPS:
+        return False, "customer_infeasible_after_service_battery"
+    if capacity_after < -EPS:
+        return False, "capacity_exceeded"
+
+    ok_dep, reason = safe_depot_return_from(
+        instance, j, service_end, battery_after, use_horizon_check=use_horizon_check
+    )
+    if ok_dep:
+        return True, "ok"
+
+    travel = instance.travel_time_matrix
+    energy = instance.energy_matrix
+    sim = EVState(
+        ev_id=0,
+        current_node=j,
+        current_time=service_end,
+        remaining_battery=battery_after,
+        remaining_capacity=capacity_after,
+    )
+    for s in instance.charging_station_indices:
+        if battery_after + EPS < energy[j, s]:
+            continue
+        if use_horizon_check and service_end + travel[j, s] > instance.planning_horizon + EPS:
+            continue
+        portion_mask, _ = feasible_charge_portions(
+            instance, sim, s, served_mask, reserved_mask,
+            portions=charging_portions,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+        )
+        if portion_mask.any():
+            return True, "ok"
+
+    if reason.startswith("charge_portion_infeasible"):
+        return False, "customer_infeasible_no_reachable_station_or_depot"
+    return False, "customer_infeasible_no_safe_continuation"
 
 
 def customer_feasible(
@@ -65,6 +115,8 @@ def customer_feasible(
     served_mask: np.ndarray,
     reserved_mask: np.ndarray,
     use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
 ) -> tuple[bool, str]:
     """Return (feasible, reason) for visiting customer j from the EV's position."""
     i = ev.current_node
@@ -84,11 +136,6 @@ def customer_feasible(
     if ev.remaining_battery + EPS < energy_to_j:
         return False, "battery_cannot_reach"
 
-    # Must still be able to reach a rechargeable node after serving j.
-    min_after = _min_energy_to_recharge(instance, j)
-    if ev.remaining_battery + EPS < energy_to_j + min_after:
-        return False, "battery_would_strand"
-
     arrival = ev.current_time + travel[i, j]
     ready = float(instance.nodes[j].ready_time)
     due = float(instance.nodes[j].due_time)
@@ -96,11 +143,25 @@ def customer_feasible(
     if service_start > due + EPS:
         return False, "time_window_late"
 
-    if use_horizon_check:
-        departure = service_start + instance.nodes[j].service_time
-        ok, reason = depot_return_feasible(instance, j, departure, use_horizon_check=use_horizon_check)
-        if not ok:
-            return False, reason
+    service_end = service_start + instance.nodes[j].service_time
+    battery_after = ev.remaining_battery - energy_to_j
+    capacity_after = ev.remaining_capacity - demand
+
+    ok_cont, reason = _safe_continuation_after_customer(
+        instance, j, service_end, battery_after, capacity_after,
+        served_mask, reserved_mask,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
+    if not ok_cont:
+        if reason == "customer_infeasible_no_reachable_station_or_depot":
+            return False, "customer_infeasible_no_reachable_station_or_depot"
+        if reason == "customer_infeasible_no_safe_continuation":
+            return False, "customer_infeasible_no_safe_continuation"
+        if "battery" in reason:
+            return False, "customer_infeasible_after_service_battery"
+        return False, "customer_infeasible_after_service_time"
 
     return True, "ok"
 
@@ -109,33 +170,70 @@ def station_feasible(
     instance,
     ev: EVState,
     s: int,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
     use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
 ) -> tuple[bool, str]:
     """Return (feasible, reason) for visiting charging station s."""
+    from .charge_masks import feasible_charge_portions
+
     i = ev.current_node
     if s == i:
         return False, "station_self_loop"
     energy_to_s = instance.energy_matrix[i, s]
     if ev.remaining_battery + EPS < energy_to_s:
-        return False, "battery_cannot_reach"
+        return False, "station_unreachable_battery"
     if use_horizon_check:
         arrival = ev.current_time + instance.travel_time_matrix[i, s]
         if arrival > instance.planning_horizon + EPS:
             return False, "horizon_exceeded"
-    return True, "ok"
+    portion_mask, _ = feasible_charge_portions(
+        instance, ev, s, served_mask, reserved_mask,
+        portions=charging_portions,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+    )
+    if not portion_mask.any():
+        return False, "station_no_feasible_charge_portion"
+    return True, "station_feasible"
+
+
+def depot_finish_feasible(
+    instance,
+    ev: EVState,
+    use_horizon_check: bool = True,
+) -> tuple[bool, str]:
+    """Return (feasible, reason) for intentionally finishing at the depot."""
+    depot = instance.depot_index
+    if ev.current_node == depot:
+        if len(ev.route_nodes) <= 1:
+            return False, "depot_finish_at_start"
+        return True, "depot_finish_at_depot"
+    energy_to_depot = instance.energy_matrix[ev.current_node, depot]
+    if ev.remaining_battery + EPS < energy_to_depot:
+        return False, "battery_cannot_reach_depot"
+    ok, reason = depot_return_feasible(
+        instance, ev.current_node, ev.current_time, use_horizon_check=use_horizon_check
+    )
+    if not ok:
+        return False, reason
+    return True, "depot_finish_feasible"
 
 
 def depot_recharge_feasible(
     instance,
     ev: EVState,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
     use_depot_charging: bool = True,
     use_horizon_check: bool = True,
+    charging_portions: list[float] | None = None,
 ) -> tuple[bool, str]:
-    """Return (feasible, reason) for visiting the depot to recharge (free).
+    """Return (feasible, reason) for visiting the depot to recharge (free)."""
+    from .charge_masks import feasible_charge_portions
 
-    The depot is never a learned route-termination action; it behaves like a
-    charging station with zero price when ``depot_has_charging`` is enabled.
-    """
     if not use_depot_charging or not instance.depot_has_charging:
         return False, "depot_charging_disabled"
     depot = instance.depot_index
@@ -150,7 +248,15 @@ def depot_recharge_feasible(
         )
         if not ok:
             return False, reason
-    return True, "ok"
+    portion_mask, _ = feasible_charge_portions(
+        instance, ev, depot, served_mask, reserved_mask,
+        portions=charging_portions,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+    )
+    if not portion_mask.any():
+        return False, "depot_no_feasible_charge_portion"
+    return True, "depot_recharge_feasible"
 
 
 def must_close_route(
@@ -161,25 +267,23 @@ def must_close_route(
     *,
     use_depot_charging: bool = True,
     use_horizon_check: bool = True,
+    charging_portions: list[float] | None = None,
+    num_served_customers: int | None = None,
 ) -> bool:
-    """True when the EV cannot serve any customer and recharging cannot help."""
-    for j in instance.customer_indices:
-        ok, reason = customer_feasible(
-            instance, ev, j, served_mask, reserved_mask, use_horizon_check
-        )
-        if ok:
-            return False
-        if reason in ("battery_cannot_reach", "battery_would_strand"):
-            for s in instance.charging_station_indices:
-                ok_s, _ = station_feasible(instance, ev, s, use_horizon_check)
-                if ok_s:
-                    return False
-            ok_d, _ = depot_recharge_feasible(
-                instance, ev, use_depot_charging, use_horizon_check
-            )
-            if ok_d:
-                return False
-    return True
+    """True when no customer, station, or depot action is feasible for this EV."""
+    if num_served_customers is None:
+        num_served_customers = int(np.sum(served_mask[instance.customer_indices]))
+
+    class _MaskState:
+        def __init__(self):
+            self.served_mask = served_mask
+            self.reserved_mask = reserved_mask
+            self.num_served_customers = num_served_customers
+
+    mask, _ = compute_feasible_mask(
+        instance, _MaskState(), ev, use_horizon_check, use_depot_charging, charging_portions,
+    )
+    return not mask.any()
 
 
 def compute_feasible_mask(
@@ -188,6 +292,7 @@ def compute_feasible_mask(
     ev: EVState,
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
 ) -> tuple[np.ndarray, dict[int, str]]:
     """Compute the boolean feasibility mask over all nodes for the acting EV.
 
@@ -213,7 +318,8 @@ def compute_feasible_mask(
 
     # Customers first (also tells us whether the depot fallback is needed).
     for j in instance.customer_indices:
-        ok, reason = customer_feasible(instance, ev, j, served, reserved, use_horizon_check)
+        ok, reason = customer_feasible(instance, ev, j, served, reserved, use_horizon_check,
+                                       use_depot_charging, charging_portions)
         feasible[j] = ok
         if not ok:
             reasons[j] = reason
@@ -225,25 +331,57 @@ def compute_feasible_mask(
             feasible[s] = False
             reasons[s] = "all_customers_done"
             continue
-        ok, reason = station_feasible(instance, ev, s, use_horizon_check)
+        ok, reason = station_feasible(
+            instance, ev, s, served, reserved, use_horizon_check, use_depot_charging, charging_portions
+        )
         feasible[s] = ok
         if not ok:
             reasons[s] = reason
 
-    # Depot: free recharge only (route closure is handled by the environment).
+    # Depot: recharge or intentional finish (route closure is also environment-driven).
     depot = instance.depot_index
     if all_done:
-        feasible[depot] = False
-        reasons[depot] = "all_customers_done"
+        ok_finish, reason_finish = depot_finish_feasible(instance, ev, use_horizon_check)
+        feasible[depot] = ok_finish
+        if not ok_finish:
+            reasons[depot] = reason_finish
     else:
-        ok, reason = depot_recharge_feasible(
-            instance, ev, use_depot_charging, use_horizon_check
+        ok_recharge, reason_recharge = depot_recharge_feasible(
+            instance, ev, served, reserved, use_depot_charging, use_horizon_check, charging_portions
         )
-        feasible[depot] = ok
-        if not ok:
-            reasons[depot] = reason
+        ok_finish, reason_finish = depot_finish_feasible(instance, ev, use_horizon_check)
+        feasible[depot] = ok_recharge or ok_finish
+        if not feasible[depot]:
+            reasons[depot] = reason_recharge if not ok_recharge else reason_finish
+        elif ok_recharge:
+            reasons[depot] = "depot_recharge_feasible"
+        else:
+            reasons[depot] = "depot_finish_feasible"
 
     return feasible, reasons
+
+
+def depot_mode_feasible(
+    instance,
+    env_state,
+    ev: EVState,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> tuple[bool, bool]:
+    """Return (recharge_feasible, finish_feasible) for depot action sub-choice."""
+    served = env_state.served_mask
+    reserved = env_state.reserved_mask
+    all_done = env_state.num_served_customers >= instance.num_customers
+    if all_done:
+        ok_f, _ = depot_finish_feasible(instance, ev, use_horizon_check)
+        return False, ok_f
+    ok_r, _ = depot_recharge_feasible(
+        instance, ev, served, reserved, use_depot_charging, use_horizon_check, charging_portions
+    )
+    ok_f, _ = depot_finish_feasible(instance, ev, use_horizon_check)
+    return ok_r, ok_f
 
 
 def has_any_feasible(feasible_mask: np.ndarray) -> bool:

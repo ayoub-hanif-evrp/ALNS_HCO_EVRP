@@ -19,11 +19,16 @@ from .node_encoder import NodeEncoder
 @dataclass
 class ActionOutput:
     node: int
-    log_prob: torch.Tensor  # node + charging log-prob (sum), differentiable
+    log_prob: torch.Tensor  # node + charging + depot-mode log-prob (sum), differentiable
     entropy: torch.Tensor
     charge_portion: float | None = None
+    depot_finish: bool = False
     node_probs: torch.Tensor | None = None
     decoder_context: torch.Tensor | None = None
+    depot_mode_log_prob: torch.Tensor | None = None
+    depot_mode_entropy: torch.Tensor | None = None
+    depot_mode_finish_prob: float | None = None
+    depot_mode_recharge_prob: float | None = None
 
 
 class TransformerEVRPTWPolicy(nn.Module):
@@ -165,10 +170,49 @@ class TransformerEVRPTWPolicy(nn.Module):
 
         total_log_prob = node_log_prob
         charge_portion = None
+        depot_finish = False
+        depot_mode_log_prob = None
+        depot_mode_entropy = None
+        depot_mode_finish_prob = None
+        depot_mode_recharge_prob = None
 
-        if env.instance.nodes[node].is_charging_station or (
-            env.instance.nodes[node].is_depot and env.use_depot_charging and env.instance.depot_has_charging
-        ):
+        if env.instance.nodes[node].is_depot:
+            from src.env.masks import depot_mode_feasible
+
+            ok_recharge, ok_finish = depot_mode_feasible(
+                env.instance, env, ev,
+                use_horizon_check=env.use_horizon_check,
+                use_depot_charging=env.use_depot_charging,
+                charging_portions=env.charging_portions,
+            )
+            if ok_finish and not ok_recharge:
+                depot_finish = True
+            elif ok_recharge and not ok_finish:
+                depot_finish = False
+            elif ok_finish and ok_recharge:
+                mode_logits = self.pointer.depot_mode_logits(decoder_context)
+                mode_lp = torch.log_softmax(mode_logits, dim=-1)
+                mode_probs = mode_lp.exp()
+                if mode == "greedy":
+                    depot_finish = bool(torch.argmax(mode_logits).item() == 1)
+                else:
+                    depot_finish = bool(torch.multinomial(mode_probs, 1).item() == 1)
+                depot_mode_lp = mode_lp[1 if depot_finish else 0]
+                total_log_prob = total_log_prob + depot_mode_lp
+                mode_ent = -(mode_probs * mode_lp).sum()
+                entropy = entropy + mode_ent
+                depot_mode_log_prob = depot_mode_lp
+                depot_mode_entropy = mode_ent
+                depot_mode_finish_prob = float(mode_probs[1].detach())
+                depot_mode_recharge_prob = float(mode_probs[0].detach())
+
+            if not depot_finish:
+                charge_portion, charge_log_prob, charge_entropy = self._select_charge(
+                    env, ev, node, node_embeddings, decoder_context, mode
+                )
+                total_log_prob = total_log_prob + charge_log_prob
+                entropy = entropy + charge_entropy
+        elif env.instance.nodes[node].is_charging_station:
             charge_portion, charge_log_prob, charge_entropy = self._select_charge(
                 env, ev, node, node_embeddings, decoder_context, mode
             )
@@ -180,11 +224,18 @@ class TransformerEVRPTWPolicy(nn.Module):
             log_prob=total_log_prob,
             entropy=entropy,
             charge_portion=charge_portion,
+            depot_finish=depot_finish,
             node_probs=probs,
             decoder_context=decoder_context,
+            depot_mode_log_prob=depot_mode_log_prob,
+            depot_mode_entropy=depot_mode_entropy,
+            depot_mode_finish_prob=depot_mode_finish_prob,
+            depot_mode_recharge_prob=depot_mode_recharge_prob,
         )
 
     def _select_charge(self, env, ev, station, node_embeddings, decoder_context, mode):
+        from src.env.charge_masks import feasible_charge_portions
+
         vp = env.instance.vehicle
         horizon = env.instance.planning_horizon if env.instance.planning_horizon > 0 else 1.0
         battery_norm = ev.remaining_battery / vp.battery_capacity if vp.battery_capacity else 0.0
@@ -192,11 +243,24 @@ class TransformerEVRPTWPolicy(nn.Module):
         logits = self.pointer.charging_logits(
             decoder_context, node_embeddings[station], float(battery_norm), float(time_norm)
         )
+        portion_mask, _ = feasible_charge_portions(
+            env.instance, ev, station, env.served_mask, env.reserved_mask,
+            portions=self.charging_portions,
+            use_horizon_check=env.use_horizon_check,
+            use_depot_charging=env.use_depot_charging,
+        )
+        mask_t = torch.tensor(portion_mask, device=logits.device)
+        logits = logits.masked_fill(~mask_t, NEG_INF)
         log_probs = torch.log_softmax(logits, dim=-1)
         probs = log_probs.exp()
-        if mode == "greedy":
+        if not mask_t.any():
+            idx = int(torch.argmax(logits).item())
+        elif mode == "greedy":
             idx = int(torch.argmax(logits).item())
         else:
-            idx = int(torch.multinomial(probs, num_samples=1).item())
-        entropy = -(probs * log_probs).sum()
+            p = probs.clone()
+            p[~mask_t] = 0.0
+            p = p / p.sum().clamp_min(1e-12)
+            idx = int(torch.multinomial(p, num_samples=1).item())
+        entropy = -(probs[mask_t] * log_probs[mask_t]).sum() if mask_t.any() else torch.zeros((), device=logits.device)
         return self.charging_portions[idx], log_probs[idx], entropy

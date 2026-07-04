@@ -177,6 +177,9 @@ def create_dashboard(
     log_path = Path(log_path)
     config_path = Path(config_path) if config_path is not None else None
     outputs_root = Path(outputs_root) if outputs_root is not None else Path("outputs")
+    maps_dashboard_port = int(
+        (load_run_config(outputs_root, config_path).get("maps_dashboard") or {}).get("port", 8081)
+    )
 
     @ui.page("/")
     def page() -> None:  # noqa: ANN202
@@ -293,7 +296,6 @@ def create_dashboard(
                     s for s in chart_sections
                     if _section_has_data(df, s.get("charts", []))
                 ]
-
                 with ui.element("div").classes("section-nav w-full"):
                     ui.label("Sections").classes("text-[10px] uppercase tracking-wide text-slate-400 mb-2")
                     with ui.row().classes("flex-wrap gap-2 w-full"):
@@ -304,6 +306,17 @@ def create_dashboard(
                     accent = _ACCENTS[(n - 1) % len(_ACCENTS)]
                     _render_section_card(section, df, plan, accent=accent)
 
+                with ui.card().classes(_SECTION + " p-4"):
+                    ui.label("Solution behavior maps").classes("text-sm font-semibold text-slate-800")
+                    ui.label(
+                        "Explore route maps, timelines, battery trajectories, and action diagnostics "
+                        "per instance and epoch — manual selection, no auto-refresh."
+                    ).classes("text-xs text-slate-500 mb-2")
+                    ui.link(
+                        "Open maps dashboard →",
+                        f"http://127.0.0.1:{maps_dashboard_port}",
+                    ).props("target=_blank").classes("text-sm text-blue-600 font-medium")
+
         with ui.header().classes("bg-white border-b border-slate-200 text-slate-800"):
             with ui.row().classes(
                 "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
@@ -312,6 +325,9 @@ def create_dashboard(
                     ui.label("MARL EVRP · Live training diagnostics").classes("text-lg font-bold")
                     ui.label(f"{log_path} · Schneider RC _21 training only").classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
+                    ui.link("Maps dashboard", f"http://127.0.0.1:{maps_dashboard_port}").props(
+                        "target=_blank outline"
+                    ).classes("text-sm")
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")
             ui.label(
@@ -320,6 +336,6 @@ def create_dashboard(
 
         poll = ui.timer(3.0, refresh)
         poll.active = True
-        auto.on("update:model-value", lambda e: setattr(poll, "active", bool(e.value)))
+        auto.on("update:model-value", lambda _: setattr(poll, "active", bool(auto.value)))
         context.client.on_disconnect(lambda: setattr(poll, "active", False))
         ui.timer(0.1, refresh, once=True)
