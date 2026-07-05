@@ -33,6 +33,8 @@ def record_transition_reward(
     shaped_r = 0.0
 
     if reward_calculator is not None:
+        if ctx is not None and hasattr(env, "progress_tracker"):
+            ctx.steps_since_last_customer_service = env.progress_tracker.steps_since_last_customer_service
         base_kwargs = dict(
             ev_id=int(info.get("ev_id", -1)),
             selected_node=int(info.get("node", -1)),

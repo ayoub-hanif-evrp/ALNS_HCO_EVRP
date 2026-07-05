@@ -44,6 +44,7 @@ class StepContext:
     customer_logit_bonus_applied: float = 0.0
     station_logit_penalty_applied: float = 0.0
     depot_logit_penalty_applied: float = 0.0
+    steps_since_last_customer_service: int = 0
 
 
 @dataclass
@@ -73,6 +74,7 @@ class TrainingRewardStats:
     served_slack_sum: float = 0.0
     served_slack_count: int = 0
     mask_reason_totals: dict[str, float] = field(default_factory=dict)
+    no_progress_penalty_total: float = 0.0
 
     def action_fractions(self, num_decisions: int) -> dict[str, float]:
         d = max(num_decisions, 1)
@@ -107,6 +109,9 @@ class TrainingRewardConfig:
     urgent_rank_penalty_coef: float = 0.2
     urgent_rank_k: int = 10
     terminal_schedule: TerminalPenaltySchedule = field(default_factory=TerminalPenaltySchedule)
+    use_no_progress_penalty: bool = True
+    no_progress_threshold: int = 10
+    no_progress_penalty_coef: float = 0.05
     use_customer_priority_logit_bias: bool = True
     customer_logit_bonus: float = 1.0
     unnecessary_station_logit_penalty: float = 1.5
@@ -160,6 +165,9 @@ class TrainingRewardConfig:
             depot_penalty_until_served_ratio=float(
                 getattr(rl_cfg, "depot_penalty_until_served_ratio", 0.95)
             ),
+            use_no_progress_penalty=bool(getattr(rl_cfg, "use_no_progress_penalty", True)),
+            no_progress_threshold=int(getattr(rl_cfg, "no_progress_threshold", 10)),
+            no_progress_penalty_coef=float(getattr(rl_cfg, "no_progress_penalty_coef", 0.05)),
         )
 
 
@@ -290,12 +298,21 @@ class TrainingRewardCalculator:
             step_pen = self.cfg.step_penalty / scale
             self.stats.step_penalty_total += step_pen
 
+        no_prog_pen = 0.0
+        if (
+            self.cfg.use_no_progress_penalty
+            and ctx.steps_since_last_customer_service > self.cfg.no_progress_threshold
+        ):
+            excess = ctx.steps_since_last_customer_service - self.cfg.no_progress_threshold
+            no_prog_pen = self.cfg.no_progress_penalty_coef * excess / scale
+            self.stats.no_progress_penalty_total += no_prog_pen
+
         for k, v in ctx.mask_counts.items():
             self.stats.mask_reason_totals[k] = self.stats.mask_reason_totals.get(k, 0.0) + float(v)
 
         shaped = (
             step_info.reward + bonus + urgency - expired_pen - time_waste_pen
-            - station_pen - early_pen - rank_pen - step_pen
+            - station_pen - early_pen - rank_pen - step_pen - no_prog_pen
         )
         step_info.reward = shaped
         extra = dict(step_info.extra or {})
@@ -310,6 +327,8 @@ class TrainingRewardCalculator:
                 "unnecessary_station_penalty": station_pen,
                 "early_depot_penalty": early_pen,
                 "urgent_rank_penalty": rank_pen,
+                "no_progress_penalty": no_prog_pen,
+                "steps_since_last_customer_service": float(ctx.steps_since_last_customer_service),
                 "raw_step_reward": step_info.raw_reward,
                 "served_customer_slack": ctx.served_slack,
                 "mean_feasible_customer_slack": ctx.mean_feasible_slack,

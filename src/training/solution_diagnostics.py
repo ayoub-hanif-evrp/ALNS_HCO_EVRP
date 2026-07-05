@@ -146,13 +146,16 @@ def collect_representative_traces(
 
 def _title_from_trace(trace: dict) -> str:
     m = trace.get("meta") or {}
+    replay_note = ""
+    if m.get("trace_source") == "final_policy_replay":
+        replay_note = " | REPLAY (not exact training rollout)"
     return (
         f"{m.get('instance_name', '?')} | ep {m.get('epoch', '?')} | cyc {m.get('cycle', '?')} | "
         f"J={float(m.get('objective', 0)):.0f} served={float(m.get('served_ratio', 0)):.1%} "
         f"unserved={m.get('unserved_customers', 0)} feas={m.get('feasible')} EVs={m.get('used_evs', 0)} "
         f"dist={float(m.get('total_distance', 0)):.0f} charge={float(m.get('total_charging_time', 0)):.1f} "
         f"cLat={float(m.get('customer_lateness', 0)):.2f} dLat={float(m.get('depot_lateness', 0)):.2f} "
-        f"bViol={float(m.get('battery_violation', 0)):.2f}"
+        f"bViol={float(m.get('battery_violation', 0)):.2f}{replay_note}"
     )
 
 
@@ -613,7 +616,10 @@ def _plot_actions(trace: dict, out_dir: Path, filename: str, *, save_svg: bool) 
     if not decs:
         return None
 
-    ordered = ["customer", "station", "depot_recharge", "depot_finish", "auto_close"]
+    ordered = [
+        "customer", "station", "depot_recharge", "depot_finish",
+        "auto_close", "forced_close", "forced_infeasible_close", "noop",
+    ]
     y_map = {k: i for i, k in enumerate(ordered)}
     action_styles = {
         "customer": ("Customer visit", "#059669"),
@@ -623,6 +629,10 @@ def _plot_actions(trace: dict, out_dir: Path, filename: str, *, save_svg: bool) 
         "depot_finish": ("Depot finish route", "#0f172a"),
         "auto_close": ("Auto-close route", "#7c3aed"),
         "auto_close_forced": ("Auto-close route", "#7c3aed"),
+        "forced_close": ("Forced close", "#991b1b"),
+        "forced_infeasible_close": ("Forced infeasible close", "#450a0a"),
+        "terminal_closure": ("Terminal closure", "#581c87"),
+        "noop": ("No-progress action", "#94a3b8"),
     }
     xs = [d["decision_index"] for d in decs]
     types = [d.get("action_type", "customer") for d in decs]
@@ -753,16 +763,29 @@ def build_final_cycle_table_html(df: pd.DataFrame) -> str:
     if df.empty or "cycle" not in df.columns:
         return "<p>No final-cycle data.</p>"
     fc = df[df["cycle"] == df["cycle"].max()].copy()
+    if "feasibility_rate" in fc.columns:
+        fc["_sort_infeas"] = fc["feasibility_rate"].apply(lambda x: 0 if x and x > 0.5 else 1)
+    elif "feasible" in fc.columns:
+        fc["_sort_infeas"] = fc["feasible"].apply(lambda x: 0 if x else 1)
+    else:
+        fc["_sort_infeas"] = 0
+    fc["_sort_maxsteps"] = fc.get("max_steps_reached", 0)
+    fc["_sort_served"] = fc.get("served_rate", fc.get("served_ratio", 0))
     obj = "final_objective" if "final_objective" in fc.columns else "cost"
-    fc = fc.sort_values(obj, ascending=False)
+    fc = fc.sort_values(
+        ["_sort_infeas", "_sort_maxsteps", "_sort_served", obj],
+        ascending=[True, False, True, False],
+    )
     cols = [
         ("instance_name", "instance"), (obj, "objective"), ("served_rate", "served"),
         ("unserved_customers", "unserved"), ("feasibility_rate", "feasible"),
-        ("avg_used_evs", "EVs"), ("avg_distance", "distance"),
-        ("charging_station_visits", "stations"), ("unnecessary_station_actions", "bad st."),
-        ("early_depot_returns", "early depot"), ("customer_lateness", "cust TW"),
-        ("depot_lateness", "depot TW"), ("avg_battery_violation", "battery"),
-        ("relative_objective_mismatch", "mm"),
+        ("max_steps_reached", "max_steps"), ("termination_reason", "term_reason"),
+        ("customer_actions", "cust_act"), ("station_actions", "st_act"),
+        ("depot_recharge_count", "dep_rech"), ("depot_finish_count", "dep_fin"),
+        ("forced_auto_close_count", "auto_close"), ("noop_action_count", "noop"),
+        ("loop_detected", "loop"), ("globally_serviceable_customers_at_end", "glob_svc"),
+        ("avg_battery_violation", "battery"), ("depot_lateness", "depot TW"),
+        ("customer_lateness", "cust TW"), ("relative_objective_mismatch", "mm"),
     ]
     present = [(k, l) for k, l in cols if k in fc.columns]
     header = "".join(f"<th>{l}</th>" for _, l in present)
@@ -774,7 +797,7 @@ def build_final_cycle_table_html(df: pd.DataFrame) -> str:
             cells.append(f"<td>{v:.4f}</td>" if isinstance(v, float) and abs(v) < 1000 else f"<td>{v}</td>")
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (
-        "<h3>Final-cycle instances (worst objective first)</h3>"
+        "<h3>Final-cycle instances (infeasible / max-steps / worst served first)</h3>"
         f"<table class='diag-table'><thead><tr>{header}</tr></thead><tbody>{''.join(body)}</tbody></table>"
     )
 

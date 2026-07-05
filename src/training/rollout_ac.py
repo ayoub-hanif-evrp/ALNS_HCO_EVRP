@@ -9,6 +9,7 @@ import torch
 
 from src.env.cost import CostWeights, training_reward
 from src.env.evrptw_env import EVRPTWEnv
+from src.env.policy_action import apply_policy_action
 from src.env.reward import StepRewardCalculator, snapshot_env
 from src.env.tw_diagnostics import (
     aggregate_mask_reasons,
@@ -143,6 +144,11 @@ def run_episode_trajectory(
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
+        before_term = snapshot_env(env)
+        closure_info = env.try_controlled_closure()
+        if closure_info is not None:
+            _append_env_transition(before_term, closure_info)
+            continue
         before_close = snapshot_env(env)
         close_info = env.try_auto_close_route(ev)
         if close_info is not None:
@@ -203,9 +209,7 @@ def run_episode_trajectory(
                 })
                 raise
 
-        info = env.apply_action(
-            ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
-        )
+        info = apply_policy_action(env, ev, action)
         expired_after = count_time_expired_customers(env)
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
@@ -310,6 +314,7 @@ def run_episode_trajectory(
         trajectory.terminal_info = terminal_info
         step_infos.append(terminal_info)
         training_stats = train_calc.finalize(j)
+        training_stats.update(env.get_episode_diagnostics())
         training_stats["depot_recharge_actions"] = float(depot_recharge_actions)
         training_stats["depot_finish_actions"] = float(depot_finish_actions)
         if num_decisions > 0 and depot_mode_entropy_sum > 0:

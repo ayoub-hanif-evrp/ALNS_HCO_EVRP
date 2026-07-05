@@ -62,6 +62,9 @@ class RLConfig:
     use_customer_priority_logit_bias: bool = True
     customer_logit_bonus: float = 1.0
     unnecessary_station_logit_penalty: float = 1.5
+    use_no_progress_penalty: bool = True
+    no_progress_threshold: int = 10
+    no_progress_penalty_coef: float = 0.05
     normalize_returns_for_critic: bool = False
     terminal_penalty_schedule: "TerminalPenaltySchedule | None" = None
     q_critic_warmup_epochs: int = 0

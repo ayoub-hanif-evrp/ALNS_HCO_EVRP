@@ -122,6 +122,9 @@ def apply_safe_training_defaults(config: dict) -> dict:
     rcfg.setdefault("use_depot_logit_penalty", True)
     rcfg.setdefault("depot_logit_penalty", 2.0)
     rcfg.setdefault("depot_penalty_until_served_ratio", 0.95)
+    rcfg.setdefault("use_no_progress_penalty", True)
+    rcfg.setdefault("no_progress_threshold", 10)
+    rcfg.setdefault("no_progress_penalty_coef", 0.05)
     rcfg.setdefault("terminal_penalty_schedule", {
         "enabled": True, "start_coef": 0.25, "end_coef": 1.0, "warmup_cycles": 20,
     })

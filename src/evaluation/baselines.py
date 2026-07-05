@@ -12,6 +12,8 @@ import numpy as np
 
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
+from src.env.masks import depot_mode_feasible
+from src.env.policy_action import PolicyAction, apply_policy_action
 
 
 def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
@@ -25,7 +27,18 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
             continue
         mask, _ = env.feasible_mask(ev)
         node, portion = policy.select(env, ev, mask)
-        env.apply_action(ev, node, portion)
+        depot_finish = False
+        if node == env.instance.depot_index:
+            ok_r, ok_f = depot_mode_feasible(
+                env.instance, env, ev,
+                use_horizon_check=env.use_horizon_check,
+                use_depot_charging=env.use_depot_charging,
+                charging_portions=env.charging_portions,
+            )
+            if ok_f and not ok_r:
+                depot_finish = True
+                portion = None
+        apply_policy_action(env, ev, PolicyAction(node=node, charge_portion=portion, depot_finish=depot_finish))
     for ev in env.evs:
         if not ev.finished:
             env.auto_close_route(ev)

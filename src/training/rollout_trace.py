@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from src.env.cost import CostWeights
+from src.env.policy_action import apply_policy_action
 from src.env.evrptw_env import EVRPTWEnv
 from src.env.tw_diagnostics import aggregate_mask_reasons, count_time_expired_customers
 
@@ -144,9 +145,7 @@ def run_traced_episode(
         pre_expired = count_time_expired_customers(env)
         pre_served = int(env.num_served_customers)
 
-        info = env.apply_action(
-            ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
-        )
+        info = apply_policy_action(env, ev, action)
         node = inst.nodes[action.node]
         atype = str(info.get("type", "unknown"))
         if node.is_depot and action.depot_finish:
@@ -167,6 +166,11 @@ def run_traced_episode(
             "node_type": _node_type(inst, action.node),
             "charge_portion": action.charge_portion,
             "depot_finish": bool(action.depot_finish),
+            "usefulness_before_action": info.get("usefulness_before_action"),
+            "usefulness_reason_before_action": info.get("usefulness_reason_before_action"),
+            "best_charge_portion_for_station_usefulness": info.get(
+                "best_charge_portion_for_station_usefulness",
+            ),
             "battery_before": batt_before,
             "battery_after": float(ev.remaining_battery),
             "capacity_before": cap_before,
@@ -209,6 +213,8 @@ def run_traced_episode(
     served = int(env.num_served_customers)
     trace = {
         "meta": {
+            "trace_source": "final_policy_replay",
+            "trace_semantics": "Final-policy replay of selected instance (not exact training rollout)",
             "selection_tag": selection_tag,
             "instance_name": getattr(instance, "instance_name", "?"),
             "epoch": int((log_row or {}).get("epoch", -1)),

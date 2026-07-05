@@ -7,6 +7,7 @@ import torch
 
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
+from src.env.policy_action import apply_policy_action
 from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
@@ -68,6 +69,9 @@ def run_episode(
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
+        closure_info = env.try_controlled_closure()
+        if closure_info is not None:
+            continue
         if _step_or_close(env, ev):
             continue
         feasible_mask, _ = env.feasible_mask(ev)
@@ -75,7 +79,7 @@ def run_episode(
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
         num_decisions += 1
-        env.apply_action(ev, action.node, action.charge_portion)
+        apply_policy_action(env, ev, action)
 
     for ev in env.evs:
         if not ev.finished:

@@ -168,22 +168,28 @@ def test_depot_blocked_at_start_when_customers_feasible(small_instance):
     assert reasons[inst.depot_index] in {"depot_self_loop", "depot_finish_at_start"}
 
 
-def test_stations_masked_when_all_served(small_instance):
+def test_all_served_stations_allowed_for_depot_return(small_instance):
+    """When all customers are served, useful stations must remain for safe return."""
     inst = small_instance
     env = _fresh_env(inst)
     for c in inst.customer_indices:
         env.served_mask[c] = True
     env.num_served_customers = inst.num_customers
     ev = env.evs[0]
-    ev.current_node = inst.customer_indices[0]  # away from depot
+    ev.current_node = inst.customer_indices[0]
+    # Low battery may require a station before depot finish — mask must not blanket-block stations.
+    ev.remaining_battery = max(1.0, inst.vehicle.battery_capacity * 0.05)
     mask, reasons = env.feasible_mask(ev)
-    for s in inst.charging_station_indices:
-        assert not mask[s]
-    # After all customers served, depot finish may be feasible when away from depot.
-    if ev.current_node != inst.depot_index:
-        assert mask[inst.depot_index] or reasons[inst.depot_index] == "all_customers_done"
+    depot = inst.depot_index
+    ok_finish, _ = __import__("src.env.masks", fromlist=["depot_finish_feasible"]).depot_finish_feasible(
+        inst, ev, use_horizon_check=True,
+    )
+    if not ok_finish:
+        # At least one station should be allowed if it can enable depot return, or finish stays blocked safely.
+        any_station = any(mask[s] for s in inst.charging_station_indices)
+        assert any_station or not mask[depot], reasons.get(depot, "")
     else:
-        assert not mask[inst.depot_index]
+        assert mask[depot] or any(mask[s] for s in inst.charging_station_indices)
 
 
 def test_must_close_only_when_mask_empty(small_instance):

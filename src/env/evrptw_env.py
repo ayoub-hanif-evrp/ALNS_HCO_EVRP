@@ -18,6 +18,12 @@ from .cost import CostWeights, SolutionSummary, compute_cost, is_feasible
 from .ev_state import EVState
 from .event_queue import select_next_ev
 from .masks import compute_feasible_mask
+from .action_space import (
+    ActionProgressTracker,
+    compute_full_feasible_actions,
+    should_auto_close,
+    termination_diagnostics,
+)
 
 EPS = 1e-6
 
@@ -87,6 +93,16 @@ class EVRPTWEnv:
         self.infeasibility_reasons: list[str] = []
         self.step_count = 0
         self.done_reason: str | None = None
+        self.progress_tracker = ActionProgressTracker()
+        self.last_feasible_summary = None
+        self.last_global_serviceability = None
+        self.max_steps_reached = False
+        self.max_step_penalty = 0.0
+        self.terminal_no_safe_return = False
+        self.customer_actions = 0
+        self.station_actions = 0
+        self.noop_actions = 0
+        self.forced_closure_count = 0
 
     def get_done_reason(self) -> str:
         return self.done_reason or "in_progress"
@@ -105,6 +121,13 @@ class EVRPTWEnv:
             self.use_horizon_check,
             self.use_depot_charging,
             self.charging_portions,
+        )
+
+    def compute_full_feasible(self, ev: EVState):
+        """Full mask with summary and global serviceability."""
+        return compute_full_feasible_actions(
+            self.instance, self, ev,
+            self.use_horizon_check, self.use_depot_charging, self.charging_portions,
         )
 
     def compute_mask_info(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
@@ -245,30 +268,78 @@ class EVRPTWEnv:
         self.depot_tw_violation_count += 1
 
     def should_close_route(self, ev: EVState) -> bool:
-        """True when the full feasible mask has no selectable action."""
-        mask, _ = self.feasible_mask(ev)
-        return not mask.any()
+        """True when no meaningful policy action remains for this EV."""
+        _, _, summary, global_svc = self.compute_full_feasible(ev)
+        return should_auto_close(summary, global_svc=global_svc)
 
     def all_customers_served(self) -> bool:
         return self.num_served_customers >= self.instance.num_customers
+
+    def _handle_max_steps(self) -> None:
+        """Mark infeasible and record diagnostics when max_steps is hit."""
+        self.max_steps_reached = True
+        self.infeasible = True
+        self.infeasibility_reasons.append("max_steps_reached")
+        # Diagnostic flag only — max-step cost is captured via infeasible_flag / unserved penalties.
+        self.max_step_penalty = 0.0
+        diag = termination_diagnostics(self)
+        self.infeasibility_reasons.append(f"max_steps_diag:{diag}")
 
     def is_done(self) -> bool:
         if self.done_reason is not None:
             return True
         if self.step_count >= self.max_steps:
             self.done_reason = "max_steps"
+            self._handle_max_steps()
             return True
-        # Done when every EV is finished.
         if all(ev.finished for ev in self.evs):
-            self.done_reason = "all_evs_finished"
+            if self.all_customers_served():
+                self.done_reason = "all_served_returned"
+            else:
+                self.done_reason = "all_evs_finished"
             return True
-        # Done when all customers are served and no EV still needs to move.
         if self.all_customers_served():
-            # EVs away from depot still need to return; otherwise done.
             if all(ev.finished or ev.current_node == self.instance.depot_index for ev in self.evs):
                 self.done_reason = "all_served_returned"
                 return True
         return False
+
+    def try_controlled_closure(self) -> dict | None:
+        """Force-close episode when no service is possible and mask is empty."""
+        if self.done_reason is not None:
+            return None
+        from .action_space import compute_global_serviceability, should_auto_close
+
+        gs = compute_global_serviceability(
+            self.instance, self.evs, self.served_mask, self.reserved_mask,
+            use_horizon_check=self.use_horizon_check,
+            use_depot_charging=self.use_depot_charging,
+            charging_portions=self.charging_portions,
+        )
+        self.last_global_serviceability = gs
+        if not gs.no_service_possible:
+            return None
+        active = [ev for ev in self.evs if not ev.finished]
+        if not active:
+            self.done_reason = "terminal_no_service_possible"
+            return {"type": "terminal_closure", "reason": "no_service_possible"}
+        all_empty = True
+        for ev in active:
+            mask, _, summary, _ = self.compute_full_feasible(ev)
+            if mask.any() and not should_auto_close(summary, global_svc=gs):
+                all_empty = False
+                break
+        if not all_empty:
+            return None
+        info = {"type": "terminal_closure", "reason": "no_service_possible", "closed_evs": []}
+        for ev in active:
+            close = self.auto_close_route(ev, forced=True, return_info=True, action_type="forced_close")
+            info["closed_evs"].append(close)
+            self.forced_closure_count += 1
+        self.done_reason = "terminal_no_service_possible"
+        self.infeasible = True
+        self.infeasibility_reasons.append("terminal_no_service_possible")
+        return info
 
     # ------------------------------------------------------------------ #
     # Reservation
@@ -293,15 +364,17 @@ class EVRPTWEnv:
         charge_portion: float | None = None,
         *,
         depot_finish: bool = False,
+        pre_action_context: dict | None = None,
     ) -> dict:
         """Apply the EV's chosen next node and return an info dict.
 
-        For customers, the reservation is taken (if not already) and resolved to
-        a completed service within the same atomic event, because the EV clock
-        advances to the service departure time.
+        Pre-action usefulness must be supplied via ``pre_action_context`` from
+        ``policy_action.compute_pre_action_context`` or ``apply_policy_action``.
         """
         inst = self.instance
         node_obj = inst.nodes[node]
+        battery_before_action = ev.remaining_battery
+        time_before_action = ev.current_time
         self.step_count += 1
         previous_node = ev.current_node
         d_move, t_move, e_move = self._move_energy_time(ev, node)
@@ -322,11 +395,23 @@ class EVRPTWEnv:
         else:  # pragma: no cover - node types are exhaustive
             raise ValueError(f"Unknown node type for node {node}")
 
+        if pre_action_context:
+            info.update(pre_action_context)
+
         info["ev_id"] = ev.ev_id
         info["previous_node"] = previous_node
         info["delta_travel_time"] = t_move
         info["delta_energy_used"] = e_move
         info["customer_served"] = bool(info.get("type") == "customer" and info.get("node") == node)
+        info["battery_before"] = float(battery_before_action)
+        info["battery_after"] = float(ev.remaining_battery)
+        info["time_before"] = float(time_before_action)
+        info["ev_finished"] = bool(ev.finished)
+        if node_obj.is_customer:
+            self.customer_actions += 1
+        elif node_obj.is_charging_station:
+            self.station_actions += 1
+        self.progress_tracker.record(info, ev)
         self.current_event_time = max(self.current_event_time, ev.current_time)
         return info
 
@@ -641,11 +726,49 @@ class EVRPTWEnv:
         }
 
     def try_auto_close_route(self, ev: EVState) -> dict | None:
-        """Close the route only when the full feasible mask is empty."""
-        mask, _ = self.feasible_mask(ev)
-        if mask.any():
+        """Close the route only when no meaningful policy action remains."""
+        mask, _, summary, global_svc = self.compute_full_feasible(ev)
+        if mask.any() and not should_auto_close(summary, global_svc=global_svc):
             return None
-        return self.auto_close_route(ev, forced=True, return_info=True)
+        if not mask.any():
+            return self.auto_close_route(ev, forced=True, return_info=True)
+        # Mask has actions but none are meaningful — unsafe to continue looping.
+        finish_val = compute_depot_finish_validity(
+            self.instance, ev, self.served_mask, self.reserved_mask,
+            self.num_served_customers,
+            global_svc=global_svc,
+            use_horizon_check=self.use_horizon_check,
+            use_depot_charging=self.use_depot_charging,
+            charging_portions=self.charging_portions,
+            forced=True,
+        )
+        if finish_val.valid:
+            return self.auto_close_route(
+                ev, forced=True, return_info=True, action_type="forced_close",
+            )
+        self.terminal_no_safe_return = True
+        self.infeasible = True
+        self.infeasibility_reasons.append(
+            f"ev_{ev.ev_id}_no_safe_return_no_meaningful_action"
+        )
+        return self.auto_close_route(
+            ev, forced=True, return_info=True, action_type="forced_infeasible_close",
+        )
+
+    def get_episode_diagnostics(self) -> dict:
+        """Full episode diagnostic bundle for training logs and dashboard."""
+        diag = termination_diagnostics(self)
+        diag.update({
+            "customer_actions": float(self.customer_actions),
+            "station_actions": float(self.station_actions),
+            "depot_recharge_count": float(self.depot_recharge_count),
+            "depot_finish_count": float(self.depot_finish_count),
+            "forced_auto_close_count": float(self.forced_auto_close_count),
+            "forced_closure_count": float(self.forced_closure_count),
+            "served_ratio": self.num_served_customers / max(self.instance.num_customers, 1),
+            "feasible": float(self.feasible_solution()),
+        })
+        return diag
 
     def finish_idle_ev(self, ev: EVState) -> None:
         """Deprecated alias: always close with mandatory depot return."""

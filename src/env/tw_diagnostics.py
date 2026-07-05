@@ -196,36 +196,44 @@ def _count_feasible_after_station_recharge(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> int:
-    from src.env.charge_masks import feasible_charge_portions, simulate_recharge_departure
-    from src.env.ev_state import EVState
+    from src.env.action_space import evaluate_charge_portions_for_node
 
-    portions = charging_portions or [0.25, 0.5, 0.75, 1.0]
-    mask, _ = feasible_charge_portions(
+    analysis = evaluate_charge_portions_for_node(
         instance, ev, station, served_mask, reserved_mask,
-        portions=portions,
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
     )
-    if not mask.any():
+    if analysis.best is None:
         return 0
-    best_idx = int(np.argmax(mask))
-    portion = portions[best_idx]
-    departure, batt, _, _ = simulate_recharge_departure(
-        instance, ev, station, portion, free=instance.nodes[station].is_depot,
-    )
-    sim = EVState(
-        ev_id=ev.ev_id,
-        current_node=station,
-        current_time=departure,
-        remaining_battery=batt,
-        remaining_capacity=ev.remaining_capacity,
-    )
-    return len(_feasible_customer_indices(
-        instance, sim, served_mask, reserved_mask,
+    from src.env.action_space import _feasible_customer_indices
+    feasible_now = len(_feasible_customer_indices(
+        instance, ev, served_mask, reserved_mask,
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=charging_portions,
     ))
+    return feasible_now + analysis.best.enabled_customers
+
+
+def simulate_departure_after_best_charge(
+    instance, ev, station, served_mask, reserved_mask, portions,
+    use_horizon_check, use_depot_charging,
+) -> tuple[float, float]:
+    from src.env.action_space import evaluate_charge_portions_for_node
+    from src.env.charge_masks import simulate_recharge_departure
+
+    analysis = evaluate_charge_portions_for_node(
+        instance, ev, station, served_mask, reserved_mask,
+        portions=portions or [0.25, 0.5, 0.75, 1.0],
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+    )
+    if analysis.best is None:
+        return ev.current_time, ev.remaining_battery
+    return simulate_recharge_departure(
+        instance, ev, station, analysis.best.portion, free=instance.nodes[station].is_depot,
+    )[:2]
 
 
 def selected_station_is_necessary(
@@ -240,96 +248,52 @@ def selected_station_is_necessary(
     charging_portions: list[float] | None = None,
 ) -> tuple[bool, dict[str, float]]:
     """Return whether the selected station is useful for the current EV decision."""
-    from src.env.charge_masks import safe_depot_return_from
-
     if hasattr(env_or_instance, "instance"):
         env = env_or_instance
         inst = env.instance
         served = env.served_mask if served_mask is None else served_mask
         reserved = env.reserved_mask if reserved_mask is None else reserved_mask
         portions = charging_portions or getattr(env, "charging_portions", None)
+        ev_ref = ev
     else:
         inst = env_or_instance
         served = served_mask
         reserved = reserved_mask
         portions = charging_portions
+        ev_ref = ev
 
-    diag: dict[str, float] = {
-        "selected_station_necessary": 0.0,
-        "unnecessary_selected_station": 0.0,
-        "selected_station_no_continuation": 0.0,
-        "selected_station_enables_customer_count": 0.0,
-    }
     if selected_station < 0 or not inst.nodes[selected_station].is_charging_station:
-        return False, diag
+        return False, {
+            "selected_station_necessary": 0.0,
+            "unnecessary_selected_station": 1.0,
+            "selected_station_no_continuation": 1.0,
+            "selected_station_enables_customer_count": 0.0,
+        }
 
-    feasible_now = _feasible_customer_indices(
-        inst, ev, served, reserved,
+    from src.env.action_space import compute_station_usefulness, compute_global_serviceability
+
+    all_done = int(np.sum(served[inst.customer_indices])) >= inst.num_customers if inst.customer_indices else True
+    gs = compute_global_serviceability(
+        inst, [ev_ref], served, reserved,
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=portions,
     )
-    ok_dep_now, _ = safe_depot_return_from(
-        inst, ev.current_node, ev.current_time, ev.remaining_battery,
-        use_horizon_check=use_horizon_check,
-    )
-
-    after_count = _count_feasible_after_station_recharge(
-        inst, ev, selected_station, served, reserved,
+    u = compute_station_usefulness(
+        inst, ev_ref, selected_station, served, reserved,
+        all_customers_served=all_done,
+        global_svc=gs,
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=portions,
     )
-    enables = max(0, after_count - len(feasible_now))
-    diag["selected_station_enables_customer_count"] = float(enables)
-
-    if not feasible_now and not ok_dep_now:
-        diag["selected_station_necessary"] = 1.0
-        diag["selected_station_no_continuation"] = 1.0
-        return True, diag
-
-    if enables > 0:
-        diag["selected_station_necessary"] = 1.0
-        return True, diag
-
-    dep_time, dep_batt = simulate_departure_after_best_charge(
-        inst, ev, selected_station, served, reserved, portions,
-        use_horizon_check, use_depot_charging,
-    )
-    ok_dep_after, _ = safe_depot_return_from(
-        inst, selected_station, dep_time, dep_batt, use_horizon_check=use_horizon_check,
-    )
-    if not ok_dep_now and ok_dep_after:
-        diag["selected_station_necessary"] = 1.0
-        return True, diag
-
-    if feasible_now or ok_dep_now:
-        diag["unnecessary_selected_station"] = 1.0
-        return False, diag
-
-    diag["selected_station_necessary"] = 1.0
-    return True, diag
-
-
-def simulate_departure_after_best_charge(
-    instance, ev, station, served_mask, reserved_mask, portions,
-    use_horizon_check, use_depot_charging,
-) -> tuple[float, float]:
-    from src.env.charge_masks import feasible_charge_portions, simulate_recharge_departure
-
-    p_list = portions or [0.25, 0.5, 0.75, 1.0]
-    mask, _ = feasible_charge_portions(
-        instance, ev, station, served_mask, reserved_mask,
-        portions=p_list,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-    )
-    if not mask.any():
-        return ev.current_time, ev.remaining_battery
-    idx = int(np.argmax(mask))
-    return simulate_recharge_departure(
-        instance, ev, station, p_list[idx], free=instance.nodes[station].is_depot,
-    )[:2]
+    diag: dict[str, float] = {
+        "selected_station_necessary": float(u.useful),
+        "unnecessary_selected_station": float(not u.useful),
+        "selected_station_no_continuation": float(not u.useful and not u.enables_depot_return),
+        "selected_station_enables_customer_count": float(u.enabled_customers_count),
+    }
+    return u.useful, diag
 
 
 def compute_dynamic_action_features(env, ev) -> np.ndarray:

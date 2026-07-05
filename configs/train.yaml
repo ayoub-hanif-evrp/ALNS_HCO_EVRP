@@ -98,6 +98,9 @@ rl:
   use_depot_logit_penalty: true
   depot_logit_penalty: 2.0
   depot_penalty_until_served_ratio: 0.95
+  use_no_progress_penalty: true
+  no_progress_threshold: 10
+  no_progress_penalty_coef: 0.05
   terminal_penalty_schedule:
     enabled: true
     start_coef: 0.25
