@@ -66,7 +66,9 @@ rl:
   use_step_rewards: true
   use_gae: true
   use_counterfactual_critic: false
-  use_pomo: false
+  use_multi_sample_rollout_baseline: false
+  multi_sample_K: 4
+  multi_sample_mix_rho: 0.1
   use_potential_shaping: false
   gamma: 1.0
   gae_lambda: 0.95

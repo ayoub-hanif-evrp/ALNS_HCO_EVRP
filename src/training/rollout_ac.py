@@ -409,7 +409,7 @@ def run_episode(
     return result
 
 
-def run_pomo_episodes(
+def run_multi_sample_rollout_baseline(
     instance,
     policy,
     m: int,
@@ -424,8 +424,8 @@ def run_pomo_episodes(
     min_decisions_warn: int | None = None,
     cycle_id: int = 1,
 ) -> tuple[list[tuple[EpisodeResult, Trajectory]], float]:
-    """Run K rollouts and return trajectories with group baseline on terminal reward."""
-    K = rl_cfg.effective_pomo_k()
+    """Run K sampled rollouts and return trajectories with group baseline on terminal reward."""
+    K = rl_cfg.effective_multi_sample_k()
     outputs = []
     terminal_rewards = []
     for _ in range(K):
@@ -449,11 +449,19 @@ def run_pomo_episodes(
             training_reward(result.objective, rl_cfg.reward_scale),
         ))
         terminal_rewards.append(tr)
+        traj.multi_sample_group_reward = None
         traj.pomo_group_reward = None
         outputs.append((result, traj))
     group_mean = float(sum(terminal_rewards) / len(terminal_rewards))
     for i, (res, traj) in enumerate(outputs):
         adv = terminal_rewards[i] - group_mean
+        traj.multi_sample_advantage = adv
+        traj.multi_sample_group_reward = group_mean
         traj.pomo_advantage = adv
         traj.pomo_group_reward = group_mean
     return outputs, group_mean
+
+
+def run_pomo_episodes(*args, **kwargs):
+    """Deprecated alias for ``run_multi_sample_rollout_baseline``."""
+    return run_multi_sample_rollout_baseline(*args, **kwargs)

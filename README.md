@@ -137,10 +137,10 @@ All training uses **centralized actor-critic**:
 - Step-wise decomposed rewards aligned with EVRPTW objective
 - GAE advantage estimation
 - Counterfactual Q critic for multi-EV credit assignment
-- POMO-style multi-rollout baseline (K=4 by default)
+- Multi-sample rollout baseline (K=4 by default; mean terminal reward across K sampled rollouts)
 - Potential-based reward shaping
 - Edge-aware Transformer encoder (distance / travel time / energy biases)
-- Local search repair at evaluation (2-opt distance polish)
+- Local search at evaluation is **diagnostic-only** (disabled by default; distance-only 2-opt does not change reported objective)
 
 Tune hyperparameters under `rl:` and `model:` in `configs/train.yaml`.
 
@@ -183,7 +183,7 @@ Use the **Sections** jump bar to scroll to each block.
 - **GPU (`device: cuda`)** is the default — run `python scripts/check_gpu.py` first.
 - On **CPU** (CPU-only PyTorch), expect **~45–90 s per training iteration**.
 - On **GPU**, expect **much faster** steps (often 5–20× vs CPU, depending on VRAM/GPU).
-- POMO uses K=4 rollouts per step by default (`rl.pomo_K`); increase only if VRAM allows.
+- Multi-sample rollout baseline uses K=4 sampled rollouts by default (`rl.multi_sample_K`); increase only if VRAM allows.
 - `deterministic: false` (default) enables cuDNN autotune for faster GPU training.
 
 ## Phase 0 checks

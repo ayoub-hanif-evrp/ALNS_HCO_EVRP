@@ -12,8 +12,7 @@ import numpy as np
 
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
-from src.env.masks import depot_mode_feasible
-from src.env.policy_action import PolicyAction, apply_policy_action
+from src.env.policy_action import Action, PolicyAction, apply_policy_action, resolve_depot_action
 
 
 def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
@@ -26,19 +25,11 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
         if env.try_auto_close_route(ev):
             continue
         mask, _ = env.feasible_mask(ev)
-        node, portion = policy.select(env, ev, mask)
-        depot_finish = False
-        if node == env.instance.depot_index:
-            ok_r, ok_f = depot_mode_feasible(
-                env.instance, env, ev,
-                use_horizon_check=env.use_horizon_check,
-                use_depot_charging=env.use_depot_charging,
-                charging_portions=env.charging_portions,
-            )
-            if ok_f and not ok_r:
-                depot_finish = True
-                portion = None
-        apply_policy_action(env, ev, PolicyAction(node=node, charge_portion=portion, depot_finish=depot_finish))
+        action = policy.select(env, ev, mask)
+        if not isinstance(action, PolicyAction):
+            node, portion = action
+            action = resolve_depot_action(env, ev, node, portion)
+        apply_policy_action(env, ev, action)
     for ev in env.evs:
         if not ev.finished:
             env.auto_close_route(ev)
@@ -48,22 +39,22 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
 class NearestFeasiblePolicy:
     """Pick the nearest feasible unserved customer; else nearest recharge node."""
 
-    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray):
+    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray) -> PolicyAction:
         inst = env.instance
         dist = inst.distance_matrix[ev.current_node]
 
         feasible_customers = [c for c in inst.customer_indices if mask[c]]
         if feasible_customers:
             node = min(feasible_customers, key=lambda c: dist[c])
-            return node, None
+            return PolicyAction(node=node, charge_portion=None, depot_finish=False)
 
         feasible_stations = [s for s in inst.charging_station_indices if mask[s]]
         if feasible_stations:
             node = min(feasible_stations, key=lambda s: dist[s])
-            return node, 1.0
+            return PolicyAction(node=node, charge_portion=1.0, depot_finish=False)
 
         if mask[inst.depot_index]:
-            return inst.depot_index, 1.0
+            return resolve_depot_action(env, ev, inst.depot_index, 1.0)
 
         raise RuntimeError("No feasible action for heuristic policy")
 
@@ -74,7 +65,7 @@ class RandomFeasiblePolicy:
     def __init__(self, seed: int = 0):
         self.rng = random.Random(seed)
 
-    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray):
+    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray) -> PolicyAction:
         inst = env.instance
         feasible = np.nonzero(mask)[0].tolist()
         node = self.rng.choice(feasible)
@@ -82,8 +73,11 @@ class RandomFeasiblePolicy:
         is_recharge = n_obj.is_charging_station or (
             n_obj.is_depot and env.use_depot_charging and inst.depot_has_charging
         )
+        if node == inst.depot_index:
+            portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if is_recharge else None
+            return resolve_depot_action(env, ev, node, portion)
         portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if is_recharge else None
-        return node, portion
+        return PolicyAction(node=node, charge_portion=portion, depot_finish=False)
 
 
 def evaluate_baseline(instance, m: int, policy, weights: CostWeights, **env_kwargs):
@@ -92,3 +86,13 @@ def evaluate_baseline(instance, m: int, policy, weights: CostWeights, **env_kwar
     run_heuristic_episode(env, policy)
     j, _, summary = env.score(weights)
     return j, summary, env
+
+
+__all__ = [
+    "Action",
+    "NearestFeasiblePolicy",
+    "PolicyAction",
+    "RandomFeasiblePolicy",
+    "evaluate_baseline",
+    "run_heuristic_episode",
+]

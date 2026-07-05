@@ -60,8 +60,9 @@ rl:
   potential_eta_battery_risk: 3.0
   potential_eta_time_risk: 3.0
   battery_safe_ratio: 0.2
-  pomo_K: 4
-  pomo_mix_rho: 0.1
+  use_multi_sample_rollout_baseline: false
+  multi_sample_K: 4
+  multi_sample_mix_rho: 0.1
   normalize_advantages: true
 
 decoding:
@@ -89,6 +90,7 @@ evaluation:
   decoding: greedy
   multi_sample_n: 16
   local_search:
+    enabled: false
     max_iterations: 50
   save_routes: true
   save_figures: true

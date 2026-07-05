@@ -50,6 +50,8 @@ class Trajectory:
     terminal_reward: float = 0.0
     pomo_group_reward: float | None = None
     pomo_advantage: float | None = None
+    multi_sample_group_reward: float | None = None
+    multi_sample_advantage: float | None = None
     training_stats: dict[str, float] = field(default_factory=dict)
     node_embeddings: torch.Tensor | None = None
 

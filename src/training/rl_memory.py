@@ -20,25 +20,28 @@ def validate_rl_memory_config(config: dict, *, num_nodes: int, num_customers: in
     rcfg = config.get("rl") or {}
     mcfg = config.get("model") or {}
     use_q = bool(rcfg.get("use_counterfactual_critic", False))
-    use_pomo = bool(rcfg.get("use_pomo", False))
-    pomo_k = int(rcfg.get("pomo_K", 1 if not use_pomo else 4))
-    if not use_pomo:
-        pomo_k = min(pomo_k, 1)
+    use_ms = bool(rcfg.get(
+        "use_multi_sample_rollout_baseline",
+        rcfg.get("use_pomo", False),
+    ))
+    ms_k = int(rcfg.get("multi_sample_K", rcfg.get("pomo_K", 1 if not use_ms else 4)))
+    if not use_ms:
+        ms_k = min(ms_k, 1)
     edge = bool(mcfg.get("use_edge_aware_encoder", False))
 
     large = num_nodes > 1000 or num_customers >= 500
-    heavy_count = sum([use_q, pomo_k >= 4, edge])
+    heavy_count = sum([use_q, ms_k >= 4, edge])
 
     if large and heavy_count >= 3:
         LOGGER.warning(
-            "Counterfactual Q critic + POMO K=%d + edge encoder on N=%d is memory intensive. "
-            "Consider q_eval_mode=topk, max_q_actions<=128, lower K, or disabling edge encoder.",
-            pomo_k, num_nodes,
+            "Counterfactual Q critic + multi-sample rollout baseline K=%d + edge encoder on N=%d is memory intensive. "
+            "Consider q_eval_mode=topk, max_q_actions<=128, lower multi_sample_K, or disabling edge encoder.",
+            ms_k, num_nodes,
         )
-    if large and use_q and pomo_k >= 4 and edge:
+    if large and use_q and ms_k >= 4 and edge:
         LOGGER.error(
-            "Unsafe memory config: Q critic + POMO K>=4 + edge encoder on N=%d. "
-            "Reduce pomo_K, disable use_edge_aware_encoder, or set use_counterfactual_critic=false.",
+            "Unsafe memory config: Q critic + multi-sample K>=4 + edge encoder on N=%d. "
+            "Reduce multi_sample_K, disable use_edge_aware_encoder, or set use_counterfactual_critic=false.",
             num_nodes,
         )
 
@@ -56,13 +59,13 @@ def log_memory_plan(
 ) -> None:
     risk = _memory_risk(num_nodes, rl_cfg, use_edge_aware)
     LOGGER.info(
-        "Memory plan | %s | N=%d (cust=%d, sta=%d) | POMO K=%d | Q=%s mode=%s max_q=%d chunk=%d | "
+        "Memory plan | %s | N=%d (cust=%d, sta=%d) | multi-sample K=%d | Q=%s mode=%s max_q=%d chunk=%d | "
         "edge_enc=%s | amp=%s | grad_accum=%d | detach_critic=%s | risk=%s",
         instance_name,
         num_nodes,
         num_customers,
         num_stations,
-        rl_cfg.effective_pomo_k(),
+        rl_cfg.effective_multi_sample_k(),
         rl_cfg.use_counterfactual_critic,
         rl_cfg.q_eval_mode,
         rl_cfg.max_q_actions,
@@ -79,7 +82,7 @@ def _memory_risk(num_nodes: int, rl_cfg: "RLConfig", use_edge: bool) -> str:
     score = 0
     if num_nodes > 1000:
         score += 2
-    if rl_cfg.effective_pomo_k() >= 4:
+    if rl_cfg.effective_multi_sample_k() >= 4:
         score += 2
     if rl_cfg.use_counterfactual_critic and rl_cfg.q_eval_mode == "chunked_full":
         score += 2

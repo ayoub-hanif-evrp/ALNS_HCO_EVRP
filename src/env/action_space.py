@@ -48,15 +48,26 @@ class ChargePortionAnalysis:
     all_feasible: list[ChargePortionEvaluation]
 
     def to_log_dict(self) -> dict:
+        feasible_portions = [float(e.portion) for e in self.all_feasible]
         return {
+            "feasible_charge_portions": feasible_portions,
+            "best_useful_charge_portion": (
+                float(self.best.portion) if self.best else None
+            ),
             "best_charge_portion_for_station_usefulness": (
                 float(self.best.portion) if self.best else None
             ),
             "enabled_customers_by_charge_portion": {
                 float(e.portion): int(e.enabled_customers) for e in self.all_feasible
             },
+            "safe_depot_return_by_charge_portion": {
+                float(e.portion): bool(e.enables_depot_return) for e in self.all_feasible
+            },
             "depot_return_feasible_by_charge_portion": {
                 float(e.portion): bool(e.enables_depot_return) for e in self.all_feasible
+            },
+            "usefulness_score_by_charge_portion": {
+                float(e.portion): float(e.usefulness_score) for e in self.all_feasible
             },
             "selected_charge_portion_usefulness_score": (
                 float(self.best.usefulness_score) if self.best else 0.0
@@ -604,6 +615,98 @@ class DepotFinishValidity:
     useful_station_exists: bool = False
     depot_recharge_could_enable_service: bool = False
     finish_masked_due_to_future_service: bool = False
+    finish_would_reduce_global_serviceability: bool = False
+
+
+def exists_useful_recharge_action(
+    instance,
+    ev: EVState,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    *,
+    global_svc: GlobalServiceability | None = None,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> bool:
+    """True if useful depot recharge or station action exists for this EV."""
+    can, _, _ = ev_future_service_possible(
+        instance, ev, served_mask, reserved_mask,
+        global_svc=global_svc,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
+    return can
+
+
+def exists_future_service_after_recharge(
+    instance,
+    ev: EVState,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    *,
+    global_svc: GlobalServiceability | None = None,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> bool:
+    """True if recharge-mediated (depot or station) service becomes possible."""
+    useful_r, _, enables_r = compute_depot_recharge_usefulness(
+        instance, ev, served_mask, reserved_mask,
+        all_customers_served=False,
+        global_svc=global_svc,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
+    if useful_r and enables_r > 0:
+        return True
+    for s in instance.charging_station_indices:
+        u = compute_station_usefulness(
+            instance, ev, s, served_mask, reserved_mask,
+            all_customers_served=False,
+            global_svc=global_svc,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        )
+        if u.useful and u.enabled_customers_count > 0:
+            return True
+    return False
+
+
+def global_serviceability_after_finish(
+    instance,
+    evs: list[EVState],
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    finishing_ev: EVState,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> dict:
+    """Global serviceability snapshot with finish-impact diagnostics."""
+    gs = compute_global_serviceability(
+        instance, evs, served_mask, reserved_mask,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
+    future_svc = exists_future_service_after_recharge(
+        instance, finishing_ev, served_mask, reserved_mask,
+        global_svc=gs,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
+    out = gs.to_dict()
+    out["future_service_after_recharge_exists"] = bool(future_svc)
+    out["finish_would_reduce_global_serviceability"] = bool(
+        future_svc and gs.globally_serviceable_customers_count > 0
+    )
+    return out
 
 
 def ev_future_service_possible(
@@ -716,20 +819,39 @@ def compute_depot_finish_validity(
         charging_portions=charging_portions,
     )
     if can_service:
+        gs_finish = global_serviceability_after_finish(
+            instance, [ev], served_mask, reserved_mask, ev,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        )
         return DepotFinishValidity(
             False, svc_reason, "invalid",
             useful_station_exists=bool(svc_diag.get("useful_station_exists_before_finish")),
             depot_recharge_could_enable_service=bool(svc_diag.get("depot_recharge_could_enable_service")),
             finish_masked_due_to_future_service=True,
+            finish_would_reduce_global_serviceability=bool(
+                gs_finish.get("finish_would_reduce_global_serviceability"),
+            ),
         )
 
     if global_svc and global_svc.no_service_possible:
         return DepotFinishValidity(True, "depot_finish_when_no_service_possible", "valid")
 
-    return DepotFinishValidity(True, "depot_finish_ev_exhausted", "valid")
+    if exists_useful_recharge_action(
+        instance, ev, served_mask, reserved_mask,
+        global_svc=global_svc,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    ):
+        return DepotFinishValidity(
+            False, "depot_finish_blocked_useful_recharge_exists", "invalid",
+            finish_masked_due_to_future_service=True,
+            finish_would_reduce_global_serviceability=True,
+        )
 
-    # unreachable — kept for clarity
-    # return DepotFinishValidity(False, "depot_finish_premature", "invalid")
+    return DepotFinishValidity(True, "depot_finish_ev_exhausted", "valid")
 
 
 def is_near_zero_move(instance, from_node: int, to_node: int) -> bool:

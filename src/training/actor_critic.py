@@ -1,4 +1,4 @@
-"""Centralized actor-critic: GAE, optional counterfactual Q, optional POMO, potential shaping."""
+"""Centralized actor-critic: GAE, optional counterfactual Q, optional multi-sample rollout baseline, potential shaping."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,9 +29,9 @@ class RLConfig:
     potential_eta_battery_risk: float = 3.0
     potential_eta_time_risk: float = 3.0
     battery_safe_ratio: float = 0.2
-    pomo_K: int = 1
-    pomo_mix_rho: float = 0.1
-    use_pomo: bool = False
+    multi_sample_K: int = 1
+    multi_sample_mix_rho: float = 0.1
+    use_multi_sample_rollout_baseline: bool = False
     use_counterfactual_critic: bool = False
     use_step_rewards: bool = True
     use_gae: bool = True
@@ -75,8 +75,24 @@ class RLConfig:
     q_record_batch_size: int = 32
     detach_critic_inputs: bool = True
 
+    def effective_multi_sample_k(self) -> int:
+        return max(1, int(self.multi_sample_K)) if self.use_multi_sample_rollout_baseline else 1
+
     def effective_pomo_k(self) -> int:
-        return max(1, int(self.pomo_K)) if self.use_pomo else 1
+        """Deprecated alias for ``effective_multi_sample_k``."""
+        return self.effective_multi_sample_k()
+
+    @property
+    def use_pomo(self) -> bool:
+        return self.use_multi_sample_rollout_baseline
+
+    @property
+    def pomo_K(self) -> int:
+        return self.multi_sample_K
+
+    @property
+    def pomo_mix_rho(self) -> float:
+        return self.multi_sample_mix_rho
 
     def q_critic_active(self, global_epoch: int) -> bool:
         if not self.use_counterfactual_critic:
@@ -89,8 +105,14 @@ class RLConfig:
     def from_config(cls, config: dict) -> "RLConfig":
         tcfg = config.get("training") or {}
         rcfg = config.get("rl") or {}
-        use_pomo = bool(rcfg.get("use_pomo", False))
-        default_k = int(rcfg.get("pomo_K", 4 if use_pomo else 1))
+        use_ms = bool(rcfg.get(
+            "use_multi_sample_rollout_baseline",
+            rcfg.get("use_pomo", False),
+        ))
+        default_k = int(rcfg.get(
+            "multi_sample_K",
+            rcfg.get("pomo_K", 4 if use_ms else 1),
+        ))
         enable_after = rcfg.get("q_critic_enable_after_epoch")
         sched_raw = rcfg.get("terminal_penalty_schedule") or {}
         terminal_schedule = TerminalPenaltySchedule(
@@ -113,9 +135,12 @@ class RLConfig:
             potential_eta_battery_risk=float(rcfg.get("potential_eta_battery_risk", 3.0)),
             potential_eta_time_risk=float(rcfg.get("potential_eta_time_risk", 3.0)),
             battery_safe_ratio=float(rcfg.get("battery_safe_ratio", 0.2)),
-            pomo_K=default_k,
-            pomo_mix_rho=float(rcfg.get("pomo_mix_rho", 0.1)),
-            use_pomo=use_pomo,
+            multi_sample_K=default_k,
+            multi_sample_mix_rho=float(rcfg.get(
+                "multi_sample_mix_rho",
+                rcfg.get("pomo_mix_rho", 0.1),
+            )),
+            use_multi_sample_rollout_baseline=use_ms,
             use_counterfactual_critic=bool(rcfg.get("use_counterfactual_critic", False)),
             use_step_rewards=bool(rcfg.get("use_step_rewards", True)),
             use_gae=bool(rcfg.get("use_gae", True)),
@@ -265,6 +290,7 @@ def actor_critic_loss(
     q_critic: nn.Module | None,
     rl_cfg: RLConfig,
     *,
+    multi_sample_advantage: float | None = None,
     pomo_advantage: float | None = None,
     device: torch.device | str = "cpu",
     global_epoch: int = 0,
@@ -324,8 +350,9 @@ def actor_critic_loss(
     if rl_cfg.normalize_returns_for_critic and critic_returns.numel() > 1:
         critic_returns = normalize_tensor(critic_returns)
 
-    if pomo_advantage is not None and rl_cfg.use_pomo:
-        actor_adv = actor_adv + rl_cfg.pomo_mix_rho * float(pomo_advantage)
+    ms_adv = multi_sample_advantage if multi_sample_advantage is not None else pomo_advantage
+    if ms_adv is not None and rl_cfg.use_multi_sample_rollout_baseline:
+        actor_adv = actor_adv + rl_cfg.multi_sample_mix_rho * float(ms_adv)
 
     active_q = use_q_critic if use_q_critic is not None else rl_cfg.q_critic_active(global_epoch)
     cf_list: list[torch.Tensor] = []

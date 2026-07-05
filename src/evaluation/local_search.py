@@ -1,4 +1,9 @@
-"""Post-decoding local search / repair (evaluation)."""
+"""Post-decoding local search (diagnostic-only; does not change reported objective).
+
+Distance-only 2-opt over customer sequences is **not** a valid EVRPTW improvement
+because reordering customers changes time windows, battery, charging, and feasibility.
+This module may run for diagnostics but must never alter official evaluation scores.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,6 +22,9 @@ class LocalSearchResult:
     improved: bool
     iterations: int
     distance_improvement: float
+    diagnostic_only: bool = True
+    enabled: bool = False
+    rejection_reason: str = "local_search_disabled_for_evrptw"
 
 
 def _customer_subroute(env, ev) -> list[int]:
@@ -53,13 +61,28 @@ def _route_length(dist, route: list[int]) -> float:
 
 
 def local_search_repair(env, weights: CostWeights, cfg: dict | None = None) -> LocalSearchResult:
-    """Distance-based 2-opt per EV route; re-score with updated distance in summary."""
+    """Run distance-only 2-opt diagnostics; never mutate the reported EVRPTW objective."""
     cfg = cfg or {}
-    max_iter = int(cfg.get("max_iterations", 50))
+    enabled = bool(cfg.get("enabled", False))
     summary = env.build_summary()
     raw_j, _ = compute_cost(summary, weights)
     raw_feas = env.feasible_solution()
 
+    if not enabled:
+        return LocalSearchResult(
+            raw_objective=raw_j,
+            repaired_objective=raw_j,
+            raw_feasible=raw_feas,
+            repaired_feasible=raw_feas,
+            improved=False,
+            iterations=0,
+            distance_improvement=0.0,
+            diagnostic_only=True,
+            enabled=False,
+            rejection_reason="local_search_disabled_for_evrptw",
+        )
+
+    max_iter = int(cfg.get("max_iterations", 50))
     total_saved = 0.0
     iterations = 0
     for ev in env.evs:
@@ -72,25 +95,19 @@ def local_search_repair(env, weights: CostWeights, cfg: dict | None = None) -> L
             total_saved += old_len - new_len
             iterations += 1
 
-    repaired_summary = env.build_summary()
-    repaired_summary.total_distance = max(0.0, repaired_summary.total_distance - total_saved)
-    repaired_j, _ = compute_cost(repaired_summary, weights)
-    repaired_feas = raw_feas  # feasibility unchanged in distance-only polish
-
-    improved = repaired_j < raw_j
-    if repaired_feas and not raw_feas:
-        pick_repaired = True
-    elif repaired_feas and raw_feas:
-        pick_repaired = repaired_j < raw_j
-    else:
-        pick_repaired = repaired_j < raw_j
-
     return LocalSearchResult(
         raw_objective=raw_j,
-        repaired_objective=repaired_j if pick_repaired else raw_j,
+        repaired_objective=raw_j,
         raw_feasible=raw_feas,
-        repaired_feasible=repaired_feas,
-        improved=improved,
+        repaired_feasible=raw_feas,
+        improved=False,
         iterations=iterations,
         distance_improvement=total_saved,
+        diagnostic_only=True,
+        enabled=True,
+        rejection_reason=(
+            "distance_only_2opt_not_replayed_through_evrptw"
+            if total_saved > 0
+            else "no_distance_improvement_found"
+        ),
     )

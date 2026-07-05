@@ -22,6 +22,7 @@ def build_result_row(
         for node in ev.route_nodes[1:]
         if instance.nodes[node].is_charging_station
     )
+    feasible = env.feasible_solution()
     return {
         "method": method,
         "instance_name": instance.instance_name,
@@ -31,7 +32,8 @@ def build_result_row(
         "m_max": m_max,
         "selected_m": selected_m,
         "used_EVs": summary.used_evs,
-        "feasible": env.feasible_solution(),
+        "feasible": feasible,
+        "served_customer_count": env.num_served_customers,
         "total_distance": round(summary.total_distance, 4),
         "total_duration": round(summary.total_duration, 4),
         "total_waiting_time": round(summary.total_waiting_time, 4),
@@ -42,10 +44,14 @@ def build_result_row(
         "number_of_reserved_unfinished_customers": summary.unresolved_reserved_customers,
         "duplicate_customer_visits": summary.duplicate_customer_visits,
         "time_window_violations": env.time_window_violation_count,
+        "customer_lateness": round(env.total_lateness, 4),
+        "depot_lateness": round(summary.depot_return_violation, 4),
         "battery_violations": env.battery_violation_count,
         "capacity_violations": env.capacity_violation_count,
         "depot_return_violations": summary.depot_return_violation,
         "objective_value": round(objective, 4),
+        "true_evrptw_objective": round(objective, 4),
+        "evaluation_uses_shaped_reward": False,
         "runtime_seconds": round(runtime_seconds, 4),
     }
 

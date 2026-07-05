@@ -48,18 +48,23 @@ def validate_training_config(config: dict) -> list[str]:
             )
 
     q_on = bool(rcfg.get("use_counterfactual_critic", False))
-    pomo_on = bool(rcfg.get("use_pomo", False))
+    ms_on = bool(rcfg.get(
+        "use_multi_sample_rollout_baseline",
+        rcfg.get("use_pomo", False),
+    ))
     edge_on = bool(mcfg.get("use_edge_aware_encoder", False))
-    if q_on and pomo_on and edge_on:
+    if q_on and ms_on and edge_on:
         if not bool(dbg.get("allow_all_advanced_modules", False)):
             raise ValueError(
-                "Refusing to train with Q critic + POMO + edge encoder all enabled. "
+                "Refusing to train with Q critic + multi-sample rollout baseline + edge encoder all enabled. "
                 "Enable one module at a time, or set debug.allow_all_advanced_modules: true."
             )
         warnings.append("All advanced modules enabled — expect instability / OOM risk.")
 
-    if q_on and pomo_on:
-        warnings.append("Q critic and POMO both enabled — use only after baseline is stable.")
+    if q_on and ms_on:
+        warnings.append(
+            "Q critic and multi-sample rollout baseline both enabled — use only after baseline is stable."
+        )
     if bool(rcfg.get("use_potential_shaping", False)) and not dbg.get("allow_potential_shaping"):
         warnings.append("Potential shaping is enabled — disable for objective-aligned baseline.")
 
@@ -91,7 +96,9 @@ def apply_safe_training_defaults(config: dict) -> dict:
     rcfg.setdefault("use_step_rewards", True)
     rcfg.setdefault("use_gae", True)
     rcfg.setdefault("use_counterfactual_critic", False)
-    rcfg.setdefault("use_pomo", False)
+    rcfg.setdefault("use_multi_sample_rollout_baseline", rcfg.get("use_pomo", False))
+    rcfg.setdefault("multi_sample_K", rcfg.get("pomo_K", 1))
+    rcfg.setdefault("multi_sample_mix_rho", rcfg.get("pomo_mix_rho", 0.1))
     rcfg.setdefault("use_potential_shaping", False)
     rcfg.setdefault("normalize_advantages", True)
     rcfg.setdefault("gamma", 1.0)

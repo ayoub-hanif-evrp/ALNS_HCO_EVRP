@@ -18,9 +18,48 @@ from .tw_diagnostics import count_time_expired_customers
 
 @dataclass
 class PolicyAction:
+    """Explicit EVRPTW action: next node, charge portion, depot finish vs recharge."""
+
     node: int
     charge_portion: float | None = None
     depot_finish: bool = False
+
+
+# Public alias used by baselines and tests.
+Action = PolicyAction
+
+
+def resolve_depot_action(
+    env,
+    ev: EVState,
+    node: int,
+    charge_portion: float | None = None,
+) -> PolicyAction:
+    """Choose explicit depot finish vs recharge from the current feasible mask."""
+    from .masks import depot_mode_feasible
+
+    inst = env.instance
+    if node != inst.depot_index:
+        return PolicyAction(node=node, charge_portion=charge_portion, depot_finish=False)
+
+    ok_r, ok_f = depot_mode_feasible(
+        inst, env, ev,
+        use_horizon_check=env.use_horizon_check,
+        use_depot_charging=env.use_depot_charging,
+        charging_portions=env.charging_portions,
+    )
+    all_done = env.num_served_customers >= inst.num_customers
+    if all_done and ok_f:
+        return PolicyAction(node=node, charge_portion=None, depot_finish=True)
+    if ok_r:
+        return PolicyAction(
+            node=node,
+            charge_portion=charge_portion if charge_portion is not None else 1.0,
+            depot_finish=False,
+        )
+    if ok_f:
+        return PolicyAction(node=node, charge_portion=None, depot_finish=True)
+    return PolicyAction(node=node, charge_portion=charge_portion, depot_finish=False)
 
 
 def policy_action_from_output(action: Any) -> PolicyAction:
@@ -116,8 +155,11 @@ def compute_pre_action_context(
             "early_depot_finish": fv.category == "early",
             "forced_depot_finish": fv.category == "forced",
             "useful_station_exists_before_finish": bool(fv.useful_station_exists),
+            "useful_depot_recharge_before_finish": bool(fv.depot_recharge_could_enable_service),
             "depot_recharge_could_enable_service": bool(fv.depot_recharge_could_enable_service),
+            "future_service_after_recharge_exists": bool(fv.finish_masked_due_to_future_service),
             "finish_masked_due_to_future_service_possible": bool(fv.finish_masked_due_to_future_service),
+            "finish_would_reduce_global_serviceability": bool(fv.finish_would_reduce_global_serviceability),
         })
 
     _ = mask, reasons  # pre-action mask available for debugging via env.last_feasible_summary

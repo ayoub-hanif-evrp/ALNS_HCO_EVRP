@@ -8,41 +8,15 @@ import numpy as np
 
 from src.data.instance_loader import load_instance
 from src.env.evrptw_env import EVRPTWEnv
-from src.env.masks import customer_feasible, compute_feasible_mask
+from src.env.masks import customer_feasible
+from src.env.policy_action import apply_policy_action, resolve_depot_action
+from src.evaluation.baselines import NearestFeasiblePolicy, run_heuristic_episode
 
 
 def diagnose_instance(instance_dir: Path, m: int = 20) -> dict:
     inst = load_instance(instance_dir)
     env = EVRPTWEnv(inst, m=m, use_horizon_check=True, max_steps_factor=6)
-
-    # Greedy heuristic: always pick nearest feasible customer, else nearest station, else depot
-    while not env.is_done():
-        ev = env.select_acting_ev()
-        if ev is None:
-            env.done_reason = "no_acting_ev"
-            break
-        if env.try_auto_close_route(ev):
-            continue
-        mask, _ = env.feasible_mask(ev)
-
-        cust = [j for j in inst.customer_indices if mask[j]]
-        if cust:
-            i = ev.current_node
-            j = min(cust, key=lambda c: inst.travel_time_matrix[i, c])
-            env.apply_action(ev, j)
-            continue
-
-        stations = [s for s in inst.charging_station_indices if mask[s]]
-        if stations:
-            i = ev.current_node
-            s = min(stations, key=lambda x: inst.travel_time_matrix[i, x])
-            env.apply_action(ev, s, charge_portion=1.0)
-            continue
-
-        if mask[inst.depot_index]:
-            env.apply_action(ev, inst.depot_index)
-        else:
-            env.finish_idle_ev(ev)
+    run_heuristic_episode(env, NearestFeasiblePolicy())
 
     unserved = [c for c in inst.customer_indices if not env.served_mask[c]]
     reason_counts: Counter = Counter()
@@ -59,7 +33,6 @@ def diagnose_instance(instance_dir: Path, m: int = 20) -> dict:
                 break
             reason_counts[reason] += 1
         else:
-            # pick most common blocking reason across EVs
             ev_reasons = []
             for ev in env.evs:
                 _, reason = customer_feasible(
@@ -70,11 +43,9 @@ def diagnose_instance(instance_dir: Path, m: int = 20) -> dict:
         per_unserved.append((c, best_reason))
         reason_counts[best_reason] += 1
 
-    # Also check: would unserved be feasible from depot at t=0 with full battery?
     from src.env.ev_state import EVState
 
     fresh = EVState.initial(0, inst.depot_index, inst.vehicle.battery_capacity, inst.vehicle.load_capacity)
-    fresh_mask = np.zeros(inst.num_nodes, dtype=bool)
     fresh_reasons: Counter = Counter()
     for c in unserved:
         ok, reason = customer_feasible(

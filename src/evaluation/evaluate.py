@@ -192,20 +192,23 @@ def evaluate(config: dict, checkpoint: str | None = None) -> dict:
             raw_objective = best.objective
             raw_feasible = best.feasible
             ls_improved = False
+            ls_diag: dict = {}
             if hasattr(best.result, "env"):
                 ls = local_search_repair(env, weights, ls_cfg)
-                if ls.repaired_feasible and (not raw_feasible or ls.repaired_objective < raw_objective):
-                    best = FleetCandidate(
-                        m=best.m, feasible=ls.repaired_feasible,
-                        objective=ls.repaired_objective, summary=best.summary, result=best.result,
-                    )
-                    ls_improved = ls.improved
+                ls_diag = {
+                    "local_search_diagnostic_only": float(ls.diagnostic_only),
+                    "local_search_enabled": float(ls.enabled),
+                    "local_search_distance_improvement": round(ls.distance_improvement, 4),
+                    "local_search_rejection_reason": ls.rejection_reason,
+                }
+                ls_improved = False
             m_min = candidates[0].m
             m_max = candidates[-1].m
             row = build_result_row(instance, env, best.objective, best.m, m_min, m_max, runtime, method_name)
             row["raw_objective"] = raw_objective
             row["raw_feasible"] = float(raw_feasible)
             row["local_search_improved"] = float(ls_improved)
+            row.update(ls_diag)
             rows.append(row)
 
             # Save routes + fleet-search curve for the primary model method.

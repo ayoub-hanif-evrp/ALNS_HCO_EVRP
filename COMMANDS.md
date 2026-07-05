@@ -15,7 +15,7 @@ python scripts/check_gpu.py
 python main_train.py
 ```
 
-**Phase A only:** actor-critic + step rewards + GAE (no Q critic, POMO, shaping, edge encoder).
+**Phase A only:** actor-critic + step rewards + GAE (no Q critic, multi-sample rollout baseline, shaping, edge encoder).
 
 - **13** RC `_21` train instances × **50** cycles = **650** updates
 - Held out: `rc101_21`, `rc104_21`, `rc208_21` (never loaded during training)

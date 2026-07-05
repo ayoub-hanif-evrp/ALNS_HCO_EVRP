@@ -10,7 +10,7 @@ from src.models.critic import QCritic, ValueCritic
 from src.training.actor_critic import RLConfig, actor_critic_loss
 from src.training.flat_schedule import sample_fleet_size
 from src.training.rl_memory import cuda_memory_stats, reset_cuda_peak_stats
-from src.training.rollout_ac import run_pomo_episodes
+from src.training.rollout_ac import run_multi_sample_rollout_baseline
 from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
@@ -121,7 +121,7 @@ def actor_critic_train_step(
         instance = train_ds[idx]
         m = sample_fleet_size(instance, extra_margin, rng)
 
-        rollouts, _ = run_pomo_episodes(
+        rollouts, _ = run_multi_sample_rollout_baseline(
             instance, policy, m, weights, rl_cfg,
             device=device, charging_portions=charging_portions,
             use_horizon_check=use_horizon, use_depot_charging=use_depot_charging,
@@ -136,7 +136,11 @@ def actor_critic_train_step(
             def _compute_loss():
                 return actor_critic_loss(
                     trajectory, value_critic, q_critic, rl_cfg,
-                    pomo_advantage=trajectory.pomo_advantage if rl_cfg.use_pomo else None,
+                    multi_sample_advantage=(
+                        trajectory.multi_sample_advantage
+                        if rl_cfg.use_multi_sample_rollout_baseline
+                        else None
+                    ),
                     device=device,
                     global_epoch=global_epoch,
                     use_q_critic=use_q_now,
@@ -352,7 +356,8 @@ def actor_critic_train_step(
             torch.stack(actor_losses).mean().item() + torch.stack(critic_losses).mean().item()
             + (torch.stack(q_losses).mean().item() if q_losses else 0.0)
         ),
-        "pomo_K": rl_cfg.effective_pomo_k(),
+        "multi_sample_K": rl_cfg.effective_multi_sample_k(),
+        "use_multi_sample_rollout_baseline": float(rl_cfg.use_multi_sample_rollout_baseline),
         "use_q_critic": float(use_q_now),
         "use_amp": float(use_amp),
         **mem,
