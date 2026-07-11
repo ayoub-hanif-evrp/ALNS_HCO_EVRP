@@ -1,46 +1,68 @@
-"""Heuristic baselines for E-VRPTW.
-
-These use the exact same environment and feasibility masks as the learned
-policy, so comparisons are apples-to-apples. They also serve as an end-to-end
-sanity check that the environment can produce feasible solutions.
-"""
+"""Heuristic baselines using canonical exact masks (same as learned policy)."""
 from __future__ import annotations
 
 import random
 
 import numpy as np
 
+from src.env.action_masks import ActionMaskResult, compute_action_masks
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
-from src.env.policy_action import Action, PolicyAction, apply_policy_action, resolve_depot_action
+from src.env.policy_action import PolicyAction, apply_policy_action
+
+
+def _legal_charge_portion(
+    env: EVRPTWEnv,
+    mask_result: ActionMaskResult,
+    node: int,
+    preferred: float | None = None,
+) -> float | None:
+    cm = mask_result.charge_masks.get(node)
+    if cm is None:
+        return None
+    portions = list(env.charging_portions)
+    feasible_idx = [i for i, ok in enumerate(cm) if ok]
+    if not feasible_idx:
+        raise RuntimeError(f"No legal charge portion for node {node}")
+    if preferred is not None:
+        for idx in feasible_idx:
+            if abs(portions[idx] - float(preferred)) < 1e-9:
+                return float(portions[idx])
+        try:
+            pidx = portions.index(float(preferred))
+            if cm[pidx]:
+                return float(preferred)
+        except ValueError:
+            pass
+    return float(portions[max(feasible_idx)])
 
 
 def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
-    """Drive the event-driven loop with a heuristic node-selection policy."""
+    """Drive the event-driven loop with a heuristic policy and canonical masks."""
     env.reset()
     while not env.is_done():
         ev = env.select_acting_ev()
         if ev is None:
             break
-        if env.try_auto_close_route(ev):
+        if env.try_controlled_closure() is not None:
             continue
-        mask, _ = env.feasible_mask(ev)
-        action = policy.select(env, ev, mask)
-        if not isinstance(action, PolicyAction):
-            node, portion = action
-            action = resolve_depot_action(env, ev, node, portion)
-        apply_policy_action(env, ev, action)
+        if env.try_auto_close_route(ev) is not None:
+            continue
+        mask_result = compute_action_masks(env, ev)
+        action = policy.select(env, ev, mask_result)
+        apply_policy_action(env, ev, action, mask_result=mask_result)
     for ev in env.evs:
         if not ev.finished:
-            env.auto_close_route(ev)
+            env.auto_close_route(ev, forced=True)
     return env
 
 
 class NearestFeasiblePolicy:
-    """Pick the nearest feasible unserved customer; else nearest recharge node."""
+    """Pick nearest feasible unserved customer; else nearest feasible recharge node."""
 
-    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray) -> PolicyAction:
+    def select(self, env: EVRPTWEnv, ev, mask_result: ActionMaskResult) -> PolicyAction:
         inst = env.instance
+        mask = mask_result.final_node_mask
         dist = inst.distance_matrix[ev.current_node]
 
         feasible_customers = [c for c in inst.customer_indices if mask[c]]
@@ -51,33 +73,58 @@ class NearestFeasiblePolicy:
         feasible_stations = [s for s in inst.charging_station_indices if mask[s]]
         if feasible_stations:
             node = min(feasible_stations, key=lambda s: dist[s])
-            return PolicyAction(node=node, charge_portion=1.0, depot_finish=False)
+            portion = _legal_charge_portion(env, mask_result, node)
+            return PolicyAction(node=node, charge_portion=portion, depot_finish=False)
 
-        if mask[inst.depot_index]:
-            return resolve_depot_action(env, ev, inst.depot_index, 1.0)
+        depot = inst.depot_index
+        if mask[depot]:
+            if mask_result.feasible_depot_recharge:
+                portion = _legal_charge_portion(env, mask_result, depot)
+                return PolicyAction(node=depot, charge_portion=portion, depot_finish=False)
+            if mask_result.feasible_depot_finish:
+                return PolicyAction(node=depot, charge_portion=None, depot_finish=True)
 
         raise RuntimeError("No feasible action for heuristic policy")
 
 
 class RandomFeasiblePolicy:
-    """Pick uniformly at random among feasible nodes."""
+    """Pick uniformly at random among final-mask feasible nodes and legal charge portions."""
 
     def __init__(self, seed: int = 0):
         self.rng = random.Random(seed)
 
-    def select(self, env: EVRPTWEnv, ev, mask: np.ndarray) -> PolicyAction:
+    def select(self, env: EVRPTWEnv, ev, mask_result: ActionMaskResult) -> PolicyAction:
         inst = env.instance
+        mask = mask_result.final_node_mask
         feasible = np.nonzero(mask)[0].tolist()
         node = self.rng.choice(feasible)
         n_obj = inst.nodes[node]
-        is_recharge = n_obj.is_charging_station or (
-            n_obj.is_depot and env.use_depot_charging and inst.depot_has_charging
-        )
+
         if node == inst.depot_index:
-            portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if is_recharge else None
-            return resolve_depot_action(env, ev, node, portion)
-        portion = self.rng.choice([0.25, 0.5, 0.75, 1.0]) if is_recharge else None
-        return PolicyAction(node=node, charge_portion=portion, depot_finish=False)
+            modes: list[tuple[bool, float | None]] = []
+            if mask_result.feasible_depot_recharge and node in mask_result.charge_masks:
+                cm = mask_result.charge_masks[node]
+                portions = env.charging_portions
+                for idx, p in enumerate(portions):
+                    if cm[idx]:
+                        modes.append((False, float(p)))
+            if mask_result.feasible_depot_finish:
+                modes.append((True, None))
+            if not modes:
+                raise RuntimeError("Depot selected but no legal depot mode")
+            depot_finish, portion = self.rng.choice(modes)
+            return PolicyAction(node=node, charge_portion=portion, depot_finish=depot_finish)
+
+        is_recharge = n_obj.is_charging_station
+        if is_recharge:
+            cm = mask_result.charge_masks.get(node)
+            if cm is None or not cm.any():
+                raise RuntimeError(f"Station {node} has no legal charge mask")
+            legal = [env.charging_portions[i] for i, ok in enumerate(cm) if ok]
+            portion = float(self.rng.choice(legal))
+            return PolicyAction(node=node, charge_portion=portion, depot_finish=False)
+
+        return PolicyAction(node=node, charge_portion=None, depot_finish=False)
 
 
 def evaluate_baseline(instance, m: int, policy, weights: CostWeights, **env_kwargs):
@@ -89,7 +136,6 @@ def evaluate_baseline(instance, m: int, policy, weights: CostWeights, **env_kwar
 
 
 __all__ = [
-    "Action",
     "NearestFeasiblePolicy",
     "PolicyAction",
     "RandomFeasiblePolicy",

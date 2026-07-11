@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from src.models.critic import auxiliary_critic_loss, build_trajectory_auxiliary_targets
 from src.training.q_critic_ops import q_loss_and_cf_for_record
 from src.training.reward_shaping import TerminalPenaltySchedule
 from src.training.trajectory import Trajectory
@@ -74,6 +75,13 @@ class RLConfig:
     q_chunk_size: int = 128
     q_record_batch_size: int = 32
     detach_critic_inputs: bool = True
+    assert_action_mask: bool = False
+    use_dynamic_candidate_encoder: bool = True
+    critic_loss_type: str = "huber"
+    critic_updates_per_actor_update: int = 2
+    actor_grad_clip: float = 1.0
+    critic_grad_clip: float = 1.0
+    auxiliary_coef: float = 0.1
 
     def effective_multi_sample_k(self) -> int:
         return max(1, int(self.multi_sample_K)) if self.use_multi_sample_rollout_baseline else 1
@@ -105,6 +113,8 @@ class RLConfig:
     def from_config(cls, config: dict) -> "RLConfig":
         tcfg = config.get("training") or {}
         rcfg = config.get("rl") or {}
+        ocfg = config.get("optimizer") or {}
+        ccfg = config.get("critic") or {}
         use_ms = bool(rcfg.get(
             "use_multi_sample_rollout_baseline",
             rcfg.get("use_pomo", False),
@@ -180,6 +190,16 @@ class RLConfig:
             q_chunk_size=int(rcfg.get("q_chunk_size", 128)),
             q_record_batch_size=int(rcfg.get("q_record_batch_size", 32)),
             detach_critic_inputs=bool(rcfg.get("detach_critic_inputs", True)),
+            assert_action_mask=bool(rcfg.get("assert_action_mask", True)),
+            use_dynamic_candidate_encoder=bool(rcfg.get("use_dynamic_candidate_encoder", True)),
+            critic_loss_type=str(rcfg.get("critic_loss", "huber")),
+            critic_updates_per_actor_update=int(rcfg.get(
+                "critic_updates_per_actor_update",
+                ccfg.get("critic_updates_per_actor_update", 2),
+            )),
+            auxiliary_coef=float(ccfg.get("auxiliary_coef", rcfg.get("auxiliary_coef", 0.1))),
+            actor_grad_clip=float(rcfg.get("actor_grad_clip", ocfg.get("actor_grad_clip", tcfg.get("grad_clip", 1.0)))),
+            critic_grad_clip=float(rcfg.get("critic_grad_clip", ocfg.get("critic_grad_clip", tcfg.get("grad_clip", 1.0)))),
         )
 
 
@@ -278,10 +298,36 @@ class ActorCriticLossOut:
     advantage_min: float = 0.0
     advantage_max: float = 0.0
     mean_log_prob: float = 0.0
+    aux_loss: float = 0.0
+    aux_loss_parts: dict[str, float] | None = None
 
 
 def _maybe_detach(x: torch.Tensor, detach: bool) -> torch.Tensor:
     return x.detach() if detach else x
+
+
+def compute_smdp_gae(
+    rewards: torch.Tensor,
+    values: torch.Tensor,
+    gamma: float,
+    lam: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """GAE over semi-MDP decision epochs (terminal bootstrap = 0 on last epoch)."""
+    T = rewards.numel()
+    advantages = torch.zeros_like(rewards)
+    last_gae = 0.0
+    for t in range(T - 1, -1, -1):
+        cur_v = float(values[t].detach())
+        if t == T - 1:
+            next_v = 0.0
+            delta = float(rewards[t]) - cur_v
+        else:
+            next_v = float(values[t + 1].detach())
+            delta = float(rewards[t]) + gamma * next_v - cur_v
+        last_gae = delta + gamma * lam * last_gae
+        advantages[t] = last_gae
+    returns = advantages + values[:T].detach()
+    return advantages, returns
 
 
 def actor_critic_loss(
@@ -295,37 +341,50 @@ def actor_critic_loss(
     device: torch.device | str = "cpu",
     global_epoch: int = 0,
     use_q_critic: bool | None = None,
+    use_huber: bool = False,
+    critic_only: bool = False,
+    actor_only: bool = False,
 ) -> ActorCriticLossOut:
-    pol_steps = trajectory.policy_transitions()
-    all_trans = trajectory.transitions
+    decisions = trajectory.smdp_decisions()
     z = torch.zeros((), device=device, requires_grad=True)
-    if not pol_steps:
+    if not decisions:
         return ActorCriticLossOut(z, z, z, z, z, z, z, 0.0, 0.0)
 
     detach = rl_cfg.detach_critic_inputs
-    contexts = _maybe_detach(trajectory.stack_contexts(), detach)
-    log_probs = trajectory.stack_log_probs()
-    entropies = trajectory.stack_entropies()
-    policy_values = value_critic(contexts)
+    log_probs = trajectory.stack_smdp_log_probs()
+    entropies = trajectory.stack_smdp_entropies()
 
-    rewards_list = trajectory.reward_sequence()
+    device_t = torch.device(device) if isinstance(device, str) else device
+    values_list: list[torch.Tensor] = []
+    aux_preds_stacked: dict[str, list[torch.Tensor]] = {
+        k: [] for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")
+    }
+    n_cust = max(int(getattr(trajectory, "num_customers", 0) or 0), 1)
+    compute_aux = bool(decisions) and hasattr(value_critic, "forward_from_state")
+
+    for dec in decisions:
+        state = getattr(dec, "decision_state", None)
+        if state is None:
+            values_list.append(torch.zeros((), device=device_t))
+            if compute_aux:
+                for k in aux_preds_stacked:
+                    aux_preds_stacked[k].append(torch.zeros((), device=device_t))
+            continue
+        st = state.detach_for_critic() if detach else state
+        v, aux_out = value_critic.forward_from_state(st)
+        values_list.append(v.squeeze() if v.dim() > 0 else v)
+        if compute_aux:
+            for k in aux_preds_stacked:
+                aux_preds_stacked[k].append(aux_out[k].reshape(()))
+
+    policy_values = torch.stack(values_list) if values_list else torch.zeros(0, device=device_t)
+
+    rewards_list = trajectory.smdp_reward_sequence()
     rewards = torch.tensor(rewards_list, dtype=torch.float32, device=device)
-
-    # Build value sequence aligned with rewards (non-policy steps use V=0).
-    value_seq: list[torch.Tensor] = []
-    pol_idx = 0
-    for tr in all_trans:
-        if tr.is_policy_action:
-            value_seq.append(policy_values[pol_idx])
-            pol_idx += 1
-        else:
-            value_seq.append(torch.zeros((), device=device))
-    if trajectory.terminal_info is not None:
-        value_seq.append(torch.zeros((), device=device))
-    values = torch.stack(value_seq) if value_seq else torch.zeros(0, device=device)
+    values = policy_values[: rewards.numel()]
 
     if rl_cfg.use_gae:
-        advantages_full, returns_full = compute_gae(
+        advantages_full, returns_full = compute_smdp_gae(
             rewards, values, rl_cfg.gamma, rl_cfg.gae_lambda,
         )
     else:
@@ -334,18 +393,11 @@ def actor_critic_loss(
         for t in range(returns_full.numel() - 1, -1, -1):
             running = float(rewards[t]) + rl_cfg.gamma * running
             returns_full[t] = running
-        advantages_full = returns_full - values[: returns_full.numel()].detach()
+        advantages_full = returns_full - policy_values.detach()
 
-    # Map policy-step advantages/returns from chronological indices.
-    pol_adv_list: list[torch.Tensor] = []
-    pol_ret_list: list[torch.Tensor] = []
-    for i, tr in enumerate(all_trans):
-        if tr.is_policy_action:
-            pol_adv_list.append(advantages_full[i])
-            pol_ret_list.append(returns_full[i])
-    actor_adv = torch.stack(pol_adv_list)
-    critic_returns = torch.stack(pol_ret_list)
-    critic_values = policy_values[: len(pol_steps)]
+    actor_adv = advantages_full[: len(decisions)]
+    critic_returns = returns_full[: len(decisions)]
+    critic_values = policy_values[: len(decisions)]
 
     if rl_cfg.normalize_returns_for_critic and critic_returns.numel() > 1:
         critic_returns = normalize_tensor(critic_returns)
@@ -362,8 +414,8 @@ def actor_critic_loss(
     if active_q and q_critic is not None and trajectory.node_embeddings is not None:
         H = _maybe_detach(trajectory.node_embeddings, detach)
         batch_size = max(1, int(rl_cfg.q_record_batch_size))
-        for start in range(0, len(pol_steps), batch_size):
-            batch = pol_steps[start : start + batch_size]
+        for start in range(0, len(decisions), batch_size):
+            batch = decisions[start : start + batch_size]
             for i, rec in enumerate(batch, start=start):
                 if rec.q_candidate_indices is None:
                     continue
@@ -400,12 +452,44 @@ def actor_critic_loss(
         actor_adv = normalize_tensor(actor_adv)
 
     actor_loss = -(actor_adv.detach() * log_probs).mean()
-    critic_loss = ((critic_values - critic_returns.detach()) ** 2).mean()
+    if use_huber:
+        value_loss = torch.nn.functional.smooth_l1_loss(
+            critic_values, critic_returns.detach(),
+        )
+    else:
+        value_loss = ((critic_values - critic_returns.detach()) ** 2).mean()
+
+    aux_loss = torch.zeros((), device=device)
+    aux_parts: dict[str, float] = {}
+    if compute_aux and aux_preds_stacked["unserved_ratio"]:
+        aux_preds = {k: torch.stack(v) for k, v in aux_preds_stacked.items()}
+        targets = build_trajectory_auxiliary_targets(
+            trajectory,
+            num_customers=n_cust,
+            terminal_feasible=bool(getattr(trajectory, "terminal_feasible", False)),
+            device=device,
+        )
+        aux_loss, aux_parts = auxiliary_critic_loss(
+            aux_preds, targets, coef=rl_cfg.auxiliary_coef,
+        )
+
+    critic_loss = value_loss + aux_loss
     entropy_term = entropies.mean()
-    loss = actor_loss + rl_cfg.critic_coef * critic_loss
-    if active_q:
-        loss = loss + rl_cfg.q_critic_coef * q_critic_loss
-    loss = loss - rl_cfg.entropy_coef * entropy_term
+
+    if critic_only:
+        actor_loss = torch.zeros((), device=device)
+        q_critic_loss = torch.zeros((), device=device)
+        loss = rl_cfg.critic_coef * critic_loss
+    elif actor_only:
+        loss = actor_loss - rl_cfg.entropy_coef * entropy_term
+        if active_q:
+            loss = loss + rl_cfg.q_critic_coef * q_critic_loss
+        critic_loss = torch.zeros((), device=device)
+    else:
+        loss = actor_loss + rl_cfg.critic_coef * critic_loss
+        if active_q:
+            loss = loss + rl_cfg.q_critic_coef * q_critic_loss
+        loss = loss - rl_cfg.entropy_coef * entropy_term
 
     ev = explained_variance(critic_returns, critic_values)
     return ActorCriticLossOut(
@@ -426,4 +510,6 @@ def actor_critic_loss(
         advantage_min=float(actor_adv.min().detach()),
         advantage_max=float(actor_adv.max().detach()),
         mean_log_prob=float(log_probs.mean().detach()),
+        aux_loss=float(aux_loss.detach()) if aux_loss.requires_grad or aux_loss.numel() else float(aux_loss),
+        aux_loss_parts=aux_parts,
     )

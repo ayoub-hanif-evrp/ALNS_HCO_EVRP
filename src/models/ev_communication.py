@@ -1,17 +1,22 @@
-"""EV communication module.
-
-Lets the acting EV perceive the state of all other agents (which EVs are still
-active, which have high battery, which are near remaining customers, how many
-are already used). Each EV becomes a token; a small Transformer mixes them, and
-the non-acting EV embeddings are pooled into ``other_ev_context``.
-"""
+"""Inter-EV communication with masked Transformer pooling (Section 6)."""
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 
-# Length of EVRPTWEnv.ev_token_features.
-EV_TOKEN_FEATURE_DIM = 6
+from src.models.feature_specs import EV_TOKEN_SCALAR_DIM, FLEET_BALANCE_FEATURE_DIM
+from src.models.mlp_blocks import ResidualMLP
+
+
+@dataclass
+class EVCommunicationOutput:
+    communicated_tokens: torch.Tensor
+    acting_token: torch.Tensor
+    active_pool: torch.Tensor
+    finished_pool: torch.Tensor
+    fleet_balance_context: torch.Tensor
 
 
 class EVCommunication(nn.Module):
@@ -20,15 +25,17 @@ class EVCommunication(nn.Module):
         embedding_dim: int = 128,
         num_heads: int = 4,
         num_layers: int = 1,
-        token_feature_dim: int = EV_TOKEN_FEATURE_DIM,
+        token_scalar_dim: int = EV_TOKEN_SCALAR_DIM,
+        fleet_balance_dim: int = FLEET_BALANCE_FEATURE_DIM,
         dropout: float = 0.1,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
-        self.token_proj = nn.Sequential(
-            nn.Linear(token_feature_dim + embedding_dim, embedding_dim),
-            nn.ReLU(),
-            nn.Linear(embedding_dim, embedding_dim),
+        self.token_proj = ResidualMLP(
+            token_scalar_dim + embedding_dim,
+            embedding_dim,
+            embedding_dim,
+            dropout=dropout,
         )
         layer = nn.TransformerEncoderLayer(
             d_model=embedding_dim,
@@ -36,44 +43,64 @@ class EVCommunication(nn.Module):
             dim_feedforward=embedding_dim * 2,
             dropout=dropout,
             batch_first=True,
-            activation="relu",
+            activation="gelu",
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
+        self.fleet_balance_proj = ResidualMLP(fleet_balance_dim, embedding_dim, embedding_dim)
 
     def forward(
         self,
-        ev_token_features: torch.Tensor,
+        ev_token_scalars: torch.Tensor,
         ev_current_node_embeddings: torch.Tensor,
         acting_idx: int,
         finished_mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Produce other-EV context for the acting EV.
+        fleet_balance: torch.Tensor | None = None,
+    ) -> EVCommunicationOutput:
+        device = ev_current_node_embeddings.device
+        tokens_in = torch.cat([ev_token_scalars, ev_current_node_embeddings], dim=-1)
+        tokens = self.token_proj(tokens_in).unsqueeze(0)
+        m = tokens_in.shape[0]
 
-        Args:
-            ev_token_features: [m, token_feature_dim].
-            ev_current_node_embeddings: [m, d] embedding of each EV's current node.
-            acting_idx: index of the acting EV in [0, m).
-            finished_mask: [m] bool, True for finished EVs (excluded from pooling).
+        attn_mask = None
+        if finished_mask is not None and finished_mask.any():
+            # Finished EVs remain visible but cannot be attended to as keys.
+            attn_mask = torch.zeros((m, m), dtype=torch.bool, device=device)
+            for idx in range(m):
+                if finished_mask[idx]:
+                    attn_mask[:, idx] = True
+            attn_mask = attn_mask | attn_mask.transpose(0, 1)
 
-        Returns:
-            other_ev_context: [d].
-        """
-        tokens = torch.cat([ev_token_features, ev_current_node_embeddings], dim=-1)
-        tokens = self.token_proj(tokens).unsqueeze(0)  # [1, m, d]
-        encoded = self.encoder(tokens).squeeze(0)  # [m, d]
+        encoded = self.encoder(tokens, mask=attn_mask).squeeze(0)
+        acting_token = encoded[acting_idx]
 
-        m = encoded.shape[0]
-        if m == 1:
-            return torch.zeros(self.embedding_dim, device=encoded.device, dtype=encoded.dtype)
-
-        keep = torch.ones(m, dtype=torch.bool, device=encoded.device)
-        keep[acting_idx] = False
+        active_mask = torch.ones(m, dtype=torch.bool, device=device)
+        active_mask[acting_idx] = False
         if finished_mask is not None:
-            keep = keep & (~finished_mask)
+            active_mask = active_mask & (~finished_mask)
+        finished_only = finished_mask if finished_mask is not None else torch.zeros(m, dtype=torch.bool, device=device)
 
-        if keep.any():
-            return encoded[keep].mean(dim=0)
-        # All others finished: fall back to mean of all non-acting tokens.
-        others = torch.ones(m, dtype=torch.bool, device=encoded.device)
-        others[acting_idx] = False
-        return encoded[others].mean(dim=0)
+        active_pool = (
+            encoded[active_mask].mean(dim=0)
+            if active_mask.any()
+            else torch.zeros(self.embedding_dim, device=device)
+        )
+        finished_pool = (
+            encoded[finished_only].mean(dim=0)
+            if finished_only.any()
+            else torch.zeros(self.embedding_dim, device=device)
+        )
+        if fleet_balance is None:
+            fleet_balance = torch.zeros(FLEET_BALANCE_FEATURE_DIM, device=device)
+        fleet_balance_context = self.fleet_balance_proj(fleet_balance)
+
+        return EVCommunicationOutput(
+            communicated_tokens=encoded,
+            acting_token=acting_token,
+            active_pool=active_pool,
+            finished_pool=finished_pool,
+            fleet_balance_context=fleet_balance_context,
+        )
+
+    def legacy_other_context(self, output: EVCommunicationOutput) -> torch.Tensor:
+        """Backward-compatible pooled non-acting context."""
+        return output.active_pool

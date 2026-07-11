@@ -13,13 +13,12 @@ from src.env.policy_action import apply_policy_action
 from src.env.reward import StepRewardCalculator, snapshot_env
 from src.env.tw_diagnostics import (
     aggregate_mask_reasons,
-    count_time_expired_customers,
     selected_station_is_necessary,
     urgent_rank_stats,
 )
 from src.training.actor_critic import RLConfig, apply_potential_shaping, compute_potential
 from src.training.reward_shaping import StepContext, TrainingRewardCalculator, TrainingRewardConfig
-from src.training.trajectory import EpisodeTransition, Trajectory
+from src.training.trajectory import DecisionTransition, EpisodeTransition, Trajectory
 from src.training.rl_memory import select_q_candidates
 from src.utils.logging_utils import get_logger
 
@@ -72,6 +71,7 @@ def run_episode_trajectory(
     training_mode: bool = True,
     hard_time_windows: bool = True,
     global_epoch: int = 0,
+    environment_config: dict | None = None,
 ) -> tuple[EpisodeResult, Trajectory | None]:
     """Run episode; optionally collect per-step rewards and critic trajectory."""
     env = EVRPTWEnv(
@@ -83,6 +83,7 @@ def run_episode_trajectory(
         max_steps_factor=max_steps_factor,
         hard_time_windows=hard_time_windows,
     )
+    env.environment_config = environment_config
     node_embeddings = policy.encode(instance, device=device)
 
     train_calc: TrainingRewardCalculator | None = None
@@ -108,10 +109,48 @@ def run_episode_trajectory(
     trajectory = Trajectory() if collect_trajectory else None
     if trajectory is not None:
         trajectory.node_embeddings = node_embeddings.detach()
+        trajectory.num_customers = int(instance.num_customers)
     step_infos = []
     phi_prev = compute_potential(env, rl_cfg) if rl_cfg is not None and rl_cfg.use_potential_shaping else 0.0
     phi_holder = [phi_prev]
     original_step_infos: list = []
+    pending_decision: DecisionTransition | None = None
+
+    def _flush_decision() -> None:
+        nonlocal pending_decision
+        if pending_decision is not None and collect_trajectory and trajectory is not None:
+            trajectory.decision_transitions.append(pending_decision)
+        pending_decision = None
+
+    def _aggregate_env_reward(
+        raw_r: float, shaping: float, shaped_r: float, step_info, info: dict,
+    ) -> None:
+        nonlocal pending_decision
+        if pending_decision is not None:
+            pending_decision.raw_reward += raw_r
+            pending_decision.shaped_reward += shaped_r
+            pending_decision.total_reward += shaped_r
+            pending_decision.environment_events.append(dict(info))
+            pending_decision.elapsed_time += float(
+                info.get("delta_travel_time", 0.0)
+                + info.get("waiting", 0.0)
+                + info.get("charging_time", 0.0)
+                + info.get("service_time", 0.0)
+            )
+            if step_info is not None:
+                pending_decision.original_cost_delta += float(step_info.delta_objective)
+        if collect_trajectory and trajectory is not None:
+            trajectory.transitions.append(
+                EpisodeTransition(
+                    is_policy_action=False,
+                    shaped_reward=shaped_r,
+                    raw_reward=raw_r,
+                    shaping_reward=shaping,
+                    step_info=step_info,
+                    action_type=str(info.get("type", "auto_close")),
+                    ev_id=int(info.get("ev_id", -1)),
+                )
+            )
 
     def _append_env_transition(before, info: dict, ctx: StepContext | None = None) -> None:
         raw_r, shaping, shaped_r, step_info = record_transition_reward(
@@ -126,18 +165,7 @@ def run_episode_trajectory(
             phi_prev_holder=phi_holder,
         )
         original_step_infos.append(step_info)
-        if collect_trajectory and trajectory is not None:
-            trajectory.transitions.append(
-                EpisodeTransition(
-                    is_policy_action=False,
-                    shaped_reward=shaped_r,
-                    raw_reward=raw_r,
-                    shaping_reward=shaping,
-                    step_info=step_info,
-                    action_type=str(info.get("type", "auto_close")),
-                    ev_id=int(info.get("ev_id", -1)),
-                )
-            )
+        _aggregate_env_reward(raw_r, shaping, shaped_r, step_info, info)
 
     while not env.is_done():
         ev = env.select_acting_ev()
@@ -157,35 +185,51 @@ def run_episode_trajectory(
 
         before = snapshot_env(env)
         pre_context = env.snapshot_decision_context(ev)
-        pre_expired = count_time_expired_customers(env)
         mask_counts, feasible_mask, mask_reasons = aggregate_mask_reasons(
-            instance, env, ev, use_horizon_check=use_horizon_check, use_depot_charging=use_depot_charging
+            instance, env, ev,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
         )
-        cust_bonus, st_pen, dep_pen = (0.0, 0.0, 0.0)
-        if train_calc is not None:
-            unserved_ratio = 1.0 - env.num_served_customers / max(instance.num_customers, 1)
-            cust_bonus, st_pen, dep_pen = train_calc.training_logit_adjustments(
-                env, ev, feasible_mask, unserved_ratio=unserved_ratio,
+        mask_result = env.last_action_mask_result
+        pre_expired = int(getattr(env, "last_expired_count", 0))
+
+        decision_state = policy.build_decision_state(env, ev, node_embeddings, mask_result)
+        if pending_decision is not None:
+            pending_decision.next_state_features = decision_state
+            _flush_decision()
+
+        action = policy.select_action_from_state(
+            env, ev, node_embeddings, mask_result, decision_state, mode=mode,
+        )
+        need_slack_stats = (
+            train_calc is not None
+            and (
+                train_calc.cfg.use_urgency_bonus
+                or train_calc.cfg.use_urgent_customer_rank_penalty
             )
-        action = policy.select_action(
-            env, ev, node_embeddings, feasible_mask, mode=mode,
-            depot_logit_penalty=dep_pen,
-            customer_logit_bonus=cust_bonus,
-            station_logit_penalty=st_pen,
-            use_dynamic_temporal_bias=training_mode,
         )
-        pre_rank = urgent_rank_stats(env, ev, action.node, feasible_mask)
+        pre_rank = (
+            urgent_rank_stats(env, ev, action.node, feasible_mask)
+            if need_slack_stats
+            else None
+        )
         inst = env.instance
         pre_st_necessary = True
         pre_st_diag: dict[str, float] = {}
-        if inst.nodes[action.node].is_charging_station:
+        # Skip expensive station-usefulness simulation unless the penalty is enabled
+        # and a station was actually selected.
+        if (
+            train_calc is not None
+            and train_calc.cfg.use_unnecessary_station_penalty
+            and inst.nodes[action.node].is_charging_station
+        ):
             pre_st_necessary, pre_st_diag = selected_station_is_necessary(env, ev, action.node)
 
         pre_action_features = env.compute_action_features(
             ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
         )
 
-        if env.hard_time_windows:
+        if env.hard_time_windows and rl_cfg is not None and bool(getattr(rl_cfg, "assert_action_mask", False)):
             try:
                 env.assert_pre_action_consistency(
                     ev, action.node, action.charge_portion, action.depot_finish,
@@ -209,8 +253,11 @@ def run_episode_trajectory(
                 })
                 raise
 
-        info = apply_policy_action(env, ev, action)
-        expired_after = count_time_expired_customers(env)
+        info = apply_policy_action(env, ev, action, mask_result=mask_result)
+        from src.env.feasibility_scratch import feasibility_scratch_scope
+        with feasibility_scratch_scope():
+            env.get_global_serviceability()
+        expired_after = int(getattr(env, "last_expired_count", 0))
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
 
@@ -228,11 +275,11 @@ def run_episode_trajectory(
             service_time=service_t,
             charging_time=charge_t,
             station_necessary=pre_st_necessary,
-            served_slack=pre_rank.served_customer_slack,
-            mean_feasible_slack=pre_rank.mean_feasible_customer_slack,
-            min_feasible_slack=pre_rank.min_feasible_customer_slack,
-            max_feasible_slack=pre_rank.max_feasible_customer_slack,
-            urgency_rank=pre_rank.selected_customer_slack_rank,
+            served_slack=pre_rank.served_customer_slack if pre_rank else 0.0,
+            mean_feasible_slack=pre_rank.mean_feasible_customer_slack if pre_rank else 0.0,
+            min_feasible_slack=pre_rank.min_feasible_customer_slack if pre_rank else 0.0,
+            max_feasible_slack=pre_rank.max_feasible_customer_slack if pre_rank else 0.0,
+            urgency_rank=pre_rank.selected_customer_slack_rank if pre_rank else -1,
             urgent_rank_k=train_calc.cfg.urgent_rank_k if train_calc else 10,
         )
         for k, v in pre_st_diag.items():
@@ -252,6 +299,29 @@ def run_episode_trajectory(
             customer_served=served,
         )
         original_step_infos.append(step_info)
+
+        pending_decision = DecisionTransition(
+            state_features=action.decision_state,
+            decision_state=action.decision_state,
+            decoder_context=action.decoder_context,
+            feasible_mask=feasible_mask.copy(),
+            mask_result=mask_result,
+            action_node=action.node,
+            ev_id=ev.ev_id,
+            node_log_prob=action.node_log_prob,
+            secondary_log_prob=action.secondary_log_prob,
+            total_log_prob=action.log_prob,
+            entropy=action.entropy,
+            charge_portion=action.charge_portion,
+            depot_finish=action.depot_finish,
+            action_type=node_type,
+            raw_reward=raw_r,
+            shaped_reward=shaped_r,
+            total_reward=shaped_r,
+            original_cost_delta=float(step_info.delta_objective) if step_info else 0.0,
+            elapsed_time=float(travel_t + wait_t + service_t + charge_t),
+            step_info=step_info,
+        )
 
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
@@ -277,10 +347,12 @@ def run_episode_trajectory(
                     rl_cfg,
                 )
                 cand_probs = action.node_probs[torch.tensor(cand_idx, device=action.node_probs.device)].detach().cpu()
+            pending_decision.q_candidate_indices = cand_idx
+            pending_decision.q_candidate_probs = cand_probs
             trajectory.transitions.append(
                 EpisodeTransition(
                     is_policy_action=True,
-                    decoder_context=action.decoder_context if action.decoder_context is not None else policy.decoder_context(env, ev, node_embeddings),
+                    decoder_context=pending_decision.decoder_context,
                     feasible_mask=feasible_mask.copy(),
                     node=action.node,
                     ev_id=ev.ev_id,
@@ -307,12 +379,24 @@ def run_episode_trajectory(
     done_reason = env.get_done_reason()
     j, breakdown, summary = env.score(weights)
 
+    if pending_decision is not None:
+        pending_decision.terminal = True
+        pending_decision.next_state_features = None
+        pending_decision.termination_reason = done_reason
+
     training_stats: dict[str, float] = {}
     if train_calc is not None and trajectory is not None:
         before_terminal = snapshot_env(env)
         terminal_info = train_calc.terminal_adjustment(before_terminal, summary)
         trajectory.terminal_info = terminal_info
         step_infos.append(terminal_info)
+        if pending_decision is not None:
+            pending_decision.raw_reward += float(terminal_info.raw_reward)
+            pending_decision.shaped_reward += float(terminal_info.reward)
+            pending_decision.total_reward += float(terminal_info.reward)
+            pending_decision.original_cost_delta += float(terminal_info.delta_objective)
+            pending_decision.environment_events.append({"type": "terminal_adjustment"})
+        _flush_decision()
         training_stats = train_calc.finalize(j)
         training_stats.update(env.get_episode_diagnostics())
         training_stats["depot_recharge_actions"] = float(depot_recharge_actions)
@@ -340,6 +424,22 @@ def run_episode_trajectory(
         trajectory.objective_mismatch = trajectory.original_objective_mismatch
         trajectory.relative_objective_mismatch = rel_orig
         trajectory.reward_breakdown = _aggregate_reward_breakdown(step_infos)
+        if trajectory.decision_transitions:
+            recon_decisions = sum(d.original_cost_delta for d in trajectory.decision_transitions)
+            rel_dec = abs(recon_decisions - j) / max(1.0, abs(j))
+            if rel_dec > 0.01:
+                LOGGER.warning(
+                    "Decision-epoch objective mismatch rel=%.4f (final J=%.4f, reconstructed=%.4f)",
+                    rel_dec, j, recon_decisions,
+                )
+                _save_assert_debug_row({
+                    "kind": "objective_reconstruction_mismatch",
+                    "instance": getattr(instance, "instance_name", "?"),
+                    "final_objective": j,
+                    "reconstructed": recon_decisions,
+                    "relative_mismatch": rel_dec,
+                    "num_decisions": len(trajectory.decision_transitions),
+                })
         if rel_orig > 0.01:
             LOGGER.warning(
                 "Original objective mismatch rel=%.4f (final J=%.4f, reconstructed=%.4f)",
@@ -355,6 +455,11 @@ def run_episode_trajectory(
         terminal_info = reward_calculator.terminal_adjustment(before_terminal, summary)
         trajectory.terminal_info = terminal_info
         step_infos.append(terminal_info)
+        if pending_decision is not None:
+            pending_decision.raw_reward += float(terminal_info.raw_reward)
+            pending_decision.shaped_reward += float(terminal_info.reward)
+            pending_decision.original_cost_delta += float(terminal_info.delta_objective)
+        _flush_decision()
         mismatch, rel_mismatch, ok = reward_calculator.verify_alignment(step_infos, j)
         trajectory.objective = j
         trajectory.reconstructed_objective = sum(s.delta_objective for s in step_infos)
@@ -382,6 +487,8 @@ def run_episode_trajectory(
         done_reason=done_reason,
         fleet_size=m,
     )
+    if trajectory is not None:
+        trajectory.terminal_feasible = bool(result.feasible)
     return result, trajectory
 
 
@@ -423,6 +530,7 @@ def run_multi_sample_rollout_baseline(
     max_steps_factor: int = 6,
     min_decisions_warn: int | None = None,
     cycle_id: int = 1,
+    environment_config: dict | None = None,
 ) -> tuple[list[tuple[EpisodeResult, Trajectory]], float]:
     """Run K sampled rollouts and return trajectories with group baseline on terminal reward."""
     K = rl_cfg.effective_multi_sample_k()
@@ -442,6 +550,7 @@ def run_multi_sample_rollout_baseline(
             cycle_id=cycle_id,
             training_mode=True,
             hard_time_windows=True,
+            environment_config=environment_config,
         )
         assert traj is not None
         tr = float(getattr(traj, "training_stats", {}).get(

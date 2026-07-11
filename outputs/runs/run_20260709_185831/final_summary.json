@@ -1,0 +1,69 @@
+{
+  "run_id": "run_20260709_185831",
+  "epochs": 130,
+  "num_train_instances": 13,
+  "log_path": "outputs\\logs\\train_log.jsonl",
+  "run_dir": "outputs\\runs\\run_20260709_185831",
+  "algorithm": "actor_critic",
+  "best_reward": 61.235813029035725,
+  "best_cost": 25282.925551123022,
+  "best_feasibility_rate": 1.0,
+  "final_reward": 57.805245481577906,
+  "final_cost": 26188.50650702572,
+  "final_feasibility_rate": 1.0,
+  "final_served_rate": 1.0,
+  "final_avg_used_evs": 20.0,
+  "final_avg_distance": 4119.020324230194,
+  "final_avg_violation": 0.0,
+  "holdout_instances": {
+    "train_instances": [
+      "rc102_21",
+      "rc103_21",
+      "rc105_21",
+      "rc106_21",
+      "rc107_21",
+      "rc108_21",
+      "rc201_21",
+      "rc202_21",
+      "rc203_21",
+      "rc204_21",
+      "rc205_21",
+      "rc206_21",
+      "rc207_21"
+    ],
+    "eval_instances": [
+      "rc101_21",
+      "rc104_21",
+      "rc208_21"
+    ],
+    "total_rc21_found": 16,
+    "all_rc21_instances": [
+      "rc101_21",
+      "rc102_21",
+      "rc103_21",
+      "rc104_21",
+      "rc105_21",
+      "rc106_21",
+      "rc107_21",
+      "rc108_21",
+      "rc201_21",
+      "rc202_21",
+      "rc203_21",
+      "rc204_21",
+      "rc205_21",
+      "rc206_21",
+      "rc207_21",
+      "rc208_21"
+    ],
+    "num_train": 13,
+    "num_eval": 3,
+    "expected_train_count": 13,
+    "expected_eval_count": 3
+  },
+  "training_dashboard": {
+    "html": "outputs\\figures\\training\\index.html",
+    "figures_index": "outputs\\figures\\training\\figures_index.md",
+    "figures_generated": 44,
+    "figures_total": 44
+  }
+}

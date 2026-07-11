@@ -32,6 +32,7 @@ class EVState:
     busy: bool = False
     finished: bool = False
     current_reserved_customer: int | None = None
+    steps_since_last_customer_service: int = 0
 
     @classmethod
     def initial(cls, ev_id: int, depot_index: int, battery_capacity: float, load_capacity: float) -> "EVState":

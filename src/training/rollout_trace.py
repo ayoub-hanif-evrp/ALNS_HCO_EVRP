@@ -129,15 +129,13 @@ def run_traced_episode(
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
         )
+        mask_result = env.last_action_mask_result
         mc = mask_counts.to_dict()
         n_feas_cust = int(mc.get("feasible_customers_count", 0))
         n_feas_st = int(mc.get("feasible_stations_count", 0))
         n_feas_dep = int(mc.get("feasible_depot", 0))
 
-        action = policy.select_action(
-            env, ev, node_embeddings, feasible_mask, mode=mode,
-            use_dynamic_temporal_bias=False,
-        )
+        action = policy.select_action(env, ev, node_embeddings, mask_result, mode=mode)
 
         batt_before = float(ev.remaining_battery)
         time_before = float(ev.current_time)
@@ -145,7 +143,9 @@ def run_traced_episode(
         pre_expired = count_time_expired_customers(env)
         pre_served = int(env.num_served_customers)
 
-        info = apply_policy_action(env, ev, action)
+        info = apply_policy_action(
+            env, ev, action, mask_result=mask_result, collect_diagnostics=True,
+        )
         node = inst.nodes[action.node]
         atype = str(info.get("type", "unknown"))
         if node.is_depot and action.depot_finish:

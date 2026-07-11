@@ -1,4 +1,4 @@
-"""Actor-critic training step (centralized V + optional Q, memory-safe)."""
+"""Actor-critic training step (centralized fleet critic + optional Q, memory-safe)."""
 from __future__ import annotations
 
 import numpy as np
@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 
 from src.env.cost import CostWeights, training_reward
-from src.models.critic import QCritic, ValueCritic
-from src.training.actor_critic import RLConfig, actor_critic_loss
+from src.models.critic import CentralFleetValueCritic, QCritic
+from src.training.actor_critic import RLConfig, ActorCriticLossOut, actor_critic_loss
 from src.training.flat_schedule import sample_fleet_size
 from src.training.rl_memory import cuda_memory_stats, reset_cuda_peak_stats
 from src.training.rollout_ac import run_multi_sample_rollout_baseline
@@ -21,14 +21,14 @@ def build_critics(
     device: torch.device | str,
     *,
     build_q: bool = True,
-) -> tuple[ValueCritic, QCritic | None]:
+) -> tuple[CentralFleetValueCritic, QCritic | None]:
     d = policy.embedding_dim
-    value_critic = ValueCritic(d).to(device)
+    value_critic = CentralFleetValueCritic(d).to(device)
     q_critic = QCritic(d).to(device) if build_q else None
     return value_critic, q_critic
 
 
-def critic_parameters(value_critic: ValueCritic, q_critic: QCritic | None) -> list[nn.Parameter]:
+def critic_parameters(value_critic: CentralFleetValueCritic, q_critic: QCritic | None) -> list[nn.Parameter]:
     params = list(value_critic.parameters())
     if q_critic is not None:
         params += list(q_critic.parameters())
@@ -41,7 +41,7 @@ def _flat_params(module: torch.nn.Module) -> torch.Tensor:
 
 def actor_critic_train_step(
     policy,
-    value_critic: ValueCritic,
+    value_critic: CentralFleetValueCritic,
     q_critic: QCritic | None,
     optimizer: torch.optim.Optimizer,
     critic_optimizer: torch.optim.Optimizer,
@@ -57,7 +57,8 @@ def actor_critic_train_step(
     rng,
     rl_cfg: RLConfig,
     entropy_coef: float,
-    grad_clip: float,
+    actor_grad_clip: float,
+    critic_grad_clip: float,
     min_decisions_warn: int | None = None,
     *,
     global_epoch: int = 0,
@@ -66,9 +67,10 @@ def actor_critic_train_step(
     gradient_accumulation_steps: int = 1,
     scaler: torch.amp.GradScaler | None = None,
     critic_warmup_steps: int = 0,
-    critic_updates_per_step: int = 1,
+    critic_updates_per_step: int = 2,
+    environment_config: dict | None = None,
 ) -> dict:
-    """One actor-critic update with per-rollout backward for memory safety."""
+    """One actor-critic update: separate critic passes then actor pass."""
     policy.train()
     value_critic.train()
     if q_critic is not None:
@@ -76,6 +78,7 @@ def actor_critic_train_step(
 
     device_t = torch.device(device) if isinstance(device, str) else device
     use_q_now = rl_cfg.q_critic_active(global_epoch) and q_critic is not None
+    use_huber = str(rl_cfg.critic_loss_type).lower() == "huber"
 
     raw_costs, feas_flags = [], []
     used_evs_list, dist_list, charge_list, price_list, wait_list = [], [], [], [], []
@@ -110,12 +113,13 @@ def actor_critic_train_step(
     actor_params_before = _flat_params(policy)
     critic_params_before = _flat_params(value_critic)
 
-    optimizer.zero_grad(set_to_none=True)
-    critic_optimizer.zero_grad(set_to_none=True)
     reset_cuda_peak_stats(device_t)
-
-    total_rollouts = 0
     accum = max(1, int(gradient_accumulation_steps))
+    critic_passes = max(1, int(critic_updates_per_step))
+    metrics_out: ActorCriticLossOut | None = None
+
+    rollout_pairs: list[tuple] = []
+    total_rollouts = 0
 
     for idx in batch_idx:
         instance = train_ds[idx]
@@ -128,51 +132,12 @@ def actor_critic_train_step(
             max_steps_factor=max_steps_factor,
             min_decisions_warn=min_decisions_warn,
             cycle_id=cycle_id,
+            environment_config=environment_config,
         )
-        n_roll = max(1, len(rollouts))
         for result, trajectory in rollouts:
             total_rollouts += 1
+            rollout_pairs.append((result, trajectory, instance))
 
-            def _compute_loss():
-                return actor_critic_loss(
-                    trajectory, value_critic, q_critic, rl_cfg,
-                    multi_sample_advantage=(
-                        trajectory.multi_sample_advantage
-                        if rl_cfg.use_multi_sample_rollout_baseline
-                        else None
-                    ),
-                    device=device,
-                    global_epoch=global_epoch,
-                    use_q_critic=use_q_now,
-                )
-
-            # Keep loss / critic regression in fp32 — large terminal rewards overflow fp16 grads.
-            out = _compute_loss()
-            critic_mult = max(1, int(critic_updates_per_step))
-            scaled = (out.actor_loss - rl_cfg.entropy_coef * out.entropy_term) / (n_roll * accum)
-            scaled = scaled + (rl_cfg.critic_coef * critic_mult * out.critic_loss) / (n_roll * accum)
-            if use_q_now and out.q_critic_loss.requires_grad:
-                scaled = scaled + (rl_cfg.q_critic_coef * out.q_critic_loss) / (n_roll * accum)
-            if use_amp and device_t.type == "cuda" and scaler is not None:
-                scaler.scale(scaled).backward()
-            else:
-                scaled.backward()
-
-            actor_losses.append(out.actor_loss.detach())
-            critic_losses.append(out.critic_loss.detach())
-            q_losses.append(out.q_critic_loss.detach())
-            entropies.append(out.entropy_term.detach())
-            adv_list.append(float(out.advantages.mean().detach()))
-            adv_min_list.append(out.advantage_min)
-            adv_max_list.append(out.advantage_max)
-            log_prob_list.append(out.mean_log_prob)
-            ev_list.append(out.explained_var)
-            cf_adv_list.append(out.counterfactual_advantage_mean)
-            value_mean_list.append(out.value_mean)
-            value_std_list.append(out.value_std)
-            return_mean_list.append(out.return_mean)
-            return_std_list.append(out.return_std)
-            q_cand_list.append(out.mean_q_candidates)
             num_decisions_list.append(trajectory.num_steps)
             feas_action_list.append(trajectory.mean_feasible_actions())
             ts = getattr(trajectory, "training_stats", None) or {}
@@ -205,53 +170,106 @@ def actor_critic_train_step(
                 num_nodes_list, reconstructed_list, breakdown_acc,
                 customer_lateness_list, depot_lateness_list,
             )
-            del out
 
-            if device_t.type == "cuda" and total_rollouts % max(1, n_roll) == 0:
+            if device_t.type == "cuda" and total_rollouts % max(1, len(rollouts)) == 0:
                 torch.cuda.empty_cache()
 
-    if not actor_losses:
+    n_roll = max(1, len(rollout_pairs))
+    if not rollout_pairs:
         return {"loss": 0.0, "algorithm": "actor_critic"}
 
-    critic_only = global_epoch < int(critic_warmup_steps)
+    def _compute_loss(pair, **kwargs):
+        _, trajectory, _ = pair
+        return actor_critic_loss(
+            trajectory, value_critic, q_critic, rl_cfg,
+            multi_sample_advantage=(
+                trajectory.multi_sample_advantage
+                if rl_cfg.use_multi_sample_rollout_baseline
+                else None
+            ),
+            device=device,
+            global_epoch=global_epoch,
+            use_q_critic=use_q_now,
+            use_huber=use_huber,
+            **kwargs,
+        )
+
+  # Metrics from the last backward pass (avoid an extra forward-only pass).
+    critic_only_warmup = global_epoch < int(critic_warmup_steps)
     actor_grad_norm = torch.tensor(0.0)
     critic_grad_norm = torch.tensor(0.0)
+    grad_norm = torch.tensor(0.0)
 
-    if use_amp and device_t.type == "cuda" and scaler is not None:
-        scaler.unscale_(optimizer)
-        scaler.unscale_(critic_optimizer)
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), grad_clip)
+    for _pass in range(critic_passes):
+        critic_optimizer.zero_grad(set_to_none=True)
+        for pair in rollout_pairs:
+            out = _compute_loss(pair, critic_only=True)
+            metrics_out = out
+            scaled = (rl_cfg.critic_coef * out.critic_loss) / (n_roll * accum)
+            if use_amp and device_t.type == "cuda" and scaler is not None:
+                scaler.scale(scaled).backward()
+            else:
+                scaled.backward()
+
+        if use_amp and device_t.type == "cuda" and scaler is not None:
+            scaler.unscale_(critic_optimizer)
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            critic_parameters(value_critic, q_critic), grad_clip,
+            critic_parameters(value_critic, q_critic), critic_grad_clip,
         )
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            list(policy.parameters()) + critic_parameters(value_critic, q_critic), grad_clip,
-        )
-        if not torch.isfinite(grad_norm):
-            optimizer.zero_grad(set_to_none=True)
+        if not torch.isfinite(critic_grad_norm):
             critic_optimizer.zero_grad(set_to_none=True)
-            scaler.update()
-            LOGGER.warning("Skipping optimizer step: non-finite gradient norm (%.4g)", float(grad_norm))
-            grad_norm = torch.tensor(float("nan"))
-        else:
-            if not critic_only:
-                scaler.step(optimizer)
+            LOGGER.warning("Skipping critic step: non-finite gradient norm")
+        elif use_amp and device_t.type == "cuda" and scaler is not None:
             scaler.step(critic_optimizer)
             scaler.update()
-    else:
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), grad_clip)
-        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            critic_parameters(value_critic, q_critic), grad_clip,
-        )
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            list(policy.parameters()) + critic_parameters(value_critic, q_critic), grad_clip,
-        )
-        if not critic_only:
+        else:
+            critic_optimizer.step()
+
+    if not critic_only_warmup:
+        optimizer.zero_grad(set_to_none=True)
+        for pair in rollout_pairs:
+            out = _compute_loss(pair, actor_only=True)
+            metrics_out = out
+            scaled = (out.actor_loss - entropy_coef * out.entropy_term) / (n_roll * accum)
+            if use_q_now and out.q_critic_loss.requires_grad:
+                scaled = scaled + (rl_cfg.q_critic_coef * out.q_critic_loss) / (n_roll * accum)
+            if use_amp and device_t.type == "cuda" and scaler is not None:
+                scaler.scale(scaled).backward()
+            else:
+                scaled.backward()
+
+        if use_amp and device_t.type == "cuda" and scaler is not None:
+            scaler.unscale_(optimizer)
+        actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), actor_grad_clip)
+        grad_norm = actor_grad_norm
+        if not torch.isfinite(actor_grad_norm):
+            optimizer.zero_grad(set_to_none=True)
+            LOGGER.warning("Skipping actor step: non-finite gradient norm")
+        elif use_amp and device_t.type == "cuda" and scaler is not None:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
             optimizer.step()
-        critic_optimizer.step()
 
     actor_param_delta = float(torch.norm(_flat_params(policy) - actor_params_before).item())
     critic_param_delta = float(torch.norm(_flat_params(value_critic) - critic_params_before).item())
+
+    if metrics_out is not None:
+        actor_losses.append(metrics_out.actor_loss.detach())
+        critic_losses.append(metrics_out.critic_loss.detach())
+        q_losses.append(metrics_out.q_critic_loss.detach())
+        entropies.append(metrics_out.entropy_term.detach())
+        adv_list.append(float(metrics_out.advantages.mean().detach()))
+        adv_min_list.append(metrics_out.advantage_min)
+        adv_max_list.append(metrics_out.advantage_max)
+        log_prob_list.append(metrics_out.mean_log_prob)
+        ev_list.append(metrics_out.explained_var)
+        cf_adv_list.append(metrics_out.counterfactual_advantage_mean)
+        value_mean_list.append(metrics_out.value_mean)
+        value_std_list.append(metrics_out.value_std)
+        return_mean_list.append(metrics_out.return_mean)
+        return_std_list.append(metrics_out.return_std)
+        q_cand_list.append(metrics_out.mean_q_candidates)
 
     mem = cuda_memory_stats(device_t)
     breakdown_means = {}
@@ -272,11 +290,11 @@ def actor_critic_train_step(
             np.mean([training_reward(c, rl_cfg.reward_scale) for c in raw_costs])
         ),
         "reward_scale": rl_cfg.reward_scale,
-        "loss": float(torch.stack(actor_losses).mean().item()),
-        "actor_loss": float(torch.stack(actor_losses).mean().item()),
-        "critic_loss": float(torch.stack(critic_losses).mean().item()),
+        "loss": float(torch.stack(actor_losses).mean().item()) if actor_losses else 0.0,
+        "actor_loss": float(torch.stack(actor_losses).mean().item()) if actor_losses else 0.0,
+        "critic_loss": float(torch.stack(critic_losses).mean().item()) if critic_losses else 0.0,
         "q_critic_loss": float(torch.stack(q_losses).mean().item()) if q_losses else 0.0,
-        "entropy": float(torch.stack(entropies).mean().item()),
+        "entropy": float(torch.stack(entropies).mean().item()) if entropies else 0.0,
         "advantage": float(np.mean(adv_list)),
         "advantage_std": float(np.std(adv_list)) if adv_list else 0.0,
         "advantage_min": float(np.min(adv_min_list)) if adv_min_list else 0.0,
@@ -353,7 +371,8 @@ def actor_critic_train_step(
             if feas_action_list and num_nodes_list else 0.0
         ),
         "total_loss": float(
-            torch.stack(actor_losses).mean().item() + torch.stack(critic_losses).mean().item()
+            (torch.stack(actor_losses).mean().item() if actor_losses else 0.0)
+            + (torch.stack(critic_losses).mean().item() if critic_losses else 0.0)
             + (torch.stack(q_losses).mean().item() if q_losses else 0.0)
         ),
         "multi_sample_K": rl_cfg.effective_multi_sample_k(),

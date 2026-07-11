@@ -389,9 +389,11 @@ class TrainingRewardCalculator:
         *,
         unserved_ratio: float,
     ) -> tuple[float, float, float]:
-        """Return (customer_bonus, station_penalty, depot_penalty) for logit bias."""
-        from src.env.tw_diagnostics import selected_station_is_necessary
+        """Return (customer_bonus, station_penalty, depot_penalty) for logit bias.
 
+        Uses a cheap customer-priority bias: when feasible customers remain, apply a
+        flat station logit penalty instead of per-station usefulness checks.
+        """
         cust_bonus = 0.0
         st_pen = 0.0
         dep_pen = self.depot_logit_penalty(env) if self.cfg.use_depot_logit_penalty else 0.0
@@ -401,12 +403,9 @@ class TrainingRewardCalculator:
         )
         if self.cfg.use_customer_priority_logit_bias and any_customer:
             cust_bonus = self.cfg.customer_logit_bonus
-        if self.cfg.use_customer_priority_logit_bias:
-            for s in inst.charging_station_indices:
-                if feasible_mask[s]:
-                    necessary, _ = selected_station_is_necessary(env, ev, s)
-                    if not necessary:
-                        st_pen = max(st_pen, self.cfg.unnecessary_station_logit_penalty)
+            # Flat bias — avoid O(#stations) usefulness simulations every decision.
+            if any(feasible_mask[s] for s in inst.charging_station_indices):
+                st_pen = self.cfg.unnecessary_station_logit_penalty
         self.stats.mask_reason_totals["customer_logit_bonus_applied"] = (
             self.stats.mask_reason_totals.get("customer_logit_bonus_applied", 0.0) + cust_bonus
         )
@@ -416,6 +415,7 @@ class TrainingRewardCalculator:
         self.stats.mask_reason_totals["depot_logit_penalty_applied"] = (
             self.stats.mask_reason_totals.get("depot_logit_penalty_applied", 0.0) + dep_pen
         )
+        _ = ev, unserved_ratio
         return cust_bonus, st_pen, dep_pen
 
     def depot_logit_penalty(self, env) -> float:

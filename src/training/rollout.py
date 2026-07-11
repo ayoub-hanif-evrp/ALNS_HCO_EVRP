@@ -75,11 +75,12 @@ def run_episode(
         if _step_or_close(env, ev):
             continue
         feasible_mask, _ = env.feasible_mask(ev)
-        action = policy.select_action(env, ev, node_embeddings, feasible_mask, mode=mode)
+        mask_result = env.last_action_mask_result
+        action = policy.select_action(env, ev, node_embeddings, mask_result, mode=mode)
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
         num_decisions += 1
-        apply_policy_action(env, ev, action)
+        apply_policy_action(env, ev, action, mask_result=mask_result)
 
     for ev in env.evs:
         if not ev.finished:

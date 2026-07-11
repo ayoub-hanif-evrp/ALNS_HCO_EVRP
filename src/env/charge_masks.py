@@ -145,7 +145,7 @@ def feasible_charge_portions(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
-    """Boolean mask over charge portions with explicit battery+time depot checks."""
+    """Boolean mask over charge portions with full continuation checks."""
     p_list = list(portions or CHARGE_PORTIONS)
     mask = np.zeros(len(p_list), dtype=bool)
     reasons: list[str] = [""] * len(p_list)
@@ -153,7 +153,7 @@ def feasible_charge_portions(
     i = ev.current_node
     energy_to = float(instance.energy_matrix[i, node])
     if ev.remaining_battery + EPS < energy_to:
-        return mask, ["station_unreachable_battery"] * len(p_list)
+        return mask, ["station_battery_unreachable"] * len(p_list)
 
     for idx, p in enumerate(p_list):
         departure, batt, _, _ = simulate_recharge_departure(instance, ev, node, p, free=free)

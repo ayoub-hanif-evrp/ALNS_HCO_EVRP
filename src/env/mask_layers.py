@@ -1,0 +1,278 @@
+"""Hard feasibility vs optional heuristic pruning mask layers."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .action_space import (
+    ActionProgressTracker,
+    FeasibleActionSummary,
+    GlobalServiceability,
+    compute_depot_finish_validity,
+    compute_depot_recharge_usefulness,
+    compute_station_usefulness,
+    would_be_no_progress_action,
+)
+from .charge_masks import feasible_charge_portions
+from .ev_state import EVState
+from .masks import (
+    customer_feasible,
+    depot_finish_feasible,
+    depot_recharge_feasible,
+    station_feasible,
+)
+
+
+@dataclass
+class ActionPruningConfig:
+    enabled: bool = True
+    block_no_progress_loops: bool = True
+    prune_dominated_stations: bool = True
+
+    @classmethod
+    def from_env_config(cls, cfg: dict | None) -> "ActionPruningConfig":
+        raw = (cfg or {}).get("action_pruning") or {}
+        return cls(
+            enabled=bool(raw.get("enabled", True)),
+            block_no_progress_loops=bool(raw.get("block_no_progress_loops", True)),
+            prune_dominated_stations=bool(raw.get("prune_dominated_stations", True)),
+        )
+
+
+def _hard_reason(reason: str) -> str:
+    if reason.startswith("hard_"):
+        return reason
+    return f"hard_{reason}"
+
+
+def _prune_reason(reason: str) -> str:
+    if reason.startswith("pruned_"):
+        return reason
+    return f"pruned_{reason}"
+
+
+def compute_hard_feasibility_mask(
+    instance,
+    env_state,
+    ev: EVState,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> tuple[np.ndarray, dict[int, str], dict[int, np.ndarray], dict[int, list[str]], np.ndarray, list[str]]:
+    """Physical EVRPTW feasibility only — no usefulness or dominance pruning."""
+    n = instance.num_nodes
+    hard = np.zeros(n, dtype=bool)
+    hard_reasons: dict[int, str] = {}
+    hard_charge: dict[int, np.ndarray] = {}
+    hard_charge_reasons: dict[int, list[str]] = {}
+    served = env_state.served_mask
+    reserved = env_state.reserved_mask
+    portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
+    all_done = env_state.num_served_customers >= instance.num_customers
+
+    for j in instance.customer_indices:
+        ok, reason = customer_feasible(
+            instance, ev, j, served, reserved,
+            use_horizon_check, use_depot_charging, portions,
+        )
+        hard[j] = ok
+        if not ok:
+            hard_reasons[j] = _hard_reason(reason)
+
+    for s in instance.charging_station_indices:
+        ok, reason = station_feasible(
+            instance, ev, s, served, reserved,
+            use_horizon_check, use_depot_charging, portions,
+        )
+        if not ok:
+            hard[s] = False
+            hard_reasons[s] = _hard_reason(reason)
+            continue
+        cm, cr = feasible_charge_portions(
+            instance, ev, s, served, reserved, portions,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+        )
+        if not cm.any():
+            hard[s] = False
+            hard_reasons[s] = "hard_station_no_feasible_charge"
+            continue
+        hard[s] = True
+        hard_reasons[s] = "hard_station_feasible"
+        hard_charge[s] = cm
+        hard_charge_reasons[s] = cr
+
+    depot = instance.depot_index
+    ok_finish_phys, finish_reason = depot_finish_feasible(instance, ev, use_horizon_check)
+    hard_finish = False
+    finish_hard_reason = _hard_reason(finish_reason)
+    if all_done and ok_finish_phys:
+        hard_finish = True
+        finish_hard_reason = "finish_all_customers_served"
+    elif ok_finish_phys:
+        hard_customers = [c for c in instance.customer_indices if hard[c]]
+        if hard_customers:
+            hard_finish = False
+            finish_hard_reason = "finish_invalid_customer_available"
+        else:
+            hard_finish = True
+            finish_hard_reason = "hard_depot_finish_physical"
+
+    ok_recharge_phys, recharge_reason = depot_recharge_feasible(
+        instance, ev, served, reserved,
+        use_depot_charging, use_horizon_check, portions,
+    )
+    hard_recharge = False
+    recharge_hard_reason = _hard_reason(recharge_reason)
+    if ok_recharge_phys and not all_done:
+        cm, cr = feasible_charge_portions(
+            instance, ev, depot, served, reserved, portions,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+        )
+        if cm.any():
+            hard_recharge = True
+            recharge_hard_reason = "hard_depot_recharge_feasible"
+            hard_charge[depot] = cm
+            hard_charge_reasons[depot] = cr
+        else:
+            recharge_hard_reason = "hard_depot_no_feasible_charge"
+
+    hard[depot] = hard_recharge or hard_finish
+    if hard[depot]:
+        hard_reasons[depot] = recharge_hard_reason if hard_recharge else finish_hard_reason
+    else:
+        hard_reasons[depot] = finish_hard_reason if not hard_recharge else recharge_hard_reason
+
+    depot_mode_mask = np.array([hard_recharge, hard_finish], dtype=bool)
+    depot_mode_reasons = [recharge_hard_reason, finish_hard_reason]
+    return hard, hard_reasons, hard_charge, hard_charge_reasons, depot_mode_mask, depot_mode_reasons
+
+
+def compute_optional_pruning_mask(
+    instance,
+    env_state,
+    ev: EVState,
+    hard_mask: np.ndarray,
+    hard_reasons: dict[int, str],
+    *,
+    hard_depot_mode: np.ndarray,
+    global_svc: GlobalServiceability,
+    pruning: ActionPruningConfig,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> tuple[np.ndarray, dict[int, str], np.ndarray, list[str], dict[int, np.ndarray], dict[int, list[str]]]:
+    """Heuristic pruning layer — True means action survives pruning."""
+    n = instance.num_nodes
+    pruning_mask = hard_mask.copy()
+    pruning_reasons: dict[int, str] = {}
+    served = env_state.served_mask
+    reserved = env_state.reserved_mask
+    all_done = env_state.num_served_customers >= instance.num_customers
+    progress: ActionProgressTracker | None = getattr(env_state, "progress_tracker", None)
+    portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
+
+    if not pruning.enabled:
+        prune_charge = {k: np.ones_like(v, dtype=bool) for k, v in getattr(env_state, "_hard_charge", {}).items()}
+        return pruning_mask, pruning_reasons, np.array([True, True]), ["", ""], prune_charge, {}
+
+    for s in instance.charging_station_indices:
+        if not hard_mask[s]:
+            continue
+        usefulness = compute_station_usefulness(
+            instance, ev, s, served, reserved,
+            all_customers_served=all_done,
+            global_svc=global_svc,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=portions,
+        )
+        if pruning.prune_dominated_stations and not usefulness.useful:
+            pruning_mask[s] = False
+            pruning_reasons[s] = _prune_reason(usefulness.reason)
+            continue
+        if pruning.block_no_progress_loops:
+            no_prog, np_reason = would_be_no_progress_action(
+                instance, ev, s, served, reserved,
+                action_kind="station", depot_finish=False,
+                all_customers_served=all_done,
+                global_svc=global_svc,
+                progress=progress,
+                use_horizon_check=use_horizon_check,
+                use_depot_charging=use_depot_charging,
+                charging_portions=portions,
+            )
+            if no_prog:
+                pruning_mask[s] = False
+                pruning_reasons[s] = _prune_reason(np_reason)
+
+    depot = instance.depot_index
+    finish_val = compute_depot_finish_validity(
+        instance, ev, served, reserved, env_state.num_served_customers,
+        global_svc=global_svc,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=portions,
+    )
+    hard_recharge = bool(hard_depot_mode[0])
+    useful_recharge, ur_reason, _ = compute_depot_recharge_usefulness(
+        instance, ev, served, reserved,
+        all_customers_served=all_done,
+        global_svc=global_svc,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=portions,
+    )
+    allow_recharge = hard_recharge and useful_recharge
+    if hard_recharge and not useful_recharge:
+        pruning_reasons[depot] = _prune_reason(ur_reason)
+    if hard_recharge and useful_recharge and pruning.block_no_progress_loops:
+        no_prog, np_reason = would_be_no_progress_action(
+            instance, ev, depot, served, reserved,
+            action_kind="depot_recharge", depot_finish=False,
+            all_customers_served=all_done,
+            global_svc=global_svc,
+            progress=progress,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=portions,
+        )
+        if no_prog:
+            allow_recharge = False
+            pruning_reasons[depot] = _prune_reason(np_reason)
+
+    allow_finish = finish_val.valid and finish_val.category in {"valid", "forced"}
+    if not allow_finish and finish_val.category == "invalid":
+        pruning_reasons[depot] = finish_val.reason
+
+    pruning_mask[depot] = allow_recharge or allow_finish
+    depot_prune = np.array([allow_recharge, allow_finish], dtype=bool)
+    depot_prune_reasons = [
+        "" if allow_recharge else pruning_reasons.get(depot, finish_val.reason),
+        finish_val.reason if allow_finish else finish_val.reason,
+    ]
+
+    prune_charge: dict[int, np.ndarray] = {}
+    prune_charge_reasons: dict[int, list[str]] = {}
+    return pruning_mask, pruning_reasons, depot_prune, depot_prune_reasons, prune_charge, prune_charge_reasons
+
+
+def combine_mask_layers(
+    hard_mask: np.ndarray,
+    pruning_mask: np.ndarray,
+    hard_reasons: dict[int, str],
+    pruning_reasons: dict[int, str],
+) -> tuple[np.ndarray, dict[int, str]]:
+    final = hard_mask & pruning_mask
+    final_reasons: dict[int, str] = {}
+    for idx in range(len(final)):
+        if final[idx]:
+            continue
+        if not hard_mask[idx]:
+            final_reasons[idx] = hard_reasons.get(idx, "hard_infeasible")
+        else:
+            final_reasons[idx] = pruning_reasons.get(idx, "pruned")
+    return final, final_reasons

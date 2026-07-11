@@ -24,7 +24,7 @@ def test_served_and_reserved_are_masked(small_instance):
     ev2 = env.evs[1]
     mask2, reasons2 = env.feasible_mask(ev2)
     assert not mask2[j]
-    assert reasons2[j] == "reserved_by_other"
+    assert reasons2[j] == "customer_reserved"
 
 
 def test_energy_cannot_reach_is_masked(small_instance):
@@ -36,11 +36,12 @@ def test_energy_cannot_reach_is_masked(small_instance):
     for j in small_instance.customer_indices:
         assert not mask[j]
         assert reasons[j] in {
-            "battery_cannot_reach",
-            "battery_would_strand",
+            "customer_battery_unreachable",
+            "customer_no_safe_direct_depot",
+            "customer_no_reachable_station",
+            "customer_station_has_no_feasible_charge",
+            "customer_no_safe_continuation",
             "customer_infeasible_after_service_battery",
-            "customer_infeasible_no_safe_continuation",
-            "customer_infeasible_no_reachable_station_or_depot",
         }
 
 
@@ -58,9 +59,10 @@ def test_battery_would_strand_rule(small_instance):
                                    env.use_depot_charging, env.charging_portions)
     assert not ok
     assert reason in {
-        "battery_would_strand",
-        "customer_infeasible_no_safe_continuation",
-        "customer_infeasible_no_reachable_station_or_depot",
+        "customer_no_safe_direct_depot",
+        "customer_no_reachable_station",
+        "customer_station_has_no_feasible_charge",
+        "customer_no_safe_continuation",
         "customer_infeasible_after_service_battery",
     }
 
@@ -73,7 +75,7 @@ def test_capacity_exceeded_is_masked(small_instance):
     ev.remaining_capacity = inst.nodes[j].demand - 1.0
     ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, True)
     assert not ok
-    assert reason == "capacity_exceeded"
+    assert reason == "customer_capacity_infeasible"
 
 
 def test_time_window_late_when_service_start_exceeds_due(small_instance):
@@ -87,7 +89,7 @@ def test_time_window_late_when_service_start_exceeds_due(small_instance):
     ev.current_time = float(node.due_time) - travel + 1.0
     ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, use_horizon_check=False)
     assert not ok
-    assert reason == "time_window_late"
+    assert reason == "customer_time_window_infeasible"
 
 
 def test_time_window_late_is_masked(small_instance):
@@ -99,7 +101,7 @@ def test_time_window_late_is_masked(small_instance):
     ev.current_time = inst.nodes[j].due_time + 1000.0
     ok, reason = customer_feasible(inst, ev, j, env.served_mask, env.reserved_mask, use_horizon_check=False)
     assert not ok
-    assert reason == "time_window_late"
+    assert reason == "customer_time_window_infeasible"
 
 
 def test_early_arrival_is_feasible_with_waiting(small_instance):
@@ -119,9 +121,11 @@ def test_early_arrival_is_feasible_with_waiting(small_instance):
                                    use_depot_charging=env.use_depot_charging, charging_portions=env.charging_portions)
     # Early arrival is allowed (waiting), not infeasible due to the window.
     assert ok or reason in {
-        "battery_would_strand", "battery_cannot_reach",
-        "customer_infeasible_no_safe_continuation",
-        "customer_infeasible_no_reachable_station_or_depot",
+        "customer_battery_unreachable",
+        "customer_no_safe_direct_depot",
+        "customer_no_reachable_station",
+        "customer_station_has_no_feasible_charge",
+        "customer_no_safe_continuation",
     }
 
 
@@ -133,7 +137,7 @@ def test_station_self_loop_masked(small_instance):
     ev.current_node = s
     mask, reasons = env.feasible_mask(ev)
     assert not mask[s]
-    assert reasons[s] == "station_self_loop"
+    assert reasons[s] in {"station_loop_blocked", "station_no_useful_continuation", "station_no_progress"}
 
 
 def test_depot_return_window_blocks_customer(small_instance):

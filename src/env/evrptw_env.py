@@ -46,6 +46,8 @@ class EVRPTWEnv:
         self.use_horizon_check = use_horizon_check
         self.use_depot_charging = bool(use_depot_charging)
         self.hard_time_windows = bool(hard_time_windows)
+        self.mask_semantics = "exact_original_evrptw"
+        self.state_version = 0
         self.max_steps = max(50, max_steps_factor * max(instance.num_customers, 1))
         self.reset()
 
@@ -96,6 +98,7 @@ class EVRPTWEnv:
         self.progress_tracker = ActionProgressTracker()
         self.last_feasible_summary = None
         self.last_global_serviceability = None
+        self._global_serviceability_cache = None
         self.max_steps_reached = False
         self.max_step_penalty = 0.0
         self.terminal_no_safe_return = False
@@ -103,6 +106,13 @@ class EVRPTWEnv:
         self.station_actions = 0
         self.noop_actions = 0
         self.forced_closure_count = 0
+        self.state_version = 0
+        self.last_action_mask_result = None
+        self.last_expired_count = 0
+        self.last_expired_customer_ids: list[int] = []
+        self.decisions_since_any_customer_service = 0
+        self.environment_config: dict | None = None
+        self._action_mask_cache: dict = {}
 
     def get_done_reason(self) -> str:
         return self.done_reason or "in_progress"
@@ -113,22 +123,70 @@ class EVRPTWEnv:
     def select_acting_ev(self) -> EVState | None:
         return select_next_ev(self.evs)
 
+    def compute_action_masks(self, ev: EVState):
+        """Canonical exact mask for the acting EV."""
+        from .action_masks import compute_action_masks
+
+        result = compute_action_masks(self, ev)
+        self.last_action_mask_result = result
+        self.last_feasible_summary = None
+        self.last_global_serviceability = result.global_serviceability
+        return result
+
     def feasible_mask(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
-        return compute_feasible_mask(
-            self.instance,
-            self,
-            ev,
-            self.use_horizon_check,
-            self.use_depot_charging,
-            self.charging_portions,
-        )
+        result = self.compute_action_masks(ev)
+        return result.node_mask, result.node_reasons
+
+    def invalidate_serviceability_cache(self) -> None:
+        self._global_serviceability_cache = None
+
+    def get_global_serviceability(self, *, force: bool = False):
+        """Cached recharge-aware global serviceability."""
+        from .serviceability import compute_global_serviceability_recharge_aware
+
+        if force:
+            self._global_serviceability_cache = None
+        if self._global_serviceability_cache is None:
+            self._global_serviceability_cache = compute_global_serviceability_recharge_aware(
+                self.instance, self.evs, self.served_mask, self.reserved_mask,
+                use_horizon_check=self.use_horizon_check,
+                use_depot_charging=self.use_depot_charging,
+                charging_portions=self.charging_portions,
+            )
+            self.last_global_serviceability = self._global_serviceability_cache
+            self._sync_expired_from_serviceability(self._global_serviceability_cache)
+        return self._global_serviceability_cache
+
+    def _sync_expired_from_serviceability(self, gs) -> None:
+        serviceable_ids = set(getattr(gs, "serviceable_customer_ids", []))
+        expired = [
+            c for c in self.instance.customer_indices
+            if not self.served_mask[c] and c not in serviceable_ids
+        ]
+        self.last_expired_customer_ids = expired
+        self.last_expired_count = len(expired)
+
+    def update_expired_state(self) -> None:
+        self.get_global_serviceability()
+
+    def bump_state_version(self) -> None:
+        self.state_version += 1
+        self._global_serviceability_cache = None
+        self._action_mask_cache = {}
 
     def compute_full_feasible(self, ev: EVState):
         """Full mask with summary and global serviceability."""
-        return compute_full_feasible_actions(
-            self.instance, self, ev,
-            self.use_horizon_check, self.use_depot_charging, self.charging_portions,
+        result = self.compute_action_masks(ev)
+        from .action_space import FeasibleActionSummary
+        summary = FeasibleActionSummary(
+            has_customer=result.feasible_customer_count > 0,
+            has_useful_station=result.feasible_station_count > 0,
+            has_useful_depot_recharge=result.feasible_depot_recharge,
+            has_depot_finish=result.feasible_depot_finish,
+            has_any=bool(result.node_mask.any()),
         )
+        self.last_feasible_summary = summary
+        return result.node_mask, result.node_reasons, summary, result.global_serviceability
 
     def compute_mask_info(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
         """Pre-action feasible mask and per-node infeasibility reasons."""
@@ -308,14 +366,10 @@ class EVRPTWEnv:
         """Force-close episode when no service is possible and mask is empty."""
         if self.done_reason is not None:
             return None
-        from .action_space import compute_global_serviceability, should_auto_close
+        from .action_space import should_auto_close
 
-        gs = compute_global_serviceability(
-            self.instance, self.evs, self.served_mask, self.reserved_mask,
-            use_horizon_check=self.use_horizon_check,
-            use_depot_charging=self.use_depot_charging,
-            charging_portions=self.charging_portions,
-        )
+        # Closure needs a real (uncached) serviceability check, even in fast training.
+        gs = self.get_global_serviceability(force=True)
         self.last_global_serviceability = gs
         if not gs.no_service_possible:
             return None
@@ -412,7 +466,15 @@ class EVRPTWEnv:
         elif node_obj.is_charging_station:
             self.station_actions += 1
         self.progress_tracker.record(info, ev)
+        if info.get("customer_served"):
+            ev.steps_since_last_customer_service = 0
+            self.decisions_since_any_customer_service = 0
+        elif not ev.finished:
+            ev.steps_since_last_customer_service += 1
+            self.decisions_since_any_customer_service += 1
         self.current_event_time = max(self.current_event_time, ev.current_time)
+        self.invalidate_serviceability_cache()
+        self.bump_state_version()
         return info
 
     def _move_energy_time(self, ev: EVState, target: int) -> tuple[float, float, float]:
@@ -679,6 +741,8 @@ class EVRPTWEnv:
         ev.finished = True
         ev.active = False
         self.current_event_time = max(self.current_event_time, ev.current_time)
+        self.invalidate_serviceability_cache()
+        self.bump_state_version()
         return self._close_info_dict(
             ev, previous_node, depot, action_type,
             delta_distance=d, delta_travel_time=t, delta_energy=e,

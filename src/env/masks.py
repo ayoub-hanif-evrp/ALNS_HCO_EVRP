@@ -46,13 +46,6 @@ def depot_return_feasible(
     return True, "ok"
 
 
-def _min_energy_to_recharge(instance, j: int) -> float:
-    """Minimum energy needed to go from node j to any rechargeable node."""
-    energy = instance.energy_matrix
-    rec = instance.rechargeable_indices
-    return float(min(energy[j, r] for r in rec))
-
-
 def _safe_continuation_after_customer(
     instance,
     j: int,
@@ -72,13 +65,13 @@ def _safe_continuation_after_customer(
     if battery_after < -EPS:
         return False, "customer_infeasible_after_service_battery"
     if capacity_after < -EPS:
-        return False, "capacity_exceeded"
+        return False, "customer_capacity_infeasible"
 
     ok_dep, reason = safe_depot_return_from(
         instance, j, service_end, battery_after, use_horizon_check=use_horizon_check
     )
     if ok_dep:
-        return True, "ok"
+        return True, "customer_feasible"
 
     travel = instance.travel_time_matrix
     energy = instance.energy_matrix
@@ -89,11 +82,13 @@ def _safe_continuation_after_customer(
         remaining_battery=battery_after,
         remaining_capacity=capacity_after,
     )
+    any_station_reachable = False
     for s in instance.charging_station_indices:
         if battery_after + EPS < energy[j, s]:
             continue
         if use_horizon_check and service_end + travel[j, s] > instance.planning_horizon + EPS:
             continue
+        any_station_reachable = True
         portion_mask, _ = feasible_charge_portions(
             instance, sim, s, served_mask, reserved_mask,
             portions=charging_portions,
@@ -101,11 +96,13 @@ def _safe_continuation_after_customer(
             use_depot_charging=use_depot_charging,
         )
         if portion_mask.any():
-            return True, "ok"
+            return True, "customer_feasible"
 
-    if reason.startswith("charge_portion_infeasible"):
-        return False, "customer_infeasible_no_reachable_station_or_depot"
-    return False, "customer_infeasible_no_safe_continuation"
+    if not any_station_reachable:
+        if reason.startswith("charge_portion_infeasible"):
+            return False, "customer_no_safe_direct_depot"
+        return False, "customer_no_reachable_station"
+    return False, "customer_station_has_no_feasible_charge"
 
 
 def customer_feasible(
@@ -119,29 +116,45 @@ def customer_feasible(
     charging_portions: list[float] | None = None,
 ) -> tuple[bool, str]:
     """Return (feasible, reason) for visiting customer j from the EV's position."""
+    from .feasibility_scratch import ev_state_key, get_scratch
+
+    scratch = get_scratch()
+    cache_key = None
+    if scratch is not None:
+        cache_key = (*ev_state_key(ev), int(j))
+        cached = scratch.customer.get(cache_key)
+        if cached is not None:
+            return cached
+
+    def _ret(ok: bool, reason: str) -> tuple[bool, str]:
+        out = (ok, reason)
+        if scratch is not None and cache_key is not None:
+            scratch.customer[cache_key] = out
+        return out
+
     i = ev.current_node
     energy = instance.energy_matrix
     travel = instance.travel_time_matrix
 
     if served_mask[j]:
-        return False, "already_served"
+        return _ret(False, "customer_already_served")
     if reserved_mask[j]:
-        return False, "reserved_by_other"
+        return _ret(False, "customer_reserved")
 
     demand = instance.nodes[j].demand
     if demand > ev.remaining_capacity + EPS:
-        return False, "capacity_exceeded"
+        return _ret(False, "customer_capacity_infeasible")
 
     energy_to_j = energy[i, j]
     if ev.remaining_battery + EPS < energy_to_j:
-        return False, "battery_cannot_reach"
+        return _ret(False, "customer_battery_unreachable")
 
     arrival = ev.current_time + travel[i, j]
     ready = float(instance.nodes[j].ready_time)
     due = float(instance.nodes[j].due_time)
     service_start = max(arrival, ready)
     if service_start > due + EPS:
-        return False, "time_window_late"
+        return _ret(False, "customer_time_window_infeasible")
 
     service_end = service_start + instance.nodes[j].service_time
     battery_after = ev.remaining_battery - energy_to_j
@@ -155,15 +168,8 @@ def customer_feasible(
         charging_portions=charging_portions,
     )
     if not ok_cont:
-        if reason == "customer_infeasible_no_reachable_station_or_depot":
-            return False, "customer_infeasible_no_reachable_station_or_depot"
-        if reason == "customer_infeasible_no_safe_continuation":
-            return False, "customer_infeasible_no_safe_continuation"
-        if "battery" in reason:
-            return False, "customer_infeasible_after_service_battery"
-        return False, "customer_infeasible_after_service_time"
-
-    return True, "ok"
+        return _ret(False, reason)
+    return _ret(True, "customer_feasible")
 
 
 def station_feasible(
@@ -176,19 +182,19 @@ def station_feasible(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> tuple[bool, str]:
-    """Return (feasible, reason) for visiting charging station s."""
+    """Return (feasible, reason) for visiting charging station s (physical layer)."""
     from .charge_masks import feasible_charge_portions
 
     i = ev.current_node
     if s == i:
-        return False, "station_self_loop"
+        return False, "station_loop_blocked"
     energy_to_s = instance.energy_matrix[i, s]
     if ev.remaining_battery + EPS < energy_to_s:
-        return False, "station_unreachable_battery"
+        return False, "station_battery_unreachable"
     if use_horizon_check:
         arrival = ev.current_time + instance.travel_time_matrix[i, s]
         if arrival > instance.planning_horizon + EPS:
-            return False, "horizon_exceeded"
+            return False, "station_horizon_infeasible"
     portion_mask, _ = feasible_charge_portions(
         instance, ev, s, served_mask, reserved_mask,
         portions=charging_portions,
@@ -294,11 +300,7 @@ def compute_feasible_mask(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> tuple[np.ndarray, dict[int, str]]:
-    """Compute the boolean feasibility mask over all nodes for the acting EV.
-
-    Delegates to ``action_space.compute_full_feasible_actions`` which applies
-    usefulness filters, no-progress blocking, and all-served return logic.
-    """
+    """Compute exact feasible mask — delegates to ``compute_full_feasible_actions``."""
     from .action_space import compute_full_feasible_actions
 
     feasible, reasons, summary, global_svc = compute_full_feasible_actions(

@@ -74,7 +74,7 @@ def is_customer_time_expired(instance, ev, j: int, served_mask, reserved_mask) -
     ok, reason = customer_feasible(instance, ev, j, served_mask, reserved_mask, use_horizon_check=True)
     if ok:
         return False
-    if reason == "time_window_late":
+    if reason == "customer_time_window_infeasible" or reason == "time_window_late":
         return True
     _, _, service_start, _ = customer_service_start(instance, ev, j)
     return service_start > float(instance.nodes[j].due_time) + EPS
@@ -82,33 +82,11 @@ def is_customer_time_expired(instance, ev, j: int, served_mask, reserved_mask) -
 
 def count_time_expired_customers(env) -> int:
     """Unserved customers with no feasible service due to closed time windows."""
-    inst = env.instance
-    expired = 0
-    for j in inst.customer_indices:
-        if env.served_mask[j]:
-            continue
-        any_feasible = False
-        for ev in env.evs:
-            if ev.finished:
-                continue
-            ok, _ = customer_feasible(
-                inst, ev, j, env.served_mask, env.reserved_mask, use_horizon_check=True
-            )
-            if ok:
-                any_feasible = True
-                break
-        if not any_feasible:
-            # Expired if every EV fails TW or global min service_start exceeds due
-            due = float(inst.nodes[j].due_time)
-            best_start = float("inf")
-            for ev in env.evs:
-                if ev.finished:
-                    continue
-                _, _, ss, _ = customer_service_start(inst, ev, j)
-                best_start = min(best_start, ss)
-            if best_start > due + EPS:
-                expired += 1
-    return expired
+    cached = getattr(env, "last_expired_count", None)
+    if cached is not None and getattr(env, "_global_serviceability_cache", None) is not None:
+        return int(cached)
+    env.get_global_serviceability()
+    return int(getattr(env, "last_expired_count", 0))
 
 
 def aggregate_mask_reasons(
@@ -119,30 +97,36 @@ def aggregate_mask_reasons(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
 ) -> tuple[MaskReasonCounts, np.ndarray, dict[int, str]]:
-    feasible, reasons = compute_feasible_mask(
-        instance, env_state, ev, use_horizon_check, use_depot_charging,
-        getattr(env_state, "charging_portions", None),
-    )
+    from src.env.action_masks import compute_action_masks
+
+    result = compute_action_masks(env_state, ev)
     counts = MaskReasonCounts()
+    feasible = result.node_mask
+    reasons = result.node_reasons
     for j in instance.customer_indices:
         if feasible[j]:
             counts.feasible_customers_count += 1
             continue
         r = reasons.get(j, "")
-        if r == "already_served":
+        if r in ("customer_already_served", "already_served"):
             counts.masked_by_already_served_count += 1
-        elif r == "reserved_by_other":
+        elif r in ("customer_reserved", "reserved_by_other"):
             counts.masked_by_reservation_count += 1
-        elif r == "capacity_exceeded":
+        elif r in ("customer_capacity_infeasible", "capacity_exceeded"):
             counts.masked_by_capacity_count += 1
-        elif r in ("battery_cannot_reach", "battery_would_strand", "customer_infeasible_after_service_battery"):
+        elif r in (
+            "customer_battery_unreachable", "battery_cannot_reach", "battery_would_strand",
+            "customer_infeasible_after_service_battery",
+        ):
             counts.masked_by_battery_count += 1
         elif r in (
-            "time_window_late", "depot_window_late", "horizon_exceeded",
-            "customer_infeasible_after_service_time",
+            "customer_time_window_infeasible", "time_window_late", "depot_window_late",
+            "horizon_exceeded", "customer_infeasible_after_service_time",
         ):
             counts.masked_by_time_window_count += 1
         elif r in (
+            "customer_no_safe_continuation", "customer_no_safe_direct_depot",
+            "customer_no_reachable_station", "customer_station_has_no_feasible_charge",
             "customer_infeasible_no_safe_continuation",
             "customer_infeasible_no_reachable_station_or_depot",
         ):
@@ -225,7 +209,7 @@ def simulate_departure_after_best_charge(
 
     analysis = evaluate_charge_portions_for_node(
         instance, ev, station, served_mask, reserved_mask,
-        portions=portions or [0.25, 0.5, 0.75, 1.0],
+        charging_portions=portions or [0.25, 0.5, 0.75, 1.0],
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
     )
@@ -273,12 +257,15 @@ def selected_station_is_necessary(
     from src.env.action_space import compute_station_usefulness, compute_global_serviceability
 
     all_done = int(np.sum(served[inst.customer_indices])) >= inst.num_customers if inst.customer_indices else True
-    gs = compute_global_serviceability(
-        inst, [ev_ref], served, reserved,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=portions,
-    )
+    if hasattr(env_or_instance, "get_global_serviceability"):
+        gs = env_or_instance.get_global_serviceability()
+    else:
+        gs = compute_global_serviceability(
+            inst, [ev_ref], served, reserved,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=portions,
+        )
     u = compute_station_usefulness(
         inst, ev_ref, selected_station, served, reserved,
         all_customers_served=all_done,

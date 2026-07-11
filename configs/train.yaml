@@ -1,12 +1,5 @@
-# =============================================================================
-# DEFAULT TRAINING — Schneider EVRPTW, RC class, full (_21) instances
+# Schneider RC _21 exact-mask semi-MDP training baseline.
 #   python main_train.py
-#   python main_dashboard.py      # scalar metrics (auto-refresh)
-#   python main_maps_dashboard.py # route maps & solution behavior (manual)
-#
-# Schneider RC _21: 16 instances total → 13 train + 3 held out (not 23 like R class).
-# Set dataset.expected_train_count: 20 only if you add more RC _21 instances.
-# =============================================================================
 
 seed: 42
 device: cuda
@@ -17,6 +10,18 @@ constraints:
   allow_late_service: false
   relax_time_windows: false
   modify_instance_time_windows: false
+
+environment:
+  mask_semantics: exact_original_evrptw
+  assert_mask_parity_during_debug: true
+  performance:
+    cache_action_masks: true
+    use_optimized_mask_path: true
+    include_charge_portion_details: false
+  action_pruning:
+    enabled: true
+    block_no_progress_loops: true
+    prune_dominated_stations: true
 
 dataset:
   path: dataset/Schneider/evrptw_instances
@@ -34,7 +39,9 @@ dataset:
 
 optimizer:
   actor_lr: 0.0001
-  critic_lr: 0.0001
+  critic_lr: 0.0003
+  actor_grad_clip: 1.0
+  critic_grad_clip: 1.0
 
 training:
   method: actor_critic
@@ -44,7 +51,7 @@ training:
   batch_size: 1
   cycles: 100
   shuffle_within_pass: false
-  reward_scale: 1000.0
+  reward_scale: 10000.0
   log_every: 1
   checkpoint_every: 0
   dashboard_ma_window: 20
@@ -53,16 +60,25 @@ training:
   gradient_accumulation_steps: 1
   use_local_search_in_training: false
   critic_warmup_steps: 0
-  critic_updates_per_step: 1
   debug_overfit_one_instance: false
   overfit_instance_name: rc102_21
-  debug_overfit_updates: 500
+  debug_overfit_updates: 200
   fail_on_overfit_regression: true
   generate_static_dashboard: true
-  live_checkpoint_every: 1
-  maps_checkpoint_every: 10
+  live_checkpoint_every: 10
+  maps_checkpoint_every: 25
+
+critic:
+  detach_actor_embeddings: true
+  critic_loss: huber
+  critic_lr: 0.0003
+  critic_updates_per_actor_update: 1
+  critic_grad_clip: 1.0
+  normalize_returns_for_critic: false
+  auxiliary_coef: 0.1
 
 rl:
+  formulation: semi_markov_decision_epochs
   use_step_rewards: true
   use_gae: true
   use_counterfactual_critic: false
@@ -72,26 +88,27 @@ rl:
   use_potential_shaping: false
   gamma: 1.0
   gae_lambda: 0.95
+  reward_scale: 10000.0
   normalize_advantages: true
   normalize_returns_for_critic: false
   critic_coef: 0.5
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent
   served_bonus_coef: 0.5
-  use_urgency_bonus: true
+  use_urgency_bonus: false
   urgency_bonus_coef: 0.5
   use_newly_expired_customer_penalty: true
   newly_expired_customer_penalty: 1.0
   use_time_waste_penalty: true
   time_waste_penalty_coef: 0.05
   time_waste_scale: 1.0
-  use_unnecessary_station_penalty: true
+  use_unnecessary_station_penalty: false
   unnecessary_station_penalty: 1.0
   use_early_depot_penalty: true
   early_depot_penalty_coef: 2.0
   use_step_penalty: false
   step_penalty: 0.01
-  use_urgent_customer_rank_penalty: true
+  use_urgent_customer_rank_penalty: false
   urgent_rank_penalty_coef: 0.2
   urgent_rank_k: 10
   use_customer_priority_logit_bias: true
@@ -102,15 +119,16 @@ rl:
   depot_penalty_until_served_ratio: 0.95
   use_no_progress_penalty: true
   no_progress_threshold: 10
+  use_dynamic_candidate_encoder: true
+  assert_action_mask: false
   no_progress_penalty_coef: 0.05
   terminal_penalty_schedule:
-    enabled: true
-    start_coef: 0.25
-    end_coef: 1.0
-    warmup_cycles: 20
+    enabled: false
   q_eval_mode: topk
   max_q_actions: 64
   detach_critic_inputs: true
+  critic_loss: huber
+  critic_updates_per_actor_update: 1
 
 model:
   embedding_dim: 192
@@ -119,6 +137,7 @@ model:
   feedforward_dim: 768
   dropout: 0.1
   use_ev_communication: true
+  use_dynamic_candidate_encoder: true
   use_edge_aware_encoder: false
 
 decoding:

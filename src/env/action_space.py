@@ -83,6 +83,7 @@ class GlobalServiceability:
     globally_unreachable_battery_count: int = 0
     globally_unreachable_capacity_count: int = 0
     no_service_possible: bool = False
+    serviceable_customer_ids: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, float | bool]:
         return {
@@ -111,17 +112,20 @@ class FeasibleActionSummary:
         reasons: dict[int, str],
         *,
         all_done: bool,
+        depot_mode_mask: np.ndarray | None = None,
+        depot_mode_reasons: list[str] | None = None,
     ) -> "FeasibleActionSummary":
         has_c = any(feasible[j] for j in instance.customer_indices)
         has_s = any(feasible[s] for s in instance.charging_station_indices)
         depot = instance.depot_index
         has_d = bool(feasible[depot])
-        dep_reason = reasons.get(depot, "")
-        has_recharge = has_d and dep_reason == "depot_recharge_feasible"
-        has_finish = has_d and dep_reason in {
-            "depot_finish_feasible", "depot_finish_at_depot", "depot_finish_when_all_served",
-            "depot_finish_when_no_service_possible", "depot_finish_ev_exhausted",
-        }
+        if depot_mode_mask is not None:
+            has_recharge = bool(depot_mode_mask[0])
+            has_finish = bool(depot_mode_mask[1])
+        else:
+            dep_reason = reasons.get(depot, "")
+            has_recharge = has_d and "recharge" in dep_reason
+            has_finish = has_d and "finish" in dep_reason
         if all_done and has_d and not has_finish:
             has_finish = True
         return cls(
@@ -186,6 +190,7 @@ class ActionProgressTracker:
         if len(self.history) > max(self.loop_window * 3, 60):
             self.history = self.history[-max(self.loop_window * 3, 60) :]
 
+        battery_gain = rec.battery_after > rec.battery_before + BATTERY_PROGRESS_EPS
         is_progress = (
             customer_served
             or atype in ("depot_finish", "route_close")
@@ -195,13 +200,20 @@ class ActionProgressTracker:
             or info.get("usefulness_before_action")
             or rec.enabled_customers > 0
             or info.get("ev_finished")
+            # Fast training path may omit usefulness diagnostics; battery gain is a cheap proxy.
+            or (atype in ("station", "depot_recharge") and battery_gain)
         )
         if customer_served or atype in ("depot_finish", "route_close"):
             self.steps_since_last_customer_service = 0
             if self._in_no_progress_segment:
                 self.no_progress_segments += 1
                 self._in_no_progress_segment = False
-        elif info.get("useful_station") or info.get("useful_depot_recharge") or info.get("usefulness_before_action"):
+        elif (
+            info.get("useful_station")
+            or info.get("useful_depot_recharge")
+            or info.get("usefulness_before_action")
+            or (atype in ("station", "depot_recharge") and battery_gain)
+        ):
             self.steps_since_last_customer_service = 0
             if self._in_no_progress_segment:
                 self.no_progress_segments += 1
@@ -272,6 +284,15 @@ def _feasible_customer_indices(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> list[int]:
+    from .feasibility_scratch import ev_state_key, get_scratch
+
+    scratch = get_scratch()
+    if scratch is not None:
+        key = ev_state_key(ev)
+        cached = scratch.feasible_indices.get(key)
+        if cached is not None:
+            return list(cached)
+
     out: list[int] = []
     for j in instance.customer_indices:
         ok, _ = customer_feasible(
@@ -280,6 +301,8 @@ def _feasible_customer_indices(
         )
         if ok:
             out.append(j)
+    if scratch is not None:
+        scratch.feasible_indices[ev_state_key(ev)] = list(out)
     return out
 
 
@@ -296,6 +319,14 @@ def evaluate_charge_portions_for_node(
 ) -> ChargePortionAnalysis:
     """Evaluate all feasible charge portions; pick best by usefulness score."""
     from .charge_masks import feasible_charge_portions, safe_depot_return_from, simulate_recharge_departure
+    from .feasibility_scratch import ev_state_key, get_scratch
+
+    scratch = get_scratch()
+    if scratch is not None:
+        cache_key = (*ev_state_key(ev), int(node))
+        cached = scratch.charge_analysis.get(cache_key)
+        if cached is not None:
+            return cached
 
     p_list = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
     mask, _ = feasible_charge_portions(
@@ -346,12 +377,16 @@ def evaluate_charge_portions_for_node(
             usefulness_score=score,
         ))
     if not evals:
-        return ChargePortionAnalysis(best=None, all_feasible=[])
-    best = max(
-        evals,
-        key=lambda e: (e.enabled_customers, int(e.enables_depot_return), -e.charging_time),
-    )
-    return ChargePortionAnalysis(best=best, all_feasible=evals)
+        result = ChargePortionAnalysis(best=None, all_feasible=[])
+    else:
+        best = max(
+            evals,
+            key=lambda e: (e.enabled_customers, int(e.enables_depot_return), -e.charging_time),
+        )
+        result = ChargePortionAnalysis(best=best, all_feasible=evals)
+    if scratch is not None:
+        scratch.charge_analysis[cache_key] = result
+    return result
 
 
 def _count_feasible_after_station_recharge(
@@ -401,7 +436,7 @@ def _simulate_best_charge_departure(
     if analysis is None:
         analysis = evaluate_charge_portions_for_node(
             instance, ev, station, served_mask, reserved_mask,
-            portions=portions,
+            charging_portions=portions,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
         )
@@ -450,13 +485,18 @@ def compute_global_serviceability(
                 any_ok = True
                 serviceable.add(j)
                 break
-            if reason != "time_window_late":
+            if reason != "customer_time_window_infeasible" and reason != "time_window_late":
                 expired_only = False
-            if reason not in ("battery_cannot_reach", "customer_infeasible_after_service_battery",
-                              "customer_infeasible_no_safe_continuation",
-                              "customer_infeasible_no_reachable_station_or_depot"):
+            if reason not in (
+                "customer_battery_unreachable", "battery_cannot_reach",
+                "customer_infeasible_after_service_battery",
+                "customer_no_safe_continuation", "customer_no_safe_direct_depot",
+                "customer_no_reachable_station", "customer_station_has_no_feasible_charge",
+                "customer_infeasible_no_safe_continuation",
+                "customer_infeasible_no_reachable_station_or_depot",
+            ):
                 battery_block = False
-            if reason != "capacity_exceeded":
+            if reason != "customer_capacity_infeasible" and reason != "capacity_exceeded":
                 cap_block = False
         if not any_ok:
             if expired_only:
@@ -720,47 +760,32 @@ def ev_future_service_possible(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> tuple[bool, str, dict]:
-    """True if this EV can still enable service via useful station or depot recharge."""
+    """True if this EV can still serve a remaining customer (recharge-aware)."""
+    from .serviceability import compute_ev_customer_serviceability
+
     diag: dict = {
         "useful_station_exists_before_finish": False,
         "depot_recharge_could_enable_service": False,
     }
-    useful_r, _, enables_r = compute_depot_recharge_usefulness(
-        instance, ev, served_mask, reserved_mask,
-        all_customers_served=False,
-        global_svc=global_svc,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    )
-    if useful_r and enables_r > 0:
-        diag["depot_recharge_could_enable_service"] = True
-        return True, "depot_recharge_could_enable_service", diag
-
-    for s in instance.charging_station_indices:
-        ok, _ = station_feasible(
-            instance, ev, s, served_mask, reserved_mask,
-            use_horizon_check, use_depot_charging, charging_portions,
-        )
-        if not ok:
+    for j in instance.customer_indices:
+        if served_mask[j]:
             continue
-        u = compute_station_usefulness(
-            instance, ev, s, served_mask, reserved_mask,
-            all_customers_served=False,
-            global_svc=global_svc,
+        res = compute_ev_customer_serviceability(
+            instance, ev, j, served_mask, reserved_mask,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
             charging_portions=charging_portions,
         )
-        if u.useful and u.enabled_customers_count > 0:
+        if not res.serviceable:
+            continue
+        if res.mode == "direct":
+            return True, "finish_invalid_customer_available", diag
+        if res.mode == "via_station":
             diag["useful_station_exists_before_finish"] = True
-            return True, "useful_station_exists_before_finish", diag
-        if u.useful and u.reason in (
-            "station_unlocks_service", "station_enables_new_customers",
-        ):
-            diag["useful_station_exists_before_finish"] = True
-            return True, "useful_station_exists_before_finish", diag
-
+            return True, "finish_invalid_station_unlocks_service", diag
+        if res.mode == "via_depot_recharge":
+            diag["depot_recharge_could_enable_service"] = True
+            return True, "finish_invalid_depot_recharge_unlocks_service", diag
     return False, "", diag
 
 
@@ -783,33 +808,10 @@ def compute_depot_finish_validity(
 
     all_done = num_served_customers >= instance.num_customers
     if all_done:
-        return DepotFinishValidity(True, "depot_finish_when_all_served", "valid")
+        return DepotFinishValidity(True, "finish_all_customers_served", "valid")
 
     if forced:
-        return DepotFinishValidity(True, "forced_depot_finish", "forced")
-
-    feasible_now = _feasible_customer_indices(
-        instance, ev, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    )
-    if feasible_now:
-        useful_recharge, _, _ = compute_depot_recharge_usefulness(
-            instance, ev, served_mask, reserved_mask,
-            all_customers_served=False,
-            global_svc=global_svc,
-            use_horizon_check=use_horizon_check,
-            use_depot_charging=use_depot_charging,
-            charging_portions=charging_portions,
-        )
-        if useful_recharge:
-            return DepotFinishValidity(
-                False, "early_depot_finish_recharge_possible", "invalid",
-                depot_recharge_could_enable_service=True,
-                finish_masked_due_to_future_service=True,
-            )
-        return DepotFinishValidity(True, "early_depot_finish", "early")
+        return DepotFinishValidity(True, "finish_forced_safe_closure", "forced")
 
     can_service, svc_reason, svc_diag = ev_future_service_possible(
         instance, ev, served_mask, reserved_mask,
@@ -836,7 +838,7 @@ def compute_depot_finish_validity(
         )
 
     if global_svc and global_svc.no_service_possible:
-        return DepotFinishValidity(True, "depot_finish_when_no_service_possible", "valid")
+        return DepotFinishValidity(True, "finish_global_no_service_possible", "valid")
 
     if exists_useful_recharge_action(
         instance, ev, served_mask, reserved_mask,
@@ -846,12 +848,12 @@ def compute_depot_finish_validity(
         charging_portions=charging_portions,
     ):
         return DepotFinishValidity(
-            False, "depot_finish_blocked_useful_recharge_exists", "invalid",
+            False, "finish_invalid_depot_recharge_unlocks_service", "invalid",
             finish_masked_due_to_future_service=True,
             finish_would_reduce_global_serviceability=True,
         )
 
-    return DepotFinishValidity(True, "depot_finish_ev_exhausted", "valid")
+    return DepotFinishValidity(True, "finish_ev_truly_exhausted", "valid")
 
 
 def is_near_zero_move(instance, from_node: int, to_node: int) -> bool:
@@ -974,129 +976,79 @@ def compute_full_feasible_actions(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    global_svc: GlobalServiceability | None = None,
 ) -> tuple[np.ndarray, dict[int, str], FeasibleActionSummary, GlobalServiceability]:
-    """Full feasible mask with usefulness and no-progress filters."""
-    n = instance.num_nodes
-    feasible = np.zeros(n, dtype=bool)
-    reasons: dict[int, str] = {}
+    """Layered exact mask: hard feasibility ∧ optional pruning."""
+    from .mask_layers import (
+        ActionPruningConfig,
+        combine_mask_layers,
+        compute_hard_feasibility_mask,
+        compute_optional_pruning_mask,
+    )
+    from .serviceability import compute_global_serviceability_recharge_aware
 
     served = env_state.served_mask
     reserved = env_state.reserved_mask
     all_done = env_state.num_served_customers >= instance.num_customers
-    progress: ActionProgressTracker | None = getattr(env_state, "progress_tracker", None)
+    portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
     evs = getattr(env_state, "evs", [ev])
 
-    global_svc = compute_global_serviceability(
-        instance, evs, served, reserved,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    )
-
-    for j in instance.customer_indices:
-        ok, reason = customer_feasible(
-            instance, ev, j, served, reserved, use_horizon_check,
-            use_depot_charging, charging_portions,
-        )
-        feasible[j] = ok
-        if not ok:
-            reasons[j] = reason
-
-    for s in instance.charging_station_indices:
-        ok, reason = station_feasible(
-            instance, ev, s, served, reserved, use_horizon_check, use_depot_charging, charging_portions,
-        )
-        if not ok:
-            feasible[s] = False
-            reasons[s] = reason
-            continue
-        usefulness = compute_station_usefulness(
-            instance, ev, s, served, reserved,
-            all_customers_served=all_done,
-            global_svc=global_svc,
+    pruning_cfg = ActionPruningConfig.from_env_config(getattr(env_state, "environment_config", None))
+    hard, hard_reasons, hard_charge, hard_charge_reasons, hard_depot_mode, hard_depot_reasons = (
+        compute_hard_feasibility_mask(
+            instance, env_state, ev,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
-            charging_portions=charging_portions,
+            charging_portions=portions,
         )
-        if not usefulness.useful:
-            feasible[s] = False
-            reasons[s] = usefulness.reason
-            continue
-        no_prog, np_reason = would_be_no_progress_action(
-            instance, ev, s, served, reserved,
-            action_kind="station", depot_finish=False,
-            all_customers_served=all_done,
-            global_svc=global_svc,
-            progress=progress,
-            use_horizon_check=use_horizon_check,
-            use_depot_charging=use_depot_charging,
-            charging_portions=charging_portions,
-        )
-        if no_prog:
-            feasible[s] = False
-            reasons[s] = np_reason
-            continue
-        feasible[s] = True
-        reasons[s] = usefulness.reason
-
-    depot = instance.depot_index
-    finish_val = compute_depot_finish_validity(
-        instance, ev, served, reserved, env_state.num_served_customers,
-        global_svc=global_svc,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
     )
 
-    if all_done:
-        ok_recharge = False
-        reason_recharge = "depot_recharge_all_served"
-        if finish_val.valid:
-            feasible[depot] = True
-            reasons[depot] = finish_val.reason
+    if global_svc is None:
+        if pruning_cfg.enabled:
+            if hasattr(env_state, "get_global_serviceability"):
+                global_svc = env_state.get_global_serviceability()
+            else:
+                global_svc = compute_global_serviceability_recharge_aware(
+                    instance, evs, served, reserved,
+                    use_horizon_check=use_horizon_check,
+                    use_depot_charging=use_depot_charging,
+                    charging_portions=portions,
+                )
         else:
-            feasible[depot] = False
-            reasons[depot] = finish_val.reason
-    else:
-        ok_recharge_raw, reason_recharge_raw = depot_recharge_feasible(
-            instance, ev, served, reserved, use_depot_charging, use_horizon_check, charging_portions,
-        )
-        useful_recharge, reason_recharge, _ = compute_depot_recharge_usefulness(
-            instance, ev, served, reserved,
-            all_customers_served=False,
-            global_svc=global_svc,
-            use_horizon_check=use_horizon_check,
-            use_depot_charging=use_depot_charging,
-            charging_portions=charging_portions,
-        )
-        ok_recharge = ok_recharge_raw and useful_recharge
-        reason_recharge = reason_recharge if useful_recharge else reason_recharge_raw
-
-        ok_finish = finish_val.valid and finish_val.category != "invalid"
-        if ok_recharge:
-            no_prog, np_reason = would_be_no_progress_action(
-                instance, ev, depot, served, reserved,
-                action_kind="depot_recharge", depot_finish=False,
-                all_customers_served=False,
-                global_svc=global_svc,
-                progress=progress,
-                use_horizon_check=use_horizon_check,
-                use_depot_charging=use_depot_charging,
-                charging_portions=charging_portions,
+            global_svc = GlobalServiceability(
+                remaining_customers_count=int(np.sum(~served[instance.customer_indices])),
             )
-            if no_prog:
-                ok_recharge = False
-                reason_recharge = np_reason
 
-        feasible[depot] = ok_recharge or ok_finish
-        if not feasible[depot]:
-            reasons[depot] = reason_recharge if not ok_recharge_raw else finish_val.reason
-        elif ok_recharge:
-            reasons[depot] = "depot_recharge_feasible"
-        else:
-            reasons[depot] = finish_val.reason
+    prune_layer, prune_reasons, prune_depot_mode, prune_depot_reasons, _, _ = compute_optional_pruning_mask(
+        instance, env_state, ev, hard, hard_reasons,
+        hard_depot_mode=hard_depot_mode,
+        global_svc=global_svc,
+        pruning=pruning_cfg,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=portions,
+    )
+    feasible, reasons = combine_mask_layers(hard, prune_layer, hard_reasons, prune_reasons)
+    depot_mode_mask = hard_depot_mode & prune_depot_mode
+    depot_mode_reasons = [
+        hard_depot_reasons[0] if not depot_mode_mask[0] else "depot_recharge_feasible",
+        hard_depot_reasons[1] if not depot_mode_mask[1] else hard_depot_reasons[1],
+    ]
 
-    summary = FeasibleActionSummary.from_mask(instance, feasible, reasons, all_done=all_done)
+    env_state._hard_charge = hard_charge
+    env_state._hard_charge_reasons = hard_charge_reasons
+    summary = FeasibleActionSummary.from_mask(
+        instance, feasible, reasons, all_done=all_done,
+        depot_mode_mask=depot_mode_mask,
+        depot_mode_reasons=depot_mode_reasons,
+    )
+    env_state._last_hard_node_mask = hard
+    env_state._last_hard_reasons = hard_reasons
+    env_state._last_pruning_mask = prune_layer
+    env_state._last_prune_reasons = prune_reasons
+    env_state._last_hard_counts = int(hard.sum())
+    env_state._last_depot_mode_mask = depot_mode_mask
+    env_state._last_depot_mode_reasons = depot_mode_reasons
     return feasible, reasons, summary, global_svc
 
 

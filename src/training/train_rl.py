@@ -15,6 +15,7 @@ from src.env.constraints import ConstraintConfig, log_constraint_startup
 from src.data.immutability import log_dataset_immutability
 from src.env.cost import CostWeights
 from src.models.policy import TransformerEVRPTWPolicy
+from src.models.feature_specs import ARCHITECTURE_VERSION
 from src.training.ac_train import actor_critic_train_step, build_critics, critic_parameters
 from src.training.actor_critic import RLConfig
 from src.training.config_validation import apply_safe_training_defaults, validate_training_config
@@ -107,7 +108,7 @@ def train(config: dict) -> dict:
     set_seed(seed, deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
     LOGGER.info(f"Training on device: {describe_device(device)}")
-    LOGGER.info("Mode: Schneider RC _21 — actor-critic + step rewards + GAE (safe baseline)")
+    LOGGER.info("Mode: Schneider RC _21 — exact-mask semi-MDP actor-critic")
 
     tcfg = config["training"]
     ds_cfg = config["dataset"]
@@ -148,7 +149,8 @@ def train(config: dict) -> dict:
     optimizer = torch.optim.Adam(policy.parameters(), lr=actor_lr)
     critic_optimizer = torch.optim.Adam(critic_parameters(value_critic, q_critic), lr=critic_lr)
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
-    grad_clip = float(tcfg.get("grad_clip", 1.0))
+    actor_grad_clip = float(rl_cfg.actor_grad_clip)
+    critic_grad_clip = float(rl_cfg.critic_grad_clip)
     batch_size = int(tcfg["batch_size"])
     extra_margin = int(config["fleet_search"].get("extra_margin", 5))
     decode_cfg = config["decoding"]
@@ -210,7 +212,7 @@ def train(config: dict) -> dict:
     cycle_logger = JsonlLogger(results_dir / "cycle_summaries.jsonl")
 
     critic_warmup = int(tcfg.get("critic_warmup_steps", 0))
-    critic_updates = int(tcfg.get("critic_updates_per_step", 1))
+    critic_updates = int(rl_cfg.critic_updates_per_actor_update)
 
     for epoch in range(epoch_schedule):
         if sequential_schedule is not None:
@@ -227,7 +229,7 @@ def train(config: dict) -> dict:
             policy, value_critic, q_critic, optimizer, critic_optimizer,
             train_ds, batch_idx, weights, device, charging_portions,
             use_horizon, use_depot_charging, max_steps_factor, extra_margin, rng, rl_cfg,
-            entropy_coef, grad_clip,
+            entropy_coef, actor_grad_clip, critic_grad_clip,
             min_decisions_warn=min_decisions_warn,
             global_epoch=epoch,
             cycle_id=int(cycle_num or 1),
@@ -236,6 +238,7 @@ def train(config: dict) -> dict:
             scaler=amp_scaler,
             critic_warmup_steps=critic_warmup,
             critic_updates_per_step=critic_updates,
+            environment_config=config.get("environment"),
         )
         record["epoch"] = epoch
         record["learning_rate"] = actor_lr
@@ -357,20 +360,27 @@ def train(config: dict) -> dict:
         generate_training_dashboard_from_config,
         regenerate_dashboard_index,
     )
-    from src.training.solution_diagnostics import run_solution_behavior_diagnostics
+
+    run_solution_behavior_diagnostics = None
+    try:
+        from src.training.solution_diagnostics import run_solution_behavior_diagnostics
+    except ImportError as exc:
+        LOGGER.warning("Solution diagnostics module unavailable: %s", exc)
 
     dash_report = DashboardReport()
     if rows:
         try:
             dash_report = generate_training_dashboard_from_config(
                 config, rows=rows, holdout_meta=holdout_meta,
+                skip_train_count_check=True,
             )
         except ValueError as exc:
             LOGGER.error("Training dashboard not generated: %s", exc)
 
         dcfg = config.get("dashboard") or {}
         if (
-            dash_report.figures
+            run_solution_behavior_diagnostics is not None
+            and dash_report.figures
             and dcfg.get("save_representative_traces", True)
             and not bool(tcfg.get("debug_overfit_one_instance", False))
         ):
@@ -537,6 +547,7 @@ def _save_checkpoint(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "architecture_version": ARCHITECTURE_VERSION,
         "model_state": policy.state_dict(),
         "model_config": config["model"],
         "charging_portions": policy.charging_portions,
@@ -547,6 +558,12 @@ def _save_checkpoint(
         payload["q_critic_state"] = q_critic.state_dict()
     if training_meta is not None:
         payload["training_meta"] = training_meta
+    if hasattr(policy, "acting_ev_normalizer"):
+        payload["feature_normalizer_state"] = {
+            "acting_ev": policy.acting_ev_normalizer.state_dict_for_checkpoint(),
+            "global": policy.global_normalizer.state_dict_for_checkpoint(),
+            "dynamic_continuous": policy.dynamic_continuous_normalizer.state_dict_for_checkpoint(),
+        }
     torch.save(payload, path)
 
 
@@ -555,10 +572,38 @@ def load_checkpoint_training_meta(checkpoint_path: str | Path) -> dict | None:
     return ckpt.get("training_meta")
 
 
-def load_policy(checkpoint_path: str | Path, device: torch.device | str = "cpu") -> TransformerEVRPTWPolicy:
+def load_policy(
+    checkpoint_path: str | Path,
+    device: torch.device | str = "cpu",
+    *,
+    allow_partial_migration: bool = False,
+) -> TransformerEVRPTWPolicy:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    arch = ckpt.get("architecture_version")
+    if arch is not None and arch != ARCHITECTURE_VERSION:
+        msg = (
+            f"Checkpoint architecture_version={arch!r} != current {ARCHITECTURE_VERSION!r}. "
+            "Training/eval cannot resume exactly without migration."
+        )
+        if not allow_partial_migration:
+            raise RuntimeError(msg)
+        import warnings
+        warnings.warn(msg + " Loading with strict=False (partial actor init).")
     policy = TransformerEVRPTWPolicy(ckpt["model_config"], charging_portions=ckpt["charging_portions"])
-    policy.load_state_dict(ckpt["model_state"])
+    missing, unexpected = policy.load_state_dict(ckpt["model_state"], strict=False)
+    if arch is None:
+        import warnings
+        warnings.warn(
+            "Checkpoint has no architecture_version — likely incompatible with exact_smdp_dynamic_v1."
+        )
+    if missing or unexpected:
+        import warnings
+        warnings.warn(f"Checkpoint key mismatch: missing={missing}, unexpected={unexpected}")
     policy.to(device)
+    norm_state = ckpt.get("feature_normalizer_state")
+    if norm_state and hasattr(policy, "acting_ev_normalizer"):
+        policy.acting_ev_normalizer.load_from_checkpoint(norm_state.get("acting_ev", {}))
+        policy.global_normalizer.load_from_checkpoint(norm_state.get("global", {}))
+        policy.dynamic_continuous_normalizer.load_from_checkpoint(norm_state.get("dynamic_continuous", {}))
     policy.eval()
     return policy

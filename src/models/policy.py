@@ -9,22 +9,43 @@ import torch.nn as nn
 
 from src.utils.tensor_utils import NEG_INF
 
-from .decoder import GlobalContext, PointerDecoder
+from .decoder import PointerDecoder
+from .decision_state import DecisionState
+from .dynamic_candidate import compute_dynamic_candidate_features
 from .ev_communication import EVCommunication
 from .ev_state_encoder import EVStateEncoder
 from .edge_encoder import EdgeAwareNodeEncoder
+from .global_context import GlobalStateEncoder, MaskSummaryEncoder
 from .node_encoder import NodeEncoder
+from .feature_specs import (
+    ACTING_EV_FEATURE_DIM,
+    DYNAMIC_CANDIDATE_FEAT_DIM,
+    GLOBAL_STATE_FEATURE_DIM,
+)
+from .normalization import FeatureNormalizer
+from src.models.architecture_assertions import assert_decision_state
+from .state_features import (
+    acting_ev_features,
+    battery_state_features,
+    ev_token_scalars,
+    fleet_balance_features,
+    global_state_features,
+    mask_summary_features,
+)
 
 
 @dataclass
 class ActionOutput:
     node: int
-    log_prob: torch.Tensor  # node + charging + depot-mode log-prob (sum), differentiable
+    log_prob: torch.Tensor
     entropy: torch.Tensor
+    node_log_prob: torch.Tensor | None = None
+    secondary_log_prob: torch.Tensor | None = None
     charge_portion: float | None = None
     depot_finish: bool = False
     node_probs: torch.Tensor | None = None
     decoder_context: torch.Tensor | None = None
+    decision_state: DecisionState | None = None
     depot_mode_log_prob: torch.Tensor | None = None
     depot_mode_entropy: torch.Tensor | None = None
     depot_mode_finish_prob: float | None = None
@@ -41,6 +62,7 @@ class TransformerEVRPTWPolicy(nn.Module):
         dropout = float(model_cfg.get("dropout", 0.1))
         self.use_ev_communication = bool(model_cfg.get("use_ev_communication", True))
         self.use_edge_aware_encoder = bool(model_cfg.get("use_edge_aware_encoder", False))
+        self.use_dynamic_candidate_encoder = bool(model_cfg.get("use_dynamic_candidate_encoder", True))
         self.charging_portions = charging_portions or [0.25, 0.50, 0.75, 1.0]
         if self.use_edge_aware_encoder:
             self.node_encoder = EdgeAwareNodeEncoder(
@@ -63,91 +85,155 @@ class TransformerEVRPTWPolicy(nn.Module):
             )
         self.ev_state_encoder = EVStateEncoder(embedding_dim=d)
         self.ev_communication = EVCommunication(embedding_dim=d, dropout=dropout)
-        self.global_context = GlobalContext(embedding_dim=d)
+        self.global_state_encoder = GlobalStateEncoder(embedding_dim=d)
+        self.mask_summary_encoder = MaskSummaryEncoder(embedding_dim=d)
         self.pointer = PointerDecoder(embedding_dim=d, num_charging_portions=len(self.charging_portions))
         self.embedding_dim = d
+        self.acting_ev_normalizer = FeatureNormalizer(ACTING_EV_FEATURE_DIM)
+        self.global_normalizer = FeatureNormalizer(GLOBAL_STATE_FEATURE_DIM)
+        self.dynamic_continuous_normalizer = FeatureNormalizer(DYNAMIC_CANDIDATE_FEAT_DIM - 4)
 
-    # ------------------------------------------------------------------ #
     def encode(self, instance, device: torch.device | str = "cpu") -> torch.Tensor:
-        """Encode all nodes of an instance once; return H [N, d]."""
         feats = torch.tensor(instance.node_feature_matrix(), device=device)
         if self.use_edge_aware_encoder:
             return self.node_encoder.encode_instance(instance, feats, device=device)
         return self.node_encoder(feats)
 
-    def decoder_context(self, env, ev, node_embeddings: torch.Tensor) -> torch.Tensor:
-        """Public accessor for centralized critic input."""
-        return self._contexts(env, ev, node_embeddings)
+    def build_decision_state(
+        self,
+        env,
+        ev,
+        node_embeddings: torch.Tensor,
+        mask_result,
+    ) -> DecisionState:
+        from src.env.action_masks import ActionMaskResult
 
-    # ------------------------------------------------------------------ #
-    def _contexts(self, env, ev, node_embeddings: torch.Tensor) -> torch.Tensor:
+        if not isinstance(mask_result, ActionMaskResult):
+            raise TypeError("build_decision_state requires ActionMaskResult")
+
         device = node_embeddings.device
-        ev_feats = torch.tensor(env.ev_dynamic_features(ev), device=device)
+        dtype = node_embeddings.dtype
+
+        ev_feats = self.acting_ev_normalizer(
+            torch.tensor(acting_ev_features(env, ev), device=device, dtype=dtype),
+        )
         h_current = node_embeddings[ev.current_node]
-        ev_context = self.ev_state_encoder(ev_feats, h_current)
+        acting_ev_context = self.ev_state_encoder(ev_feats, h_current)
+
+        token_scalars = torch.tensor(
+            np.stack([ev_token_scalars(env, e) for e in env.evs]), device=device, dtype=dtype,
+        )
+        ev_node_embs = node_embeddings[[e.current_node for e in env.evs]]
+        finished = torch.tensor([e.finished for e in env.evs], dtype=torch.bool, device=device)
+        acting_idx = [e.ev_id for e in env.evs].index(ev.ev_id)
+        fleet_balance_raw = torch.tensor(fleet_balance_features(env), device=device, dtype=dtype)
 
         if self.use_ev_communication and len(env.evs) > 1:
-            token_feats = torch.tensor(
-                np.stack([env.ev_token_features(e) for e in env.evs]), device=device
+            comm = self.ev_communication(
+                token_scalars, ev_node_embs, acting_idx, finished, fleet_balance_raw,
             )
-            ev_node_embs = node_embeddings[[e.current_node for e in env.evs]]
-            finished = torch.tensor([e.finished for e in env.evs], dtype=torch.bool, device=device)
-            acting_idx = [e.ev_id for e in env.evs].index(ev.ev_id)
-            other_ctx = self.ev_communication(token_feats, ev_node_embs, acting_idx, finished)
         else:
-            other_ctx = torch.zeros(self.embedding_dim, device=device)
+            from src.models.ev_communication import EVCommunicationOutput
+            z = torch.zeros(self.embedding_dim, device=device, dtype=dtype)
+            comm = EVCommunicationOutput(
+                communicated_tokens=acting_ev_context.unsqueeze(0),
+                acting_token=acting_ev_context,
+                active_pool=z,
+                finished_pool=z,
+                fleet_balance_context=self.ev_communication.fleet_balance_proj(fleet_balance_raw),
+            )
 
-        global_feats = torch.tensor(env.global_features(), device=device)
-        global_ctx = self.global_context(global_feats)
+        global_raw = self.global_normalizer(
+            torch.tensor(global_state_features(env, mask_result), device=device, dtype=dtype),
+        )
+        global_context = self.global_state_encoder(global_raw)
+        mask_raw = torch.tensor(mask_summary_features(env, mask_result), device=device, dtype=dtype)
+        mask_context = self.mask_summary_encoder(mask_raw)
 
-        return self.pointer.decoder_context(ev_context, other_ctx, global_ctx)
+        decoder_context = self.pointer.fuse_decoder_context(
+            acting_ev_context,
+            comm.acting_token,
+            comm.active_pool,
+            comm.finished_pool,
+            global_context,
+            mask_context,
+            comm.fleet_balance_context,
+        )
 
-    # ------------------------------------------------------------------ #
+        dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
+        dyn_cont = self.dynamic_continuous_normalizer(
+            torch.tensor(dyn_feats_np[:, : DYNAMIC_CANDIDATE_FEAT_DIM - 4], device=device, dtype=dtype),
+        )
+        dyn_feats = torch.cat([
+            dyn_cont,
+            torch.tensor(dyn_feats_np[:, DYNAMIC_CANDIDATE_FEAT_DIM - 4 :], device=device, dtype=dtype),
+        ], dim=-1)
+        candidate_embeddings, dyn_emb = self.pointer.fuse_candidates(
+            node_embeddings,
+            dyn_feats,
+            use_dynamic_encoder=self.use_dynamic_candidate_encoder,
+        )
+
+        state = DecisionState(
+            decoder_context=decoder_context,
+            acting_ev_context=acting_ev_context,
+            communicated_ev_tokens=comm.communicated_tokens,
+            acting_ev_token=comm.acting_token,
+            active_fleet_context=comm.active_pool,
+            finished_fleet_context=comm.finished_pool,
+            fleet_balance_context=comm.fleet_balance_context,
+            global_context=global_context,
+            mask_context=mask_context,
+            static_node_embeddings=node_embeddings,
+            candidate_embeddings=candidate_embeddings,
+            dynamic_candidate_embeddings=dyn_emb,
+            dynamic_candidate_feats=dyn_feats,
+            global_features_raw=global_raw,
+            mask_summary_raw=mask_raw,
+            fleet_balance_raw=fleet_balance_raw,
+            feasible_mask=mask_result.node_mask.copy(),
+            mask_result=mask_result,
+        )
+        assert_decision_state(state, instance_name=getattr(env.instance, "instance_name", "?"))
+        return state
+
+    def decoder_context(self, env, ev, node_embeddings: torch.Tensor, mask_result=None) -> torch.Tensor:
+        if mask_result is None:
+            mask_result = env.compute_action_masks(ev)
+        return self.build_decision_state(env, ev, node_embeddings, mask_result).decoder_context
+
     def select_action(
         self,
         env,
         ev,
         node_embeddings: torch.Tensor,
-        feasible_mask: np.ndarray,
+        mask_result,
         mode: str = "sampling",
-        *,
-        depot_logit_penalty: float = 0.0,
-        customer_logit_bonus: float = 0.0,
-        station_logit_penalty: float = 0.0,
-        use_dynamic_temporal_bias: bool = True,
     ) -> ActionOutput:
-        """Select the next node (and charging portion if a station) for the EV."""
+        state = self.build_decision_state(env, ev, node_embeddings, mask_result)
+        return self.select_action_from_state(
+            env, ev, node_embeddings, mask_result, state, mode=mode,
+        )
+
+    def select_action_from_state(
+        self,
+        env,
+        ev,
+        node_embeddings: torch.Tensor,
+        mask_result,
+        state: DecisionState,
+        mode: str = "sampling",
+    ) -> ActionOutput:
         device = node_embeddings.device
-        decoder_context = self._contexts(env, ev, node_embeddings)
+        decoder_context = state.decoder_context
 
-        scores = self.pointer.node_scores(decoder_context, node_embeddings)  # [N]
-        if use_dynamic_temporal_bias:
-            from src.env.tw_diagnostics import compute_dynamic_action_features
-
-            dyn = torch.tensor(
-                compute_dynamic_action_features(env, ev),
-                device=device,
-                dtype=scores.dtype,
-            )
-            scores = scores + self.pointer.dynamic_score_bias(dyn)
-        mask_t = torch.tensor(feasible_mask, dtype=torch.bool, device=device)
+        scores = self.pointer.node_scores(
+            decoder_context,
+            state.candidate_embeddings,
+            state.dynamic_candidate_embeddings,
+        )
+        mask_t = torch.tensor(state.feasible_mask, dtype=torch.bool, device=device)
         masked_scores = scores.masked_fill(~mask_t, NEG_INF)
-        inst = env.instance
-        if customer_logit_bonus > 0.0:
-            masked_scores = masked_scores.clone()
-            for j in inst.customer_indices:
-                if mask_t[j]:
-                    masked_scores[j] = masked_scores[j] + float(customer_logit_bonus)
-        if station_logit_penalty > 0.0:
-            masked_scores = masked_scores.clone()
-            for s in inst.charging_station_indices:
-                if mask_t[s]:
-                    masked_scores[s] = masked_scores[s] - float(station_logit_penalty)
-        if depot_logit_penalty > 0.0:
-            depot_idx = int(env.instance.depot_index)
-            if mask_t[depot_idx]:
-                masked_scores = masked_scores.clone()
-                masked_scores[depot_idx] = masked_scores[depot_idx] - float(depot_logit_penalty)
         log_probs = torch.log_softmax(masked_scores, dim=-1)
         probs = log_probs.exp()
 
@@ -164,11 +250,10 @@ class TransformerEVRPTWPolicy(nn.Module):
                 node = int(torch.multinomial(p, num_samples=1).item())
 
         node_log_prob = log_probs[node]
-        # Entropy over feasible nodes (finite terms only).
         finite = torch.isfinite(log_probs)
         entropy = -(probs[finite] * log_probs[finite]).sum()
-
         total_log_prob = node_log_prob
+        secondary_log_prob = None
         charge_portion = None
         depot_finish = False
         depot_mode_log_prob = None
@@ -176,21 +261,25 @@ class TransformerEVRPTWPolicy(nn.Module):
         depot_mode_finish_prob = None
         depot_mode_recharge_prob = None
 
-        if env.instance.nodes[node].is_depot:
-            from src.env.masks import depot_mode_feasible
-
-            ok_recharge, ok_finish = depot_mode_feasible(
-                env.instance, env, ev,
-                use_horizon_check=env.use_horizon_check,
-                use_depot_charging=env.use_depot_charging,
-                charging_portions=env.charging_portions,
-            )
+        inst = env.instance
+        if inst.nodes[node].is_depot:
+            ok_recharge = bool(mask_result.depot_mode_mask[0])
+            ok_finish = bool(mask_result.depot_mode_mask[1])
             if ok_finish and not ok_recharge:
                 depot_finish = True
             elif ok_recharge and not ok_finish:
                 depot_finish = False
             elif ok_finish and ok_recharge:
-                mode_logits = self.pointer.depot_mode_logits(decoder_context)
+                mode_logits = self.pointer.depot_mode_logits(
+                    decoder_context,
+                    state.candidate_embeddings[node],
+                    state.global_context,
+                    state.mask_context,
+                )
+                dm = mask_result.depot_mode_mask
+                mode_logits = mode_logits.masked_fill(
+                    ~torch.tensor(dm, device=device), NEG_INF,
+                )
                 mode_lp = torch.log_softmax(mode_logits, dim=-1)
                 mode_probs = mode_lp.exp()
                 if mode == "greedy":
@@ -199,6 +288,7 @@ class TransformerEVRPTWPolicy(nn.Module):
                     depot_finish = bool(torch.multinomial(mode_probs, 1).item() == 1)
                 depot_mode_lp = mode_lp[1 if depot_finish else 0]
                 total_log_prob = total_log_prob + depot_mode_lp
+                secondary_log_prob = depot_mode_lp
                 mode_ent = -(mode_probs * mode_lp).sum()
                 entropy = entropy + mode_ent
                 depot_mode_log_prob = depot_mode_lp
@@ -208,59 +298,64 @@ class TransformerEVRPTWPolicy(nn.Module):
 
             if not depot_finish:
                 charge_portion, charge_log_prob, charge_entropy = self._select_charge(
-                    env, ev, node, node_embeddings, decoder_context, mode
+                    env, ev, node, state, mode,
                 )
                 total_log_prob = total_log_prob + charge_log_prob
+                secondary_log_prob = charge_log_prob
                 entropy = entropy + charge_entropy
-        elif env.instance.nodes[node].is_charging_station:
+        elif inst.nodes[node].is_charging_station:
             charge_portion, charge_log_prob, charge_entropy = self._select_charge(
-                env, ev, node, node_embeddings, decoder_context, mode
+                env, ev, node, state, mode,
             )
             total_log_prob = total_log_prob + charge_log_prob
+            secondary_log_prob = charge_log_prob
             entropy = entropy + charge_entropy
 
         return ActionOutput(
             node=node,
             log_prob=total_log_prob,
             entropy=entropy,
+            node_log_prob=node_log_prob,
+            secondary_log_prob=secondary_log_prob,
             charge_portion=charge_portion,
             depot_finish=depot_finish,
             node_probs=probs,
             decoder_context=decoder_context,
+            decision_state=state,
             depot_mode_log_prob=depot_mode_log_prob,
             depot_mode_entropy=depot_mode_entropy,
             depot_mode_finish_prob=depot_mode_finish_prob,
             depot_mode_recharge_prob=depot_mode_recharge_prob,
         )
 
-    def _select_charge(self, env, ev, station, node_embeddings, decoder_context, mode):
-        from src.env.charge_masks import feasible_charge_portions
+    def _select_charge(self, env, ev, station, state: DecisionState, mode: str):
+        from src.env.mask_errors import InvalidActionMaskError
 
-        vp = env.instance.vehicle
-        horizon = env.instance.planning_horizon if env.instance.planning_horizon > 0 else 1.0
-        battery_norm = ev.remaining_battery / vp.battery_capacity if vp.battery_capacity else 0.0
-        time_norm = ev.current_time / horizon
+        device = state.decoder_context.device
+        dtype = state.decoder_context.dtype
+        batt = torch.tensor(battery_state_features(env, ev), device=device, dtype=dtype)
         logits = self.pointer.charging_logits(
-            decoder_context, node_embeddings[station], float(battery_norm), float(time_norm)
+            state.decoder_context,
+            state.candidate_embeddings[station],
+            state.acting_ev_context,
+            batt,
         )
-        portion_mask, _ = feasible_charge_portions(
-            env.instance, ev, station, env.served_mask, env.reserved_mask,
-            portions=self.charging_portions,
-            use_horizon_check=env.use_horizon_check,
-            use_depot_charging=env.use_depot_charging,
-        )
-        mask_t = torch.tensor(portion_mask, device=logits.device)
+        mask_result = state.mask_result
+        if station not in mask_result.charge_masks:
+            raise InvalidActionMaskError(f"no charge_masks for station node {station}")
+        portion_mask = mask_result.charge_masks[station]
+        mask_t = torch.tensor(portion_mask, device=device)
         logits = logits.masked_fill(~mask_t, NEG_INF)
         log_probs = torch.log_softmax(logits, dim=-1)
         probs = log_probs.exp()
         if not mask_t.any():
-            idx = int(torch.argmax(logits).item())
-        elif mode == "greedy":
+            raise InvalidActionMaskError(f"empty charge mask for node {station}")
+        if mode == "greedy":
             idx = int(torch.argmax(logits).item())
         else:
             p = probs.clone()
             p[~mask_t] = 0.0
             p = p / p.sum().clamp_min(1e-12)
             idx = int(torch.multinomial(p, num_samples=1).item())
-        entropy = -(probs[mask_t] * log_probs[mask_t]).sum() if mask_t.any() else torch.zeros((), device=logits.device)
+        entropy = -(probs[mask_t] * log_probs[mask_t]).sum()
         return self.charging_portions[idx], log_probs[idx], entropy
