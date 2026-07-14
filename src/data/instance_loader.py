@@ -110,16 +110,71 @@ class EVRPTWInstance:
         return max(1, math.ceil(self.total_demand / self.vehicle.load_capacity))
 
     def demand_array(self) -> np.ndarray:
-        return np.array([n.demand for n in self.nodes], dtype=np.float32)
+        cached = getattr(self, "_demand_cache", None)
+        if cached is None:
+            cached = np.array([n.demand for n in self.nodes], dtype=np.float32)
+            object.__setattr__(self, "_demand_cache", cached)
+        return cached
 
     def ready_time_array(self) -> np.ndarray:
-        return np.array([n.ready_time for n in self.nodes], dtype=np.float32)
+        cached = getattr(self, "_ready_cache", None)
+        if cached is None:
+            cached = np.array([n.ready_time for n in self.nodes], dtype=np.float32)
+            object.__setattr__(self, "_ready_cache", cached)
+        return cached
 
     def due_time_array(self) -> np.ndarray:
-        return np.array([n.due_time for n in self.nodes], dtype=np.float32)
+        cached = getattr(self, "_due_cache", None)
+        if cached is None:
+            cached = np.array([n.due_time for n in self.nodes], dtype=np.float32)
+            object.__setattr__(self, "_due_cache", cached)
+        return cached
 
     def service_time_array(self) -> np.ndarray:
-        return np.array([n.service_time for n in self.nodes], dtype=np.float32)
+        cached = getattr(self, "_service_cache", None)
+        if cached is None:
+            cached = np.array([n.service_time for n in self.nodes], dtype=np.float32)
+            object.__setattr__(self, "_service_cache", cached)
+        return cached
+
+    def ensure_hot_arrays(self) -> None:
+        """Precompute contiguous immutable arrays used in the mask hot path."""
+        _ = self.demand_array()
+        _ = self.ready_time_array()
+        _ = self.due_time_array()
+        _ = self.service_time_array()
+        if getattr(self, "_cust_idx_np", None) is None:
+            object.__setattr__(
+                self, "_cust_idx_np",
+                np.asarray(self.customer_indices, dtype=np.int64),
+            )
+        if getattr(self, "_station_idx_np", None) is None:
+            object.__setattr__(
+                self, "_station_idx_np",
+                np.asarray(self.charging_station_indices, dtype=np.int64),
+            )
+        if getattr(self, "_recharge_idx_np", None) is None:
+            object.__setattr__(
+                self, "_recharge_idx_np",
+                np.asarray(self.rechargeable_indices, dtype=np.int64),
+            )
+        if getattr(self, "_depot_return_energy", None) is None:
+            dep = self.depot_index
+            object.__setattr__(
+                self, "_depot_return_energy",
+                np.asarray(self.energy_matrix[:, dep], dtype=np.float64),
+            )
+            object.__setattr__(
+                self, "_depot_return_time",
+                np.asarray(self.travel_time_matrix[:, dep], dtype=np.float64),
+            )
+        if getattr(self, "_min_energy_to_recharge", None) is None:
+            re = self.rechargeable_indices
+            if re:
+                mins = np.min(self.energy_matrix[:, re], axis=1)
+            else:
+                mins = self.energy_matrix[:, self.depot_index].copy()
+            object.__setattr__(self, "_min_energy_to_recharge", np.asarray(mins, dtype=np.float64))
 
     def node_type_ids(self) -> np.ndarray:
         return np.array([NODE_TYPE_TO_ID[n.node_type] for n in self.nodes], dtype=np.int64)
@@ -338,6 +393,7 @@ def load_instance(instance_dir: str | Path, *, load_capacity: float | None = Non
     )
     if load_capacity is not None:
         apply_load_capacity(instance, load_capacity)
+    instance.ensure_hot_arrays()
     return instance
 
 

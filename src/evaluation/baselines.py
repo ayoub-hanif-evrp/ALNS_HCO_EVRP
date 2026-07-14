@@ -5,7 +5,7 @@ import random
 
 import numpy as np
 
-from src.env.action_masks import ActionMaskResult, compute_action_masks
+from src.env.action_masks import ActionMaskResult
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
 from src.env.policy_action import PolicyAction, apply_policy_action
@@ -48,7 +48,7 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
             continue
         if env.try_auto_close_route(ev) is not None:
             continue
-        mask_result = compute_action_masks(env, ev)
+        mask_result = env.analyze_decision(ev).mask_result
         action = policy.select(env, ev, mask_result)
         apply_policy_action(env, ev, action, mask_result=mask_result)
     for ev in env.evs:

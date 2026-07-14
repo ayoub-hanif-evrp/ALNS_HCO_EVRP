@@ -1,58 +1,117 @@
 # Commands
 
-Run everything from the **project root**.
+Run from the project root, **in order**. Stop if a step fails.
 
-## 1. Setup (once)
+Workflow:
 
-```powershell
-pip install -r requirements.txt
-python scripts/check_gpu.py
+```text
+single RC debugging  →  full RC baseline  →  balanced all-class generalization
 ```
 
-## 2. Train — Schneider RC `_21` safe baseline (default)
+There are exactly **three training phases**. Evaluation is not a training phase.
+
+---
+
+## 0. Sanity checks
+
+This is **not** a training phase.
 
 ```powershell
-python main_train.py
+python -m compileall src
+pytest -q
+python main_train.py --config configs/train_phase1_single_RC21.yaml --phase0-only
 ```
 
-**Phase A only:** actor-critic + step rewards + GAE (no Q critic, multi-sample rollout baseline, shaping, edge encoder).
+---
 
-- **13** RC `_21` train instances × **50** cycles = **650** updates
-- Held out: `rc101_21`, `rc104_21`, `rc208_21` (never loaded during training)
-- Schneider has **16** RC `_21` instances total (not 23 like R class)
+## 1. Phase 1 — Single RC instance
 
-Longer run (~1000 updates):
+Purpose: verify learning, masks, SMDP returns, critic, and training speed on one RC `_21` instance (~500 updates).
 
 ```powershell
-python main_train.py --cycles 77
+python main_train.py --config configs/train_phase1_single_RC21.yaml --device cuda
 ```
 
-Overfit sanity test (one instance):
+Phase 1 passes only if:
 
-```powershell
-python main_train.py --overfit
-```
+* served ratio improves
+* objective improves
+* critic value variance is nonzero
+* explained variance begins improving
+* no invalid actions
+* no objective reconstruction mismatch
+* no max-step loops
 
-Explicit safe config:
-
-```powershell
-python main_train.py --config configs/train_schneider_RC21_safe.yaml
-```
-
-## 3. Live training monitor (second terminal)
+Optional live monitor (second terminal):
 
 ```powershell
 python main_dashboard.py
 ```
 
-Open **http://localhost:8080**
+---
 
-## 4. Evaluate later (held-out test instances)
+## 2. Phase 2 — Full RC training
+
+Train on **all** available RC `_21` training instances (holdouts reserved). One full RC baseline run (100 cycles).
 
 ```powershell
-python main_evaluate.py --config configs/train.yaml --checkpoint outputs/checkpoints/last.pt
+python main_train.py --config configs/train_phase2_full_RC21.yaml --device cuda
 ```
 
 ---
 
-**Config:** `configs/train.yaml` or `configs/train_schneider_RC21_safe.yaml`
+## 3. Phase 3 — All classes
+
+After RC learning is stable, train jointly on C + R + RC with balanced class sampling:
+
+```text
+P(C) = P(R) = P(RC) = 1/3
+```
+
+```powershell
+python main_train.py --config configs/train_phase3_all_classes.yaml --device cuda
+```
+
+Separate unseen holdouts are kept for C, R, and RC.
+
+---
+
+## 4. Evaluation
+
+Evaluation is **not** a training phase.
+
+### RC holdout after Phase 2
+
+```powershell
+python main_evaluate.py --config configs/train_phase2_full_RC21.yaml --checkpoint outputs/checkpoints/last.pt --device cuda --class RC
+```
+
+### Per-class holdouts after Phase 3
+
+```powershell
+python main_evaluate.py --config configs/train_phase3_all_classes.yaml --checkpoint outputs/checkpoints/last.pt --device cuda --class C
+python main_evaluate.py --config configs/train_phase3_all_classes.yaml --checkpoint outputs/checkpoints/last.pt --device cuda --class R
+python main_evaluate.py --config configs/train_phase3_all_classes.yaml --checkpoint outputs/checkpoints/last.pt --device cuda --class RC
+```
+
+### Combined class-balanced macro-average (after Phase 3)
+
+```powershell
+python main_evaluate.py --config configs/train_phase3_all_classes.yaml --checkpoint outputs/checkpoints/last.pt --device cuda --macro-average
+```
+
+Writes `outputs/results/class_macro_average.json` with per-class means and the macro-average.
+
+---
+
+## Optional — resume a phase
+
+Do **not** mix these into the main sequence. Use only when continuing an interrupted run.
+
+A true resume restores actor, critic, optimizers, normalizers, update/cycle counters, and RNG states when available.
+
+```powershell
+python main_train.py --config configs/train_phase1_single_RC21.yaml --device cuda --resume outputs/checkpoints/last.pt
+python main_train.py --config configs/train_phase2_full_RC21.yaml --device cuda --resume outputs/checkpoints/last.pt
+python main_train.py --config configs/train_phase3_all_classes.yaml --device cuda --resume outputs/checkpoints/last.pt
+```

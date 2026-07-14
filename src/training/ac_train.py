@@ -69,6 +69,7 @@ def actor_critic_train_step(
     critic_warmup_steps: int = 0,
     critic_updates_per_step: int = 2,
     environment_config: dict | None = None,
+    parameter_delta_every_updates: int = 20,
 ) -> dict:
     """One actor-critic update: separate critic passes then actor pass."""
     policy.train()
@@ -78,7 +79,14 @@ def actor_critic_train_step(
 
     device_t = torch.device(device) if isinstance(device, str) else device
     use_q_now = rl_cfg.q_critic_active(global_epoch) and q_critic is not None
-    use_huber = str(rl_cfg.critic_loss_type).lower() == "huber"
+
+    measure_param_delta = (
+        int(parameter_delta_every_updates) > 0
+        and (int(global_epoch) % int(parameter_delta_every_updates) == 0)
+    )
+    actor_params_before = _flat_params(policy) if measure_param_delta else None
+    critic_params_before = _flat_params(value_critic) if measure_param_delta else None
+    use_huber = str(getattr(rl_cfg, "critic_loss_type", "huber")).lower() == "huber"
 
     raw_costs, feas_flags = [], []
     used_evs_list, dist_list, charge_list, price_list, wait_list = [], [], [], [], []
@@ -110,9 +118,6 @@ def actor_critic_train_step(
     feasible_cust_ratio_list, served_slack_list = [], []
     frac_customer_list, frac_station_list, frac_depot_list = [], [], []
 
-    actor_params_before = _flat_params(policy)
-    critic_params_before = _flat_params(value_critic)
-
     reset_cuda_peak_stats(device_t)
     accum = max(1, int(gradient_accumulation_steps))
     critic_passes = max(1, int(critic_updates_per_step))
@@ -133,6 +138,7 @@ def actor_critic_train_step(
             min_decisions_warn=min_decisions_warn,
             cycle_id=cycle_id,
             environment_config=environment_config,
+            use_amp=use_amp,
         )
         for result, trajectory in rollouts:
             total_rollouts += 1
@@ -171,9 +177,6 @@ def actor_critic_train_step(
                 customer_lateness_list, depot_lateness_list,
             )
 
-            if device_t.type == "cuda" and total_rollouts % max(1, len(rollouts)) == 0:
-                torch.cuda.empty_cache()
-
     n_roll = max(1, len(rollout_pairs))
     if not rollout_pairs:
         return {"loss": 0.0, "algorithm": "actor_critic"}
@@ -191,6 +194,7 @@ def actor_critic_train_step(
             global_epoch=global_epoch,
             use_q_critic=use_q_now,
             use_huber=use_huber,
+            use_amp=use_amp,
             **kwargs,
         )
 
@@ -251,8 +255,12 @@ def actor_critic_train_step(
         else:
             optimizer.step()
 
-    actor_param_delta = float(torch.norm(_flat_params(policy) - actor_params_before).item())
-    critic_param_delta = float(torch.norm(_flat_params(value_critic) - critic_params_before).item())
+    if measure_param_delta and actor_params_before is not None and critic_params_before is not None:
+        actor_param_delta = float(torch.norm(_flat_params(policy) - actor_params_before).item())
+        critic_param_delta = float(torch.norm(_flat_params(value_critic) - critic_params_before).item())
+    else:
+        actor_param_delta = 0.0
+        critic_param_delta = 0.0
 
     if metrics_out is not None:
         actor_losses.append(metrics_out.actor_loss.detach())

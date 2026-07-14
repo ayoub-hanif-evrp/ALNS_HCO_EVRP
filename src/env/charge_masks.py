@@ -81,16 +81,14 @@ def _customer_feasible_from_state(
     use_depot_charging: bool,
     charging_portions: list[float] | None,
 ) -> bool:
-    from .masks import customer_feasible
+    from .action_space import _has_feasible_customer
 
-    for j in instance.customer_indices:
-        ok, _ = customer_feasible(
-            instance, ev, j, served_mask, reserved_mask, use_horizon_check,
-            use_depot_charging, charging_portions,
-        )
-        if ok:
-            return True
-    return False
+    return _has_feasible_customer(
+        instance, ev, served_mask, reserved_mask,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=charging_portions,
+    )
 
 
 def _can_continue_after_recharge(
@@ -146,7 +144,16 @@ def feasible_charge_portions(
     use_depot_charging: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """Boolean mask over charge portions with full continuation checks."""
+    from .feasibility_scratch import ev_state_key, get_scratch
+
     p_list = list(portions or CHARGE_PORTIONS)
+    scratch = get_scratch()
+    if scratch is not None:
+        cache_key = (*ev_state_key(ev), int(node), tuple(p_list))
+        cached = scratch.charge_portions.get(cache_key)
+        if cached is not None:
+            mask, reasons = cached
+            return mask.copy(), list(reasons)
     mask = np.zeros(len(p_list), dtype=bool)
     reasons: list[str] = [""] * len(p_list)
     free = instance.nodes[node].is_depot
@@ -171,4 +178,6 @@ def feasible_charge_portions(
             reasons[idx] = "charge_portion_feasible"
         else:
             reasons[idx] = reason
+    if scratch is not None:
+        scratch.charge_portions[cache_key] = (mask.copy(), list(reasons))
     return mask, reasons

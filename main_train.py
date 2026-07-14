@@ -1,24 +1,19 @@
 """Entry point for the exact-mask semi-MDP training pipeline.
 
-Unified command (recommended):
+Three training phases (choose via config):
 
-    python main_train.py --cycles 5 --device cuda
+  Phase 1 — Single RC:
+    python main_train.py --config configs/train_phase1_single_RC21.yaml --device cuda
 
-Pipeline order:
-  1. Phase 0 environment/mask sanity checks
-  2. Fast deterministic unit tests (no dataset fixture)
-  3. One-instance overfit gate on rc102_21 (unless skipped)
-  4. Full RC _21 cyclic training
+  Phase 2 — Full RC:
+    python main_train.py --config configs/train_phase2_full_RC21.yaml --device cuda
 
-Cycle modes:
-  --cycles 0   overfit gate only (Phase 0 + tests + 500 updates on one instance)
-  --cycles N   gates then train all 13 RC _21 instances for N cycles (default from config: 100)
+  Phase 3 — All classes:
+    python main_train.py --config configs/train_phase3_all_classes.yaml --device cuda
 
-Examples:
-    python main_train.py --cycles 0          # overfit gate only
-    python main_train.py --cycles 5          # gates + 5 training cycles
-    python main_train.py --phase0-only       # sanity checks only
-    python main_train.py --cycles 5 --skip-overfit --skip-tests
+Sanity only (not a training phase):
+
+    python main_train.py --config configs/train_phase1_single_RC21.yaml --phase0-only
 """
 from __future__ import annotations
 
@@ -37,35 +32,39 @@ _QUICK_TEST_TARGETS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Exact-mask semi-MDP training pipeline (Phase 0 -> tests -> overfit -> train).",
+        description="Exact-mask semi-MDP training (Phase 1 / 2 / 3 via config).",
     )
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/train.yaml",
-        help="Path to YAML config (default: configs/train.yaml).",
+        default="configs/train_phase1_single_RC21.yaml",
+        help="Path to YAML config (default: Phase 1).",
     )
     parser.add_argument(
         "--cycles",
         type=int,
         default=None,
-        help=(
-            "Training cycles: 0 = overfit gate only; N>0 = full cyclic training "
-            "after gates (default: training.cycles from config)."
-        ),
+        help="Optional override for training.cycles (Phase 2/3).",
+    )
+    parser.add_argument(
+        "--updates",
+        type=int,
+        default=None,
+        help="Optional override for training.updates (Phase 1).",
     )
     parser.add_argument("--epochs", type=int, default=None, help="Override number of epochs.")
     parser.add_argument("--device", type=str, default=None, help="Override device (cpu/cuda/auto).")
     parser.add_argument("--seed", type=int, default=None, help="Override random seed.")
     parser.add_argument(
-        "--overfit",
-        action="store_true",
-        help="Alias for --cycles 0 (overfit gate only).",
+        "--resume",
+        type=str,
+        default=None,
+        help="Resume from a checkpoint (actor, critic, optimizers, normalizers, counters).",
     )
     parser.add_argument(
         "--phase0-only",
         action="store_true",
-        help="Run only Phase 0 checks and exit.",
+        help="Run only Phase 0 environment/mask sanity checks and exit.",
     )
     parser.add_argument(
         "--force",
@@ -75,17 +74,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-phase0",
         action="store_true",
-        help="Skip Phase 0 sanity checks.",
+        help="Skip Phase 0 sanity checks before training.",
     )
     parser.add_argument(
         "--skip-tests",
         action="store_true",
-        help="Skip fast deterministic unit tests.",
+        help="Skip fast deterministic unit tests before training.",
     )
     parser.add_argument(
-        "--skip-overfit",
+        "--run-gates",
         action="store_true",
-        help="Skip one-instance overfit gate before cyclic training.",
+        help="Also run Phase 0 + quick tests before this training phase (optional).",
     )
     return parser.parse_args()
 
@@ -111,14 +110,6 @@ def _run_quick_tests() -> bool:
     return proc.returncode == 0
 
 
-def _resolve_cycles(args: argparse.Namespace, config: dict) -> int:
-    if args.overfit:
-        return 0
-    if args.cycles is not None:
-        return int(args.cycles)
-    return int(config.get("training", {}).get("cycles", 100))
-
-
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
@@ -131,9 +122,11 @@ def main() -> None:
         ok = _run_phase0(config)
         raise SystemExit(0 if ok else 1)
 
-    if not args.skip_phase0:
+    # Default: training commands do not re-run gates (see COMMANDS.md §0).
+    run_gates = bool(args.run_gates) and not args.skip_phase0
+    if run_gates:
         print("=" * 60)
-        print("Stage 1a — Phase 0 sanity checks")
+        print("Optional gates — Phase 0 sanity checks")
         print("=" * 60)
         if not _run_phase0(config):
             if not args.force:
@@ -141,9 +134,9 @@ def main() -> None:
                 raise SystemExit(1)
             print("WARNING: Phase 0 failed but --force set; continuing.")
 
-    if not args.skip_tests:
+    if run_gates and not args.skip_tests:
         print("=" * 60)
-        print("Stage 1b — quick deterministic unit tests")
+        print("Optional gates — quick deterministic unit tests")
         print("=" * 60)
         if not _run_quick_tests():
             if not args.force:
@@ -151,36 +144,25 @@ def main() -> None:
                 raise SystemExit(1)
             print("WARNING: quick tests failed but --force set; continuing.")
 
-    cycles = _resolve_cycles(args, config)
     tcfg = config.setdefault("training", {})
-
+    if args.cycles is not None:
+        tcfg["cycles"] = int(args.cycles)
+    if args.updates is not None:
+        tcfg["updates"] = int(args.updates)
     if args.epochs is not None:
         tcfg["epochs"] = args.epochs
+    if args.resume is not None:
+        tcfg["resume_from"] = args.resume
 
+    from src.data.training_phases import normalize_training_phase
     from src.training.train_rl import train
 
-    run_overfit = cycles == 0 or not args.skip_overfit
-
-    if run_overfit:
-        print("=" * 60)
-        print("Stage 3 — one-instance overfit gate (rc102_21)")
-        print("=" * 60)
-        overfit_cfg = dict(config)
-        overfit_cfg["training"] = dict(tcfg)
-        overfit_cfg["training"]["debug_overfit_one_instance"] = True
-        train(overfit_cfg)
-        if cycles == 0:
-            print("Overfit-only run complete (--cycles 0).")
-            return
-
+    phase = normalize_training_phase(config)
     print("=" * 60)
-    print(f"Stage 4+ — cyclic training ({cycles} cycles on 13 RC _21 instances)")
+    print(f"Training — phase: {phase}")
+    print(f"Config: {args.config}")
     print("=" * 60)
-    train_cfg = dict(config)
-    train_cfg["training"] = dict(tcfg)
-    train_cfg["training"]["debug_overfit_one_instance"] = False
-    train_cfg["training"]["cycles"] = cycles
-    train(train_cfg)
+    train(config)
 
 
 if __name__ == "__main__":

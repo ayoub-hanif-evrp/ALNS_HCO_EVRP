@@ -72,6 +72,7 @@ def run_episode_trajectory(
     hard_time_windows: bool = True,
     global_epoch: int = 0,
     environment_config: dict | None = None,
+    use_amp: bool = False,
 ) -> tuple[EpisodeResult, Trajectory | None]:
     """Run episode; optionally collect per-step rewards and critic trajectory."""
     env = EVRPTWEnv(
@@ -84,7 +85,10 @@ def run_episode_trajectory(
         hard_time_windows=hard_time_windows,
     )
     env.environment_config = environment_config
-    node_embeddings = policy.encode(instance, device=device)
+    from src.utils.gpu_runtime import autocast_ctx
+    amp_on = bool(use_amp and str(device).startswith("cuda"))
+    with autocast_ctx(device, enabled=amp_on):
+        node_embeddings = policy.encode(instance, device=device)
 
     train_calc: TrainingRewardCalculator | None = None
     if training_mode and rl_cfg is not None:
@@ -185,22 +189,30 @@ def run_episode_trajectory(
 
         before = snapshot_env(env)
         pre_context = env.snapshot_decision_context(ev)
-        mask_counts, feasible_mask, mask_reasons = aggregate_mask_reasons(
+        analysis = env.analyze_decision(ev)
+        analysis.assert_fresh(env, ev)
+        mask_result = analysis.mask_result
+        feasible_mask = analysis.final_node_mask
+        mask_reasons = analysis.node_reasons
+        mask_counts, _, _ = aggregate_mask_reasons(
             instance, env, ev,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
         )
-        mask_result = env.last_action_mask_result
+        # aggregate_mask_reasons reuses the cached analysis for this state.
         pre_expired = int(getattr(env, "last_expired_count", 0))
 
-        decision_state = policy.build_decision_state(env, ev, node_embeddings, mask_result)
-        if pending_decision is not None:
-            pending_decision.next_state_features = decision_state
-            _flush_decision()
-
-        action = policy.select_action_from_state(
-            env, ev, node_embeddings, mask_result, decision_state, mode=mode,
-        )
+        from src.utils.gpu_runtime import autocast_ctx
+        with autocast_ctx(device, enabled=amp_on):
+            decision_state = policy.build_decision_state(
+                env, ev, node_embeddings, mask_result, analysis=analysis,
+            )
+            if pending_decision is not None:
+                pending_decision.next_state_features = decision_state
+                _flush_decision()
+            action = policy.select_action_from_state(
+                env, ev, node_embeddings, mask_result, decision_state, mode=mode,
+            )
         need_slack_stats = (
             train_calc is not None
             and (
@@ -254,10 +266,12 @@ def run_episode_trajectory(
                 raise
 
         info = apply_policy_action(env, ev, action, mask_result=mask_result)
-        from src.env.feasibility_scratch import feasibility_scratch_scope
-        with feasibility_scratch_scope():
-            env.get_global_serviceability()
+        # Invalidation happens inside apply_action / bump_state_version.
+        # Refresh serviceability from the NEW state only when needed (cache miss).
         expired_after = int(getattr(env, "last_expired_count", 0))
+        if getattr(env, "_global_serviceability_cache", None) is None:
+            env.get_global_serviceability(force=False)
+            expired_after = int(getattr(env, "last_expired_count", 0))
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
 
@@ -531,6 +545,7 @@ def run_multi_sample_rollout_baseline(
     min_decisions_warn: int | None = None,
     cycle_id: int = 1,
     environment_config: dict | None = None,
+    use_amp: bool = False,
 ) -> tuple[list[tuple[EpisodeResult, Trajectory]], float]:
     """Run K sampled rollouts and return trajectories with group baseline on terminal reward."""
     K = rl_cfg.effective_multi_sample_k()
@@ -551,6 +566,7 @@ def run_multi_sample_rollout_baseline(
             training_mode=True,
             hard_time_windows=True,
             environment_config=environment_config,
+            use_amp=use_amp,
         )
         assert traj is not None
         tr = float(getattr(traj, "training_stats", {}).get(

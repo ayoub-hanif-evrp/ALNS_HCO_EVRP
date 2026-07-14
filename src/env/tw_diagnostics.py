@@ -97,31 +97,44 @@ def aggregate_mask_reasons(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
 ) -> tuple[MaskReasonCounts, np.ndarray, dict[int, str]]:
-    from src.env.action_masks import compute_action_masks
+    """Aggregate mask diagnostics from the canonical decision analysis."""
+    from src.env.decision_analysis import analyze_decision_state
 
-    result = compute_action_masks(env_state, ev)
+    analysis = getattr(env_state, "last_decision_analysis", None)
+    fresh = (
+        analysis is not None
+        and int(analysis.state_version) == int(getattr(env_state, "state_version", -1))
+        and int(analysis.active_ev_id) == int(ev.ev_id)
+    )
+    if not fresh:
+        if hasattr(env_state, "analyze_decision"):
+            analysis = env_state.analyze_decision(ev)
+        else:
+            analysis = analyze_decision_state(env_state, ev)
+    result = analysis.mask_result
     counts = MaskReasonCounts()
-    feasible = result.node_mask
-    reasons = result.node_reasons
+    feasible = analysis.final_node_mask
+    reasons = analysis.node_reasons
     for j in instance.customer_indices:
         if feasible[j]:
             counts.feasible_customers_count += 1
             continue
         r = reasons.get(j, "")
-        if r in ("customer_already_served", "already_served"):
+        if r in ("customer_already_served", "already_served", "hard_customer_already_served"):
             counts.masked_by_already_served_count += 1
-        elif r in ("customer_reserved", "reserved_by_other"):
+        elif r in ("customer_reserved", "reserved_by_other", "hard_customer_reserved"):
             counts.masked_by_reservation_count += 1
-        elif r in ("customer_capacity_infeasible", "capacity_exceeded"):
+        elif r in ("customer_capacity_infeasible", "capacity_exceeded", "hard_customer_capacity_infeasible"):
             counts.masked_by_capacity_count += 1
         elif r in (
             "customer_battery_unreachable", "battery_cannot_reach", "battery_would_strand",
-            "customer_infeasible_after_service_battery",
+            "customer_infeasible_after_service_battery", "hard_customer_battery_unreachable",
         ):
             counts.masked_by_battery_count += 1
         elif r in (
             "customer_time_window_infeasible", "time_window_late", "depot_window_late",
             "horizon_exceeded", "customer_infeasible_after_service_time",
+            "hard_customer_time_window_infeasible",
         ):
             counts.masked_by_time_window_count += 1
         elif r in (
@@ -137,6 +150,15 @@ def aggregate_mask_reasons(
     depot = instance.depot_index
     if feasible[depot]:
         counts.feasible_depot = 1
+    # Preserve remaining aggregation logic via mask_result counters when available.
+    if result is not None and getattr(result, "mask_reason_counts", None):
+        mrc = result.mask_reason_counts
+        counts.feasible_customers_count = max(
+            counts.feasible_customers_count, int(mrc.get("feasible_customers", 0)),
+        )
+        counts.feasible_stations_count = max(
+            counts.feasible_stations_count, int(mrc.get("feasible_stations", 0)),
+        )
     return counts, feasible, reasons
 
 

@@ -344,6 +344,7 @@ def actor_critic_loss(
     use_huber: bool = False,
     critic_only: bool = False,
     actor_only: bool = False,
+    use_amp: bool = False,
 ) -> ActorCriticLossOut:
     decisions = trajectory.smdp_decisions()
     z = torch.zeros((), device=device, requires_grad=True)
@@ -355,29 +356,51 @@ def actor_critic_loss(
     entropies = trajectory.stack_smdp_entropies()
 
     device_t = torch.device(device) if isinstance(device, str) else device
-    values_list: list[torch.Tensor] = []
-    aux_preds_stacked: dict[str, list[torch.Tensor]] = {
-        k: [] for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")
-    }
     n_cust = max(int(getattr(trajectory, "num_customers", 0) or 0), 1)
-    compute_aux = bool(decisions) and hasattr(value_critic, "forward_from_state")
+    compute_aux = bool(decisions) and hasattr(value_critic, "forward_from_states_batch")
 
-    for dec in decisions:
+    values_list = [torch.zeros((), device=device_t) for _ in decisions]
+    aux_preds_stacked: dict[str, list[torch.Tensor]] = {
+        k: [torch.zeros((), device=device_t) for _ in decisions]
+        for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")
+    } if compute_aux else {k: [] for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")}
+
+    critic_states: list = []
+    state_indices: list[int] = []
+    for i, dec in enumerate(decisions):
         state = getattr(dec, "decision_state", None)
         if state is None:
-            values_list.append(torch.zeros((), device=device_t))
-            if compute_aux:
-                for k in aux_preds_stacked:
-                    aux_preds_stacked[k].append(torch.zeros((), device=device_t))
             continue
         st = state.detach_for_critic() if detach else state
-        v, aux_out = value_critic.forward_from_state(st)
-        values_list.append(v.squeeze() if v.dim() > 0 else v)
-        if compute_aux:
-            for k in aux_preds_stacked:
-                aux_preds_stacked[k].append(aux_out[k].reshape(()))
+        critic_states.append(st)
+        state_indices.append(i)
+
+    if critic_states:
+        from src.utils.gpu_runtime import autocast_ctx
+        amp_on = bool(use_amp and device_t.type == "cuda")
+        with autocast_ctx(device_t, enabled=amp_on):
+            if hasattr(value_critic, "forward_from_states_batch"):
+                batch_values, batch_aux = value_critic.forward_from_states_batch(critic_states)
+            else:
+                batch_values_list = []
+                batch_aux_lists = {k: [] for k in aux_preds_stacked}
+                for st in critic_states:
+                    v, aux_out = value_critic.forward_from_state(st)
+                    batch_values_list.append(v.squeeze() if v.dim() > 0 else v)
+                    for k in batch_aux_lists:
+                        batch_aux_lists[k].append(aux_out[k].reshape(()))
+                batch_values = torch.stack(batch_values_list)
+                batch_aux = {k: torch.stack(v) for k, v in batch_aux_lists.items()}
+
+        for j in range(len(critic_states)):
+            pos = state_indices[j]
+            values_list[pos] = batch_values[j]
+            if compute_aux:
+                for k in aux_preds_stacked:
+                    aux_preds_stacked[k][pos] = batch_aux[k][j].reshape(())
 
     policy_values = torch.stack(values_list) if values_list else torch.zeros(0, device=device_t)
+    policy_values = policy_values.float()
 
     rewards_list = trajectory.smdp_reward_sequence()
     rewards = torch.tensor(rewards_list, dtype=torch.float32, device=device)
@@ -454,10 +477,10 @@ def actor_critic_loss(
     actor_loss = -(actor_adv.detach() * log_probs).mean()
     if use_huber:
         value_loss = torch.nn.functional.smooth_l1_loss(
-            critic_values, critic_returns.detach(),
+            critic_values.float(), critic_returns.detach().float(),
         )
     else:
-        value_loss = ((critic_values - critic_returns.detach()) ** 2).mean()
+        value_loss = ((critic_values.float() - critic_returns.detach().float()) ** 2).mean()
 
     aux_loss = torch.zeros((), device=device)
     aux_parts: dict[str, float] = {}

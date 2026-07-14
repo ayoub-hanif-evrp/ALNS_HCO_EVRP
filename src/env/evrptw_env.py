@@ -113,6 +113,18 @@ class EVRPTWEnv:
         self.decisions_since_any_customer_service = 0
         self.environment_config: dict | None = None
         self._action_mask_cache: dict = {}
+        self._decision_analysis_cache: dict = {}
+        self._recharge_state_cache: dict = {}
+        self._cache_metrics: dict = {
+            "hits": 0, "misses": 0, "invalidations": 0, "size": 0,
+        }
+        self.last_decision_analysis = None
+        self._svc_computations_this_state = 0
+        self._pending_customer_prefilter = None
+        self.last_battery_unserviceable_customer_ids: list[int] = []
+        self.last_capacity_unserviceable_customer_ids: list[int] = []
+        self.last_no_safe_continuation_customer_ids: list[int] = []
+        self.last_unserviceable_customer_ids: list[int] = []
 
     def get_done_reason(self) -> str:
         return self.done_reason or "in_progress"
@@ -124,14 +136,23 @@ class EVRPTWEnv:
         return select_next_ev(self.evs)
 
     def compute_action_masks(self, ev: EVState):
-        """Canonical exact mask for the acting EV."""
-        from .action_masks import compute_action_masks
+        """Canonical exact mask via ``analyze_decision_state`` (single source)."""
+        from .decision_analysis import analyze_decision_state
 
-        result = compute_action_masks(self, ev)
-        self.last_action_mask_result = result
+        analysis = analyze_decision_state(self, ev)
+        self.last_decision_analysis = analysis
+        self.last_action_mask_result = analysis.mask_result
         self.last_feasible_summary = None
-        self.last_global_serviceability = result.global_serviceability
-        return result
+        self.last_global_serviceability = analysis.global_serviceability
+        return analysis.mask_result
+
+    def analyze_decision(self, ev: EVState):
+        """Official decision-state analysis for training / eval / dashboard."""
+        from .decision_analysis import analyze_decision_state
+
+        analysis = analyze_decision_state(self, ev)
+        self.last_decision_analysis = analysis
+        return analysis
 
     def feasible_mask(self, ev: EVState) -> tuple[np.ndarray, dict[int, str]]:
         result = self.compute_action_masks(ev)
@@ -139,32 +160,75 @@ class EVRPTWEnv:
 
     def invalidate_serviceability_cache(self) -> None:
         self._global_serviceability_cache = None
+        self._decision_analysis_cache = {}
+        self._recharge_state_cache = {}
 
     def get_global_serviceability(self, *, force: bool = False):
-        """Cached recharge-aware global serviceability."""
+        """Cached recharge-aware global serviceability.
+
+        ``force=True`` is allowed only for debug/parity tests — never in the
+        normal training hot path.
+        """
         from .serviceability import compute_global_serviceability_recharge_aware
+        from .decision_analysis import _CALL_COUNTS
 
         if force:
             self._global_serviceability_cache = None
+        # Prefer canonical analysis for the current state when available.
+        analysis = getattr(self, "last_decision_analysis", None)
+        if (
+            not force
+            and analysis is not None
+            and int(analysis.state_version) == int(self.state_version)
+            and analysis.global_serviceability is not None
+        ):
+            self._global_serviceability_cache = analysis.global_serviceability
+            self.last_global_serviceability = analysis.global_serviceability
+            self._sync_expired_from_serviceability(analysis.global_serviceability)
+            return analysis.global_serviceability
+
         if self._global_serviceability_cache is None:
+            _CALL_COUNTS["global_serviceability"] += 1
+            debug = bool(
+                ((getattr(self, "environment_config", None) or {}).get("debug") or {}).get(
+                    "assert_single_serviceability", False
+                )
+            )
+            comps = getattr(self, "_svc_computations_this_state", 0)
+            if debug and comps >= 1:
+                raise RuntimeError(
+                    "global_serviceability_computations_per_state > 1 "
+                    f"(state_version={self.state_version})"
+                )
             self._global_serviceability_cache = compute_global_serviceability_recharge_aware(
                 self.instance, self.evs, self.served_mask, self.reserved_mask,
                 use_horizon_check=self.use_horizon_check,
                 use_depot_charging=self.use_depot_charging,
                 charging_portions=self.charging_portions,
+                environment_config=getattr(self, "environment_config", None),
             )
+            self._svc_computations_this_state = comps + 1
             self.last_global_serviceability = self._global_serviceability_cache
             self._sync_expired_from_serviceability(self._global_serviceability_cache)
         return self._global_serviceability_cache
 
     def _sync_expired_from_serviceability(self, gs) -> None:
-        serviceable_ids = set(getattr(gs, "serviceable_customer_ids", []))
-        expired = [
-            c for c in self.instance.customer_indices
-            if not self.served_mask[c] and c not in serviceable_ids
-        ]
-        self.last_expired_customer_ids = expired
-        self.last_expired_count = len(expired)
+        # TW expiration ONLY — never conflate with battery/capacity unserviceability.
+        tw_expired = list(getattr(gs, "time_window_expired_customer_ids", []) or [])
+        self.last_expired_customer_ids = tw_expired
+        self.last_expired_count = len(tw_expired)
+        self.last_battery_unserviceable_customer_ids = list(
+            getattr(gs, "battery_unserviceable_customer_ids", []) or []
+        )
+        self.last_capacity_unserviceable_customer_ids = list(
+            getattr(gs, "capacity_unserviceable_customer_ids", []) or []
+        )
+        self.last_no_safe_continuation_customer_ids = list(
+            getattr(gs, "no_safe_continuation_customer_ids", []) or []
+        )
+        self.last_unserviceable_customer_ids = list(
+            getattr(gs, "globally_unserviceable_customer_ids", []) or []
+        )
 
     def update_expired_state(self) -> None:
         self.get_global_serviceability()
@@ -173,6 +237,13 @@ class EVRPTWEnv:
         self.state_version += 1
         self._global_serviceability_cache = None
         self._action_mask_cache = {}
+        self._decision_analysis_cache = {}
+        self._recharge_state_cache = {}
+        self.last_decision_analysis = None
+        self._svc_computations_this_state = 0
+        metrics = getattr(self, "_cache_metrics", None)
+        if metrics is not None:
+            metrics["invalidations"] = int(metrics.get("invalidations", 0)) + 1
 
     def compute_full_feasible(self, ev: EVState):
         """Full mask with summary and global serviceability."""
@@ -368,8 +439,9 @@ class EVRPTWEnv:
             return None
         from .action_space import should_auto_close
 
-        # Closure needs a real (uncached) serviceability check, even in fast training.
-        gs = self.get_global_serviceability(force=True)
+        # Use cached serviceability from the current state — never force=True
+        # in the training hot path (defeats caching and duplicates work).
+        gs = self.get_global_serviceability(force=False)
         self.last_global_serviceability = gs
         if not gs.no_service_possible:
             return None
@@ -379,7 +451,17 @@ class EVRPTWEnv:
             return {"type": "terminal_closure", "reason": "no_service_possible"}
         all_empty = True
         for ev in active:
-            mask, _, summary, _ = self.compute_full_feasible(ev)
+            # Reuse analysis cache via analyze_decision — one per EV at this state.
+            analysis = self.analyze_decision(ev)
+            mask = analysis.final_node_mask
+            from .action_space import FeasibleActionSummary
+            summary = FeasibleActionSummary(
+                has_customer=int(np.sum(mask[self.instance.customer_indices])) > 0,
+                has_useful_station=int(np.sum(mask[self.instance.charging_station_indices])) > 0,
+                has_useful_depot_recharge=bool(analysis.depot_mode_mask[0]),
+                has_depot_finish=bool(analysis.depot_mode_mask[1]),
+                has_any=bool(mask.any()),
+            )
             if mask.any() and not should_auto_close(summary, global_svc=gs):
                 all_empty = False
                 break
@@ -541,13 +623,18 @@ class EVRPTWEnv:
         # Resolve reservation -> served.
         self._release_reservation(j)
         ev.current_reserved_customer = None
+        newly_served = False
         if not self.served_mask[j]:
             self.served_mask[j] = True
             self.num_served_customers += 1
+            ev.num_customers_served += 1
+            newly_served = True
+        ev.steps_since_last_customer_service = 0
 
         return {
             "type": "customer",
             "node": j,
+            "customer_served": newly_served,
             "arrival": arrival,
             "departure": departure,
             "waiting": waiting,
@@ -710,6 +797,9 @@ class EVRPTWEnv:
         if ev.current_node == depot:
             ev.finished = True
             ev.active = False
+            # Finishing at depot mutates fleet/termination state even without travel.
+            self.invalidate_serviceability_cache()
+            self.bump_state_version()
             return self._close_info_dict(
                 ev, previous_node, depot, action_type,
                 delta_distance=0.0, delta_travel_time=0.0, delta_energy=0.0,

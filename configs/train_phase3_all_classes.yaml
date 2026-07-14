@@ -1,0 +1,254 @@
+# Phase 3 — Balanced joint training on C + R + RC.
+#   python main_train.py --config configs/train_phase3_all_classes.yaml --device cuda
+
+seed: 42
+device: cuda
+deterministic: false
+
+constraints:
+  time_windows_mode: hard_original
+  allow_late_service: false
+  relax_time_windows: false
+  modify_instance_time_windows: false
+
+environment:
+  mask_semantics: exact_original_evrptw
+  implementation: optimized
+  assert_mask_parity_during_debug: true
+  performance:
+    cache_action_masks: true
+    use_optimized_mask_path: true
+    include_charge_portion_details: false
+  action_pruning:
+    enabled: true
+    block_exact_noop_actions: true
+    block_repeated_zero_progress_loops: true
+    prune_dominated_recharge_labels: true
+    prune_station_when_customer_available: false
+  recharge_search:
+    max_station_hops: 3
+    use_dominance_pruning: true
+  cache:
+    enabled: true
+    cache_by_state_version: true
+
+gpu:
+  use_amp: true
+  torch_compile: false
+  cudnn_benchmark: true
+
+dataset:
+  path: dataset/Schneider/evrptw_instances
+  training_phase: all_classes
+  classes:
+    - C
+    - R
+    - RC
+  instance_suffix: "_21"
+  balanced_class_sampling: true
+  class_probabilities:
+    C: 0.333333
+    R: 0.333333
+    RC: 0.333333
+  class_filter: ["C", "R", "RC"]
+  train_size_filter: ["_21"]
+  eval_size_filter: ["_21"]
+  auto_discover_rc21: false
+  holdout_by_class:
+    C:
+      - c101_21
+      - c104_21
+      - c208_21
+    R:
+      - r101_21
+      - r104_21
+      - r211_21
+    RC:
+      - rc101_21
+      - rc104_21
+      - rc208_21
+
+optimizer:
+  actor_lr: 0.0001
+  critic_lr: 0.0003
+  actor_grad_clip: 1.0
+  critic_grad_clip: 1.0
+  critic_updates_per_actor_update: 2
+  critic_loss: huber
+
+training:
+  method: actor_critic
+  learning_rate: 0.0001
+  entropy_coef: 0.01
+  grad_clip: 1.0
+  batch_size: 1
+  cycles: 100
+  shuffle_within_pass: false
+  reward_scale: 10000.0
+  log_every: 1
+  checkpoint_every: 0
+  dashboard_ma_window: 20
+  min_decisions_warn: 10
+  use_amp: true
+  gradient_accumulation_steps: 1
+  use_local_search_in_training: false
+  critic_warmup_steps: 0
+  debug_overfit_one_instance: false
+  generate_static_dashboard: false
+  live_checkpoint_every: 0
+  maps_checkpoint_every: 0
+
+critic:
+  detach_actor_embeddings: true
+  critic_loss: huber
+  critic_lr: 0.0003
+  critic_updates_per_actor_update: 2
+  critic_grad_clip: 1.0
+  normalize_returns_for_critic: false
+  auxiliary_coef: 0.1
+
+rl:
+  formulation: semi_markov_decision_epochs
+  use_step_rewards: true
+  use_gae: true
+  use_counterfactual_critic: false
+  use_multi_sample_rollout_baseline: false
+  multi_sample_K: 4
+  multi_sample_mix_rho: 0.1
+  use_potential_shaping: false
+  gamma: 1.0
+  gae_lambda: 0.95
+  reward_scale: 10000.0
+  normalize_advantages: true
+  normalize_returns_for_critic: false
+  critic_coef: 0.5
+  use_served_customer_bonus: true
+  served_bonus_mode: penalty_equivalent
+  served_bonus_coef: 0.5
+  use_urgency_bonus: false
+  urgency_bonus_coef: 0.5
+  use_newly_expired_customer_penalty: true
+  newly_expired_customer_penalty: 1.0
+  use_time_waste_penalty: true
+  time_waste_penalty_coef: 0.05
+  time_waste_scale: 1.0
+  use_unnecessary_station_penalty: false
+  unnecessary_station_penalty: 1.0
+  use_early_depot_penalty: true
+  early_depot_penalty_coef: 2.0
+  use_step_penalty: false
+  step_penalty: 0.01
+  use_urgent_customer_rank_penalty: false
+  urgent_rank_penalty_coef: 0.2
+  urgent_rank_k: 10
+  use_customer_priority_logit_bias: true
+  customer_logit_bonus: 1.0
+  unnecessary_station_logit_penalty: 1.5
+  use_depot_logit_penalty: true
+  depot_logit_penalty: 2.0
+  depot_penalty_until_served_ratio: 0.95
+  use_no_progress_penalty: true
+  no_progress_threshold: 10
+  use_dynamic_candidate_encoder: true
+  assert_action_mask: false
+  no_progress_penalty_coef: 0.05
+  terminal_penalty_schedule:
+    enabled: false
+  q_eval_mode: topk
+  max_q_actions: 64
+  detach_critic_inputs: true
+  critic_loss: huber
+  critic_updates_per_actor_update: 2
+
+model:
+  embedding_dim: 192
+  encoder_layers: 4
+  heads: 8
+  feedforward_dim: 768
+  dropout: 0.1
+  use_ev_communication: true
+  use_dynamic_candidate_encoder: true
+  use_edge_aware_encoder: false
+
+decoding:
+  mode: sampling
+  multi_sample_n: 16
+  max_steps_factor: 6
+
+problem:
+  load_capacity: 100.0
+  allow_partial_charging: true
+  charging_portions: [0.25, 0.50, 0.75, 1.00]
+  station_reusable: true
+  use_depot_charging: true
+  use_horizon_check: true
+
+cost:
+  lambda_vehicle: 1000.0
+  lambda_distance: 1.0
+  lambda_duration: 0.1
+  lambda_charging: 0.5
+  lambda_charging_price: 1.0
+  lambda_waiting: 0.1
+  penalty_unserved: 10000.0
+  penalty_duplicate: 10000.0
+  penalty_late: 5000.0
+  penalty_battery: 10000.0
+  penalty_capacity: 10000.0
+  penalty_depot: 10000.0
+  penalty_infeasible: 100000.0
+  penalty_reserved: 10000.0
+
+fleet_search:
+  enabled: true
+  extra_margin: 4
+  selection_mode: hierarchical
+
+debug:
+  objective_mismatch_warn_threshold: 0.05
+  fail_on_large_objective_mismatch: false
+  allow_all_advanced_modules: false
+
+outputs:
+  root: outputs
+  checkpoints: outputs/checkpoints
+  figures: outputs/figures
+  logs: outputs/logs
+  results: outputs/results
+  routes: outputs/routes
+  traces: outputs/traces
+
+dashboard:
+  refresh_every_cycles: 1
+  generate_full_solution_maps_every_cycles: 5
+  save_representative_traces_every_cycles: 5
+  save_representative_traces: true
+  num_random_solution_maps: 1
+  include_best_final_cycle: true
+  include_worst_final_cycle: true
+  include_best_overall: true
+  live_random_diagnostics: false
+
+diagnostics:
+  parameter_delta_every_updates: 20
+  timing_enabled: true
+
+checkpointing:
+  save_last_every_updates: 20
+  save_cycle_checkpoint: true
+  save_best_cycle_objective: true
+  save_best_cycle_feasibility: true
+
+maps_dashboard:
+  port: 8081
+  cache_snapshots: true
+  use_cached_if_present: true
+
+evaluation:
+  decoding: greedy
+  multi_sample_n: 16
+  local_search:
+    enabled: false
+    max_iterations: 50
+  save_routes: true
+  save_figures: true

@@ -26,17 +26,41 @@ from .masks import (
 
 @dataclass
 class ActionPruningConfig:
+    """Safe-only pruning defaults — unproven strategic pruning stays off."""
+
     enabled: bool = True
+    block_exact_noop_actions: bool = True
+    block_repeated_zero_progress_loops: bool = True
+    prune_dominated_recharge_labels: bool = True
+    prune_station_when_customer_available: bool = False
+    # Legacy aliases kept for older configs / tests.
     block_no_progress_loops: bool = True
-    prune_dominated_stations: bool = True
+    prune_dominated_stations: bool = False
 
     @classmethod
     def from_env_config(cls, cfg: dict | None) -> "ActionPruningConfig":
         raw = (cfg or {}).get("action_pruning") or {}
+        block_loops = bool(raw.get(
+            "block_repeated_zero_progress_loops",
+            raw.get("block_no_progress_loops", True),
+        ))
         return cls(
             enabled=bool(raw.get("enabled", True)),
-            block_no_progress_loops=bool(raw.get("block_no_progress_loops", True)),
-            prune_dominated_stations=bool(raw.get("prune_dominated_stations", True)),
+            block_exact_noop_actions=bool(raw.get("block_exact_noop_actions", True)),
+            block_repeated_zero_progress_loops=block_loops,
+            prune_dominated_recharge_labels=bool(raw.get("prune_dominated_recharge_labels", True)),
+            prune_station_when_customer_available=bool(
+                raw.get("prune_station_when_customer_available", False)
+            ),
+            block_no_progress_loops=block_loops,
+            # Only prune stations for usefulness when explicitly opting into
+            # "customer available ⇒ stations useless" (scientifically unsafe).
+            prune_dominated_stations=bool(
+                raw.get(
+                    "prune_dominated_stations",
+                    raw.get("prune_station_when_customer_available", False),
+                )
+            ),
         )
 
 
@@ -61,7 +85,12 @@ def compute_hard_feasibility_mask(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
 ) -> tuple[np.ndarray, dict[int, str], dict[int, np.ndarray], dict[int, list[str]], np.ndarray, list[str]]:
-    """Physical EVRPTW feasibility only — no usefulness or dominance pruning."""
+    """Physical EVRPTW feasibility only — no usefulness or dominance pruning.
+
+    When ``env_state._pending_customer_prefilter`` is set by the optimized
+    analyzer, only prefilter survivors run expensive ``customer_feasible``
+    (safe-continuation / recharge) analysis.
+    """
     n = instance.num_nodes
     hard = np.zeros(n, dtype=bool)
     hard_reasons: dict[int, str] = {}
@@ -72,14 +101,32 @@ def compute_hard_feasibility_mask(
     portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
     all_done = env_state.num_served_customers >= instance.num_customers
 
-    for j in instance.customer_indices:
-        ok, reason = customer_feasible(
-            instance, ev, j, served, reserved,
-            use_horizon_check, use_depot_charging, portions,
-        )
-        hard[j] = ok
-        if not ok:
-            hard_reasons[j] = _hard_reason(reason)
+    pending = getattr(env_state, "_pending_customer_prefilter", None)
+    if pending is not None:
+        basic_ok = pending["basic_ok"]
+        cust = pending["customer_indices"]
+        reject = pending["reject_reasons"]
+        for j, reason in reject.items():
+            hard[int(j)] = False
+            hard_reasons[int(j)] = _hard_reason(reason)
+        survivors = cust[basic_ok] if len(cust) else []
+        for j in survivors:
+            ok, reason = customer_feasible(
+                instance, ev, int(j), served, reserved,
+                use_horizon_check, use_depot_charging, portions,
+            )
+            hard[int(j)] = ok
+            if not ok:
+                hard_reasons[int(j)] = _hard_reason(reason)
+    else:
+        for j in instance.customer_indices:
+            ok, reason = customer_feasible(
+                instance, ev, j, served, reserved,
+                use_horizon_check, use_depot_charging, portions,
+            )
+            hard[j] = ok
+            if not ok:
+                hard_reasons[j] = _hard_reason(reason)
 
     for s in instance.charging_station_indices:
         ok, reason = station_feasible(
@@ -179,6 +226,23 @@ def compute_optional_pruning_mask(
         prune_charge = {k: np.ones_like(v, dtype=bool) for k, v in getattr(env_state, "_hard_charge", {}).items()}
         return pruning_mask, pruning_reasons, np.array([True, True]), ["", ""], prune_charge, {}
 
+    from .action_space import _feasible_customer_indices
+    from .charge_masks import safe_depot_return_from
+
+    feasible_now = _feasible_customer_indices(
+        instance, ev, served, reserved,
+        use_horizon_check=use_horizon_check,
+        use_depot_charging=use_depot_charging,
+        charging_portions=portions,
+    )
+    feasible_now_count = len(feasible_now)
+    ok_dep_now, _ = safe_depot_return_from(
+        instance, ev.current_node, ev.current_time, ev.remaining_battery,
+        use_horizon_check=use_horizon_check,
+    )
+
+    hard_charge = getattr(env_state, "_hard_charge", {})
+
     for s in instance.charging_station_indices:
         if not hard_mask[s]:
             continue
@@ -189,25 +253,41 @@ def compute_optional_pruning_mask(
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
             charging_portions=portions,
+            feasible_now=feasible_now,
+            ok_dep_now=ok_dep_now,
+            precomputed_charge_mask=hard_charge.get(s),
         )
-        if pruning.prune_dominated_stations and not usefulness.useful:
+        # Unsafe heuristic: "customer feasible ⇒ every station useless".
+        # Only applied when explicitly enabled.
+        if (
+            pruning.prune_station_when_customer_available
+            and not usefulness.useful
+            and usefulness.reason == "station_unnecessary_customer_feasible_now"
+        ):
             pruning_mask[s] = False
             pruning_reasons[s] = _prune_reason(usefulness.reason)
             continue
-        if pruning.block_no_progress_loops:
-            no_prog, np_reason = would_be_no_progress_action(
-                instance, ev, s, served, reserved,
-                action_kind="station", depot_finish=False,
-                all_customers_served=all_done,
-                global_svc=global_svc,
-                progress=progress,
-                use_horizon_check=use_horizon_check,
-                use_depot_charging=use_depot_charging,
-                charging_portions=portions,
-            )
-            if no_prog:
+        # Proactive charging is strategically allowed when customers are feasible.
+        # Expensive no-progress simulation only when no customer is feasible now
+        # or an active zero-progress loop was detected.
+        if pruning.block_repeated_zero_progress_loops or pruning.block_exact_noop_actions:
+            if progress is not None and bool(progress.loop_detected):
                 pruning_mask[s] = False
-                pruning_reasons[s] = _prune_reason(np_reason)
+                pruning_reasons[s] = _prune_reason("no_progress_near_zero_loop")
+            elif feasible_now_count == 0:
+                no_prog, np_reason = would_be_no_progress_action(
+                    instance, ev, s, served, reserved,
+                    action_kind="station", depot_finish=False,
+                    all_customers_served=all_done,
+                    global_svc=global_svc,
+                    progress=progress,
+                    use_horizon_check=use_horizon_check,
+                    use_depot_charging=use_depot_charging,
+                    charging_portions=portions,
+                )
+                if no_prog:
+                    pruning_mask[s] = False
+                    pruning_reasons[s] = _prune_reason(np_reason)
 
     depot = instance.depot_index
     finish_val = compute_depot_finish_validity(
@@ -225,11 +305,16 @@ def compute_optional_pruning_mask(
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=portions,
+        feasible_now_count=feasible_now_count,
+        feasible_now_indices=feasible_now,
+        precomputed_charge_mask=hard_charge.get(depot),
     )
     allow_recharge = hard_recharge and useful_recharge
     if hard_recharge and not useful_recharge:
         pruning_reasons[depot] = _prune_reason(ur_reason)
-    if hard_recharge and useful_recharge and pruning.block_no_progress_loops:
+    if hard_recharge and useful_recharge and (
+        pruning.block_repeated_zero_progress_loops or pruning.block_exact_noop_actions
+    ):
         no_prog, np_reason = would_be_no_progress_action(
             instance, ev, depot, served, reserved,
             action_kind="depot_recharge", depot_finish=False,

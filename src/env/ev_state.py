@@ -33,6 +33,9 @@ class EVState:
     finished: bool = False
     current_reserved_customer: int | None = None
     steps_since_last_customer_service: int = 0
+    # Exact count of previously-unserved customers successfully served by this EV.
+    # Never derived from route length (stations / depot / recharges do not count).
+    num_customers_served: int = 0
 
     @classmethod
     def initial(cls, ev_id: int, depot_index: int, battery_capacity: float, load_capacity: float) -> "EVState":
@@ -52,12 +55,8 @@ class EVState:
             busy=False,
             finished=False,
             current_reserved_customer=None,
+            num_customers_served=0,
         )
-
-    @property
-    def num_customers_served(self) -> int:
-        """Number of distinct route stops that are not the depot/station start."""
-        return len(self.route_nodes) - 1
 
     def used(self) -> bool:
         """An EV is 'used' if it ever left the depot."""

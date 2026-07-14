@@ -82,8 +82,15 @@ class GlobalServiceability:
     globally_expired_customers_count: int = 0
     globally_unreachable_battery_count: int = 0
     globally_unreachable_capacity_count: int = 0
+    globally_no_safe_continuation_count: int = 0
+    globally_unserviceable_customers_count: int = 0
     no_service_possible: bool = False
     serviceable_customer_ids: list[int] = field(default_factory=list)
+    time_window_expired_customer_ids: list[int] = field(default_factory=list)
+    battery_unserviceable_customer_ids: list[int] = field(default_factory=list)
+    capacity_unserviceable_customer_ids: list[int] = field(default_factory=list)
+    no_safe_continuation_customer_ids: list[int] = field(default_factory=list)
+    globally_unserviceable_customer_ids: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, float | bool]:
         return {
@@ -92,6 +99,8 @@ class GlobalServiceability:
             "globally_expired_customers_count": float(self.globally_expired_customers_count),
             "globally_unreachable_battery_count": float(self.globally_unreachable_battery_count),
             "globally_unreachable_capacity_count": float(self.globally_unreachable_capacity_count),
+            "globally_no_safe_continuation_count": float(self.globally_no_safe_continuation_count),
+            "globally_unserviceable_customers_count": float(self.globally_unserviceable_customers_count),
             "no_service_possible": bool(self.no_service_possible),
         }
 
@@ -285,10 +294,11 @@ def _feasible_customer_indices(
     charging_portions: list[float] | None = None,
 ) -> list[int]:
     from .feasibility_scratch import ev_state_key, get_scratch
+    from .masks import customer_feasible
 
     scratch = get_scratch()
+    key = ev_state_key(ev)
     if scratch is not None:
-        key = ev_state_key(ev)
         cached = scratch.feasible_indices.get(key)
         if cached is not None:
             return list(cached)
@@ -302,8 +312,76 @@ def _feasible_customer_indices(
         if ok:
             out.append(j)
     if scratch is not None:
-        scratch.feasible_indices[ev_state_key(ev)] = list(out)
+        scratch.feasible_indices[key] = list(out)
+        scratch.feasible_sets[key] = frozenset(out)
+        scratch.has_feasible[key] = bool(out)
     return out
+
+
+def _has_feasible_customer(
+    instance,
+    ev: EVState,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> bool:
+    """Early-exit feasibility probe with per-decision memoization."""
+    from .feasibility_scratch import ev_state_key, get_scratch
+    from .masks import customer_feasible
+
+    scratch = get_scratch()
+    key = ev_state_key(ev)
+    if scratch is not None:
+        if key in scratch.has_feasible:
+            return scratch.has_feasible[key]
+        cached = scratch.feasible_indices.get(key)
+        if cached is not None:
+            return bool(cached)
+
+    for j in instance.customer_indices:
+        ok, _ = customer_feasible(
+            instance, ev, j, served_mask, reserved_mask,
+            use_horizon_check, use_depot_charging, charging_portions,
+        )
+        if ok:
+            if scratch is not None:
+                scratch.has_feasible[key] = True
+            return True
+    if scratch is not None:
+        scratch.has_feasible[key] = False
+        scratch.feasible_indices[key] = []
+        scratch.feasible_sets[key] = frozenset()
+    return False
+
+
+def _count_newly_enabled_customers(
+    instance,
+    ev: EVState,
+    served_mask: np.ndarray,
+    reserved_mask: np.ndarray,
+    feasible_before: frozenset[int] | set[int],
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+) -> int:
+    """Count customers feasible after ``ev`` that were not feasible before."""
+    from .masks import customer_feasible
+
+    count = 0
+    for j in instance.customer_indices:
+        if j in feasible_before:
+            continue
+        ok, _ = customer_feasible(
+            instance, ev, j, served_mask, reserved_mask,
+            use_horizon_check, use_depot_charging, charging_portions,
+        )
+        if ok:
+            count += 1
+    return count
 
 
 def evaluate_charge_portions_for_node(
@@ -316,12 +394,15 @@ def evaluate_charge_portions_for_node(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    feasible_now_indices: list[int] | None = None,
+    precomputed_charge_mask: np.ndarray | None = None,
 ) -> ChargePortionAnalysis:
     """Evaluate all feasible charge portions; pick best by usefulness score."""
     from .charge_masks import feasible_charge_portions, safe_depot_return_from, simulate_recharge_departure
     from .feasibility_scratch import ev_state_key, get_scratch
 
     scratch = get_scratch()
+    cache_key = None
     if scratch is not None:
         cache_key = (*ev_state_key(ev), int(node))
         cached = scratch.charge_analysis.get(cache_key)
@@ -329,18 +410,24 @@ def evaluate_charge_portions_for_node(
             return cached
 
     p_list = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
-    mask, _ = feasible_charge_portions(
-        instance, ev, node, served_mask, reserved_mask,
-        portions=p_list,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-    )
-    feasible_now = len(_feasible_customer_indices(
-        instance, ev, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    ))
+    if precomputed_charge_mask is not None:
+        mask = precomputed_charge_mask
+    else:
+        mask, _ = feasible_charge_portions(
+            instance, ev, node, served_mask, reserved_mask,
+            portions=p_list,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+        )
+    if feasible_now_indices is None:
+        feasible_now_indices = _feasible_customer_indices(
+            instance, ev, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        )
+    feasible_now = len(feasible_now_indices)
+    feasible_before = frozenset(feasible_now_indices)
     free = instance.nodes[node].is_depot
     evals: list[ChargePortionEvaluation] = []
     for idx, p in enumerate(p_list):
@@ -356,13 +443,12 @@ def evaluate_charge_portions_for_node(
             remaining_battery=batt,
             remaining_capacity=ev.remaining_capacity,
         )
-        after_count = len(_feasible_customer_indices(
-            instance, sim, served_mask, reserved_mask,
+        enables = _count_newly_enabled_customers(
+            instance, sim, served_mask, reserved_mask, feasible_before,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
             charging_portions=charging_portions,
-        ))
-        enables = max(0, after_count - feasible_now)
+        )
         ok_dep, _ = safe_depot_return_from(
             instance, node, departure, batt, use_horizon_check=use_horizon_check,
         )
@@ -384,7 +470,7 @@ def evaluate_charge_portions_for_node(
             key=lambda e: (e.enabled_customers, int(e.enables_depot_return), -e.charging_time),
         )
         result = ChargePortionAnalysis(best=best, all_feasible=evals)
-    if scratch is not None:
+    if scratch is not None and cache_key is not None:
         scratch.charge_analysis[cache_key] = result
     return result
 
@@ -400,6 +486,7 @@ def _count_feasible_after_station_recharge(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
     analysis: ChargePortionAnalysis | None = None,
+    feasible_now_count: int | None = None,
 ) -> tuple[int, ChargePortionAnalysis]:
     """Return (total feasible customers after best charge, analysis)."""
     if analysis is None:
@@ -411,13 +498,14 @@ def _count_feasible_after_station_recharge(
         )
     if analysis.best is None:
         return 0, analysis
-    feasible_now = len(_feasible_customer_indices(
-        instance, ev, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    ))
-    return feasible_now + analysis.best.enabled_customers, analysis
+    if feasible_now_count is None:
+        feasible_now_count = len(_feasible_customer_indices(
+            instance, ev, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        ))
+    return feasible_now_count + analysis.best.enabled_customers, analysis
 
 
 def _simulate_best_charge_departure(
@@ -524,34 +612,74 @@ def compute_station_usefulness(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    feasible_now: list[int] | None = None,
+    ok_dep_now: bool | None = None,
+    precomputed_charge_mask: np.ndarray | None = None,
 ) -> StationUsefulness:
     """Selected-station-specific usefulness for mask / penalty / logging."""
     from .charge_masks import safe_depot_return_from
 
-    ok_dep_now, _ = safe_depot_return_from(
-        instance, ev.current_node, ev.current_time, ev.remaining_battery,
-        use_horizon_check=use_horizon_check,
-    )
-    feasible_now = _feasible_customer_indices(
-        instance, ev, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    )
+    if ok_dep_now is None:
+        ok_dep_now, _ = safe_depot_return_from(
+            instance, ev.current_node, ev.current_time, ev.remaining_battery,
+            use_horizon_check=use_horizon_check,
+        )
+    if feasible_now is None:
+        feasible_now = _feasible_customer_indices(
+            instance, ev, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        )
+    feasible_now_count = len(feasible_now)
+
+    if all_customers_served:
+        if ok_dep_now:
+            return StationUsefulness(False, "station_unnecessary_direct_depot_return")
+        analysis = evaluate_charge_portions_for_node(
+            instance, ev, station, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+            feasible_now_indices=feasible_now,
+            precomputed_charge_mask=precomputed_charge_mask,
+        )
+        dep_time, dep_batt, _ = _simulate_best_charge_departure(
+            instance, ev, station, served_mask, reserved_mask,
+            charging_portions, use_horizon_check, use_depot_charging,
+            analysis=analysis,
+        )
+        ok_dep_after, _ = safe_depot_return_from(
+            instance, station, dep_time, dep_batt, use_horizon_check=use_horizon_check,
+        )
+        if ok_dep_after:
+            u = StationUsefulness(
+                True, "station_required_for_depot_return", enables_depot_return=True,
+            )
+            u.best_charge_portion = analysis.best.portion if analysis.best else None
+            return u
+        return StationUsefulness(False, "station_cannot_enable_depot_return")
+
+    if feasible_now and ok_dep_now:
+        # Proactive charging is strategically valid. Do not spend O(stations ×
+        # portions × customers) to prove "no new customers" — that analysis is
+        # only required when the unsafe prune_station_when_customer_available
+        # heuristic is explicitly enabled by the caller.
+        return StationUsefulness(True, "station_proactive_allowed")
+
     analysis = evaluate_charge_portions_for_node(
         instance, ev, station, served_mask, reserved_mask,
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=charging_portions,
+        feasible_now_indices=feasible_now,
+        precomputed_charge_mask=precomputed_charge_mask,
     )
-    after_count, _ = _count_feasible_after_station_recharge(
-        instance, ev, station, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-        analysis=analysis,
-    )
-    enables_customers = max(0, after_count - len(feasible_now))
+    if analysis.best is None:
+        after_count = 0
+    else:
+        after_count = feasible_now_count + analysis.best.enabled_customers
+    enables_customers = max(0, after_count - feasible_now_count)
 
     dep_time, dep_batt, _ = _simulate_best_charge_departure(
         instance, ev, station, served_mask, reserved_mask,
@@ -570,22 +698,6 @@ def compute_station_usefulness(
         u.enabled_customers_by_charge_portion = cp_log["enabled_customers_by_charge_portion"]
         u.depot_return_feasible_by_charge_portion = cp_log["depot_return_feasible_by_charge_portion"]
         return u
-
-    if all_customers_served:
-        if ok_dep_now:
-            return _with_cp(StationUsefulness(False, "station_unnecessary_direct_depot_return"))
-        if enables_depot_return or ok_dep_after:
-            return _with_cp(StationUsefulness(
-                True, "station_required_for_depot_return", enables_depot_return=True,
-            ))
-        return _with_cp(StationUsefulness(False, "station_cannot_enable_depot_return"))
-
-    if feasible_now:
-        if enables_customers > 0:
-            return _with_cp(StationUsefulness(
-                True, "station_enables_new_customers", enabled_customers_count=enables_customers,
-            ))
-        return _with_cp(StationUsefulness(False, "station_unnecessary_customer_feasible_now"))
 
     if enables_customers > 0:
         return _with_cp(StationUsefulness(
@@ -619,6 +731,9 @@ def compute_depot_recharge_usefulness(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    feasible_now_count: int | None = None,
+    feasible_now_indices: list[int] | None = None,
+    precomputed_charge_mask: np.ndarray | None = None,
 ) -> tuple[bool, str, int]:
     """Depot recharge is useful only if it enables future service."""
     if all_customers_served:
@@ -630,6 +745,8 @@ def compute_depot_recharge_usefulness(
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=charging_portions,
+        feasible_now_indices=feasible_now_indices,
+        precomputed_charge_mask=precomputed_charge_mask,
     )
     after_count, _ = _count_feasible_after_station_recharge(
         instance, ev, depot, served_mask, reserved_mask,
@@ -637,6 +754,7 @@ def compute_depot_recharge_usefulness(
         use_depot_charging=use_depot_charging,
         charging_portions=charging_portions,
         analysis=analysis,
+        feasible_now_count=feasible_now_count,
     )
     if after_count > 0:
         return True, "depot_recharge_enables_service", after_count
@@ -1013,6 +1131,7 @@ def compute_full_feasible_actions(
                     use_horizon_check=use_horizon_check,
                     use_depot_charging=use_depot_charging,
                     charging_portions=portions,
+                    environment_config=getattr(env_state, "environment_config", None),
                 )
         else:
             global_svc = GlobalServiceability(

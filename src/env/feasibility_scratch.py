@@ -13,12 +13,13 @@ _current_scratch: ContextVar["FeasibilityScratch | None"] = ContextVar(
 
 
 def ev_state_key(ev: EVState) -> tuple:
+    """Quantized state key — int scaling avoids millions of ``round()`` calls."""
     return (
         int(ev.ev_id),
         int(ev.current_node),
-        round(float(ev.current_time), 6),
-        round(float(ev.remaining_battery), 4),
-        round(float(ev.remaining_capacity), 4),
+        int(float(ev.current_time) * 1000),
+        int(float(ev.remaining_battery) * 10000),
+        int(float(ev.remaining_capacity) * 10000),
     )
 
 
@@ -28,6 +29,9 @@ class FeasibilityScratch:
 
     customer: dict[tuple, tuple[bool, str]] = field(default_factory=dict)
     feasible_indices: dict[tuple, list[int]] = field(default_factory=dict)
+    feasible_sets: dict[tuple, frozenset[int]] = field(default_factory=dict)
+    has_feasible: dict[tuple, bool] = field(default_factory=dict)
+    charge_portions: dict[tuple, tuple] = field(default_factory=dict)
     charge_analysis: dict[tuple, object] = field(default_factory=dict)
 
 

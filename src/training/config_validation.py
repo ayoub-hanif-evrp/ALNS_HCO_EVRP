@@ -26,20 +26,41 @@ def validate_training_config(config: dict) -> list[str]:
     constraint_cfg = ConstraintConfig.from_config(config)
     constraint_cfg.validate_or_fail()
 
+    env_cfg = config.get("environment") or {}
+    if str(env_cfg.get("mask_semantics", "")) != "exact_original_evrptw":
+        raise ValueError(
+            "environment.mask_semantics must be exact_original_evrptw — fast/relaxed masks are forbidden."
+        )
+    pruning = (env_cfg.get("action_pruning") or {})
+    if not bool(pruning.get("enabled", True)):
+        raise ValueError(
+            "environment.action_pruning.enabled must stay true — hard feasibility and pruning layers are required."
+        )
+
+    from src.data.training_phases import normalize_training_phase
+
+    phase = normalize_training_phase(config)
     train_names = list(ds.get("train_instances") or [])
     eval_names = list(ds.get("eval_instances") or [])
+    # Phase 3 holdouts may be listed under holdout_by_class only.
+    if phase == "all_classes":
+        hold = ds.get("holdout_by_class") or {}
+        for cls_names in hold.values():
+            eval_names.extend(list(cls_names or []))
 
     for name in train_names + eval_names:
-        if not _is_rc21(name):
+        if phase in {"single_rc", "full_rc"} and not _is_rc21(name):
             raise ValueError(
-                f"Instance '{name}' is not Schneider RC _21 — training is RC-only."
+                f"Instance '{name}' is not Schneider RC _21 — phase {phase} is RC-only."
             )
+        if phase == "all_classes" and not str(name).endswith("_21"):
+            raise ValueError(f"Instance '{name}' must use full-size _21 for all_classes.")
 
     overlap = set(train_names) & set(eval_names)
     if overlap:
         raise ValueError(f"train/eval instance overlap: {sorted(overlap)}")
 
-    if train_names and len(train_names) != 20:
+    if train_names and phase == "full_rc" and len(train_names) != 20:
         expected = int(ds.get("expected_train_count", 20))
         if len(train_names) != expected:
             warnings.append(
@@ -72,7 +93,11 @@ def validate_training_config(config: dict) -> list[str]:
         warnings.append("Local search in training is enabled — disable for baseline runs.")
 
     cycles = int(tcfg.get("cycles") or tcfg.get("passes") or 0)
-    if cycles < 50:
+    updates = int(tcfg.get("updates") or 0)
+    if phase == "single_rc":
+        if updates <= 0 and not bool(tcfg.get("debug_overfit_one_instance", False)):
+            warnings.append("Phase 1 should set training.updates (e.g. 500).")
+    elif cycles < 50:
         warnings.append(f"cycles={cycles} is short for MARL EVRP; recommend >= 50.")
 
     for msg in warnings:
@@ -133,14 +158,37 @@ def apply_safe_training_defaults(config: dict) -> dict:
     rcfg.setdefault("no_progress_threshold", 10)
     rcfg.setdefault("no_progress_penalty_coef", 0.05)
     rcfg.setdefault("terminal_penalty_schedule", {
-        "enabled": True, "start_coef": 0.25, "end_coef": 1.0, "warmup_cycles": 20,
+        "enabled": False, "start_coef": 1.0, "end_coef": 1.0, "warmup_cycles": 0,
     })
     rcfg.setdefault("q_eval_mode", "topk")
     rcfg.setdefault("max_q_actions", 64)
+    env_cfg = config.setdefault("environment", {})
+    env_cfg.setdefault("mask_semantics", "exact_original_evrptw")
+    env_cfg.setdefault("implementation", "optimized")
+    pruning = env_cfg.setdefault("action_pruning", {})
+    pruning.setdefault("enabled", True)
+    pruning.setdefault("block_exact_noop_actions", True)
+    pruning.setdefault("block_repeated_zero_progress_loops", True)
+    pruning.setdefault("prune_dominated_recharge_labels", True)
+    pruning.setdefault("prune_station_when_customer_available", False)
+    rsearch = env_cfg.setdefault("recharge_search", {})
+    rsearch.setdefault("max_station_hops", 3)
+    rsearch.setdefault("use_dominance_pruning", True)
+    cache = env_cfg.setdefault("cache", {})
+    cache.setdefault("enabled", True)
+    cache.setdefault("cache_by_state_version", True)
+    diag = config.setdefault("diagnostics", {})
+    diag.setdefault("parameter_delta_every_updates", 20)
+    diag.setdefault("timing_enabled", True)
+    ckpt = config.setdefault("checkpointing", {})
+    ckpt.setdefault("save_last_every_updates", 20)
+    ckpt.setdefault("save_cycle_checkpoint", True)
     config["model"].setdefault("use_edge_aware_encoder", False)
     config["training"].setdefault("use_local_search_in_training", False)
     config["training"].setdefault("method", "actor_critic")
     config["training"].setdefault("generate_static_dashboard", True)
+    config["training"].setdefault("live_checkpoint_every", 0)  # superseded by checkpointing.save_last_every_updates
+    config["training"].setdefault("maps_checkpoint_every", 0)
     dcfg = config.setdefault("dashboard", {})
     dcfg.setdefault("save_representative_traces", True)
     dcfg.setdefault("num_random_solution_maps", 1)
@@ -150,12 +198,13 @@ def apply_safe_training_defaults(config: dict) -> dict:
     dcfg.setdefault("live_random_diagnostics", False)
     dcfg.setdefault("live_random_interval_sec", 45)
     dcfg.setdefault("live_refresh_min_epoch_delta", 1)
+    dcfg.setdefault("refresh_every_cycles", 1)
+    dcfg.setdefault("generate_full_solution_maps_every_cycles", 5)
+    dcfg.setdefault("save_representative_traces_every_cycles", 5)
     mcfg = config.setdefault("maps_dashboard", {})
     mcfg.setdefault("port", 8081)
     mcfg.setdefault("cache_snapshots", True)
     mcfg.setdefault("use_cached_if_present", True)
-    config["training"].setdefault("live_checkpoint_every", 1)
-    config["training"].setdefault("maps_checkpoint_every", 10)
     out_cfg = config.setdefault("outputs", {})
     out_cfg.setdefault("traces", str(Path(out_cfg.get("root", "outputs")) / "traces"))
     return config

@@ -13,6 +13,7 @@ constraints:
 
 environment:
   mask_semantics: exact_original_evrptw
+  implementation: optimized
   assert_mask_parity_during_debug: true
   performance:
     cache_action_masks: true
@@ -20,8 +21,21 @@ environment:
     include_charge_portion_details: false
   action_pruning:
     enabled: true
-    block_no_progress_loops: true
-    prune_dominated_stations: true
+    block_exact_noop_actions: true
+    block_repeated_zero_progress_loops: true
+    prune_dominated_recharge_labels: true
+    prune_station_when_customer_available: false
+  recharge_search:
+    max_station_hops: 3
+    use_dominance_pruning: true
+  cache:
+    enabled: true
+    cache_by_state_version: true
+
+gpu:
+  use_amp: true
+  torch_compile: false
+  cudnn_benchmark: true
 
 dataset:
   path: dataset/Schneider/evrptw_instances
@@ -42,6 +56,8 @@ optimizer:
   critic_lr: 0.0003
   actor_grad_clip: 1.0
   critic_grad_clip: 1.0
+  critic_updates_per_actor_update: 2
+  critic_loss: huber
 
 training:
   method: actor_critic
@@ -56,23 +72,29 @@ training:
   checkpoint_every: 0
   dashboard_ma_window: 20
   min_decisions_warn: 10
-  use_amp: false
+  use_amp: true
   gradient_accumulation_steps: 1
   use_local_search_in_training: false
   critic_warmup_steps: 0
   debug_overfit_one_instance: false
   overfit_instance_name: rc102_21
-  debug_overfit_updates: 200
+  debug_overfit_updates: 50
   fail_on_overfit_regression: true
-  generate_static_dashboard: true
-  live_checkpoint_every: 10
-  maps_checkpoint_every: 25
+  generate_static_dashboard: false
+  live_checkpoint_every: 0
+  maps_checkpoint_every: 0
+
+checkpointing:
+  save_last_every_updates: 20
+  save_cycle_checkpoint: true
+  save_best_cycle_objective: true
+  save_best_cycle_feasibility: true
 
 critic:
   detach_actor_embeddings: true
   critic_loss: huber
   critic_lr: 0.0003
-  critic_updates_per_actor_update: 1
+  critic_updates_per_actor_update: 2
   critic_grad_clip: 1.0
   normalize_returns_for_critic: false
   auxiliary_coef: 0.1
@@ -128,7 +150,7 @@ rl:
   max_q_actions: 64
   detach_critic_inputs: true
   critic_loss: huber
-  critic_updates_per_actor_update: 1
+  critic_updates_per_actor_update: 2
 
 model:
   embedding_dim: 192
@@ -143,7 +165,7 @@ model:
 decoding:
   mode: sampling
   multi_sample_n: 16
-  max_steps_factor: 10
+  max_steps_factor: 6
 
 problem:
   load_capacity: 100.0
@@ -171,7 +193,7 @@ cost:
 
 fleet_search:
   enabled: true
-  extra_margin: 6
+  extra_margin: 4
   selection_mode: hierarchical
 
 debug:
@@ -189,12 +211,25 @@ outputs:
   traces: outputs/traces
 
 dashboard:
+  refresh_every_cycles: 1
+  generate_full_solution_maps_every_cycles: 5
+  save_representative_traces_every_cycles: 5
   save_representative_traces: true
   num_random_solution_maps: 1
   include_best_final_cycle: true
   include_worst_final_cycle: true
   include_best_overall: true
   live_random_diagnostics: false
+
+diagnostics:
+  parameter_delta_every_updates: 20
+  timing_enabled: true
+
+checkpointing:
+  save_last_every_updates: 20
+  save_cycle_checkpoint: true
+  save_best_cycle_objective: true
+  save_best_cycle_feasibility: true
 
 maps_dashboard:
   port: 8081

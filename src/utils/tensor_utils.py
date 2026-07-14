@@ -6,6 +6,11 @@ import torch
 NEG_INF = -1e9
 
 
+def safe_mask_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Mask in float32 so AMP half precision does not overflow on ``NEG_INF``."""
+    return logits.float().masked_fill(~mask, NEG_INF)
+
+
 def masked_log_softmax(logits: torch.Tensor, feasible_mask: torch.Tensor) -> torch.Tensor:
     """Log-softmax that assigns ~zero probability to infeasible entries.
 

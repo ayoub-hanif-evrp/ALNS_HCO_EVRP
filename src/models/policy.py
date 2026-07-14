@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.utils.tensor_utils import NEG_INF
+from src.utils.tensor_utils import NEG_INF, safe_mask_logits
 
 from .decoder import PointerDecoder
 from .decision_state import DecisionState
@@ -105,9 +105,17 @@ class TransformerEVRPTWPolicy(nn.Module):
         ev,
         node_embeddings: torch.Tensor,
         mask_result,
+        *,
+        analysis=None,
     ) -> DecisionState:
         from src.env.action_masks import ActionMaskResult
+        from src.env.decision_analysis import DecisionStateAnalysis
 
+        if analysis is not None and not isinstance(analysis, DecisionStateAnalysis):
+            raise TypeError("analysis must be DecisionStateAnalysis when provided")
+        if analysis is not None:
+            analysis.assert_fresh(env, ev)
+            mask_result = analysis.mask_result
         if not isinstance(mask_result, ActionMaskResult):
             raise TypeError("build_decision_state requires ActionMaskResult")
 
@@ -143,11 +151,19 @@ class TransformerEVRPTWPolicy(nn.Module):
                 fleet_balance_context=self.ev_communication.fleet_balance_proj(fleet_balance_raw),
             )
 
-        global_raw = self.global_normalizer(
-            torch.tensor(global_state_features(env, mask_result), device=device, dtype=dtype),
-        )
+        if analysis is not None and analysis.global_features is not None:
+            global_raw = self.global_normalizer(
+                torch.tensor(analysis.global_features, device=device, dtype=dtype),
+            )
+        else:
+            global_raw = self.global_normalizer(
+                torch.tensor(global_state_features(env, mask_result), device=device, dtype=dtype),
+            )
         global_context = self.global_state_encoder(global_raw)
-        mask_raw = torch.tensor(mask_summary_features(env, mask_result), device=device, dtype=dtype)
+        if analysis is not None and analysis.mask_summary_features is not None:
+            mask_raw = torch.tensor(analysis.mask_summary_features, device=device, dtype=dtype)
+        else:
+            mask_raw = torch.tensor(mask_summary_features(env, mask_result), device=device, dtype=dtype)
         mask_context = self.mask_summary_encoder(mask_raw)
 
         decoder_context = self.pointer.fuse_decoder_context(
@@ -160,7 +176,11 @@ class TransformerEVRPTWPolicy(nn.Module):
             comm.fleet_balance_context,
         )
 
-        dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
+        # Prefer canonical dynamic features — do not recompute when analysis is given.
+        if analysis is not None and analysis.dynamic_candidate_features is not None:
+            dyn_feats_np = analysis.dynamic_candidate_features
+        else:
+            dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
         dyn_cont = self.dynamic_continuous_normalizer(
             torch.tensor(dyn_feats_np[:, : DYNAMIC_CANDIDATE_FEAT_DIM - 4], device=device, dtype=dtype),
         )
@@ -233,7 +253,7 @@ class TransformerEVRPTWPolicy(nn.Module):
             state.dynamic_candidate_embeddings,
         )
         mask_t = torch.tensor(state.feasible_mask, dtype=torch.bool, device=device)
-        masked_scores = scores.masked_fill(~mask_t, NEG_INF)
+        masked_scores = safe_mask_logits(scores, mask_t)
         log_probs = torch.log_softmax(masked_scores, dim=-1)
         probs = log_probs.exp()
 
@@ -277,8 +297,9 @@ class TransformerEVRPTWPolicy(nn.Module):
                     state.mask_context,
                 )
                 dm = mask_result.depot_mode_mask
-                mode_logits = mode_logits.masked_fill(
-                    ~torch.tensor(dm, device=device), NEG_INF,
+                mode_logits = safe_mask_logits(
+                    mode_logits,
+                    torch.tensor(dm, device=device, dtype=torch.bool),
                 )
                 mode_lp = torch.log_softmax(mode_logits, dim=-1)
                 mode_probs = mode_lp.exp()
@@ -344,8 +365,8 @@ class TransformerEVRPTWPolicy(nn.Module):
         if station not in mask_result.charge_masks:
             raise InvalidActionMaskError(f"no charge_masks for station node {station}")
         portion_mask = mask_result.charge_masks[station]
-        mask_t = torch.tensor(portion_mask, device=device)
-        logits = logits.masked_fill(~mask_t, NEG_INF)
+        mask_t = torch.tensor(portion_mask, device=device, dtype=torch.bool)
+        logits = safe_mask_logits(logits, mask_t)
         log_probs = torch.log_softmax(logits, dim=-1)
         probs = log_probs.exp()
         if not mask_t.any():
