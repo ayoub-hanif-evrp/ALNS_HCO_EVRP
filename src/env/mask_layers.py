@@ -102,7 +102,20 @@ def compute_hard_feasibility_mask(
     all_done = env_state.num_served_customers >= instance.num_customers
 
     pending = getattr(env_state, "_pending_customer_prefilter", None)
-    if pending is not None:
+    ev_analysis = getattr(env_state, "_pending_ev_analysis", None)
+    if ev_analysis is not None:
+        cust = np.asarray(instance.customer_indices, dtype=np.int64)
+        basic = ev_analysis.direct_basic_customer_mask
+        safe = ev_analysis.direct_safe_customer_mask
+        for i, j in enumerate(cust):
+            jj = int(j)
+            if safe[i]:
+                hard[jj] = True
+            else:
+                hard[jj] = False
+                reason = ev_analysis.direct_customer_reasons.get(jj, "customer_infeasible")
+                hard_reasons[jj] = _hard_reason(reason)
+    elif pending is not None:
         basic_ok = pending["basic_ok"]
         cust = pending["customer_indices"]
         reject = pending["reject_reasons"]
@@ -229,23 +242,33 @@ def compute_optional_pruning_mask(
     from .action_space import _feasible_customer_indices
     from .charge_masks import safe_depot_return_from
 
-    feasible_now = _feasible_customer_indices(
-        instance, ev, served, reserved,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=portions,
-    )
+    ev_analysis = getattr(env_state, "_pending_ev_analysis", None)
+
+    if ev_analysis is not None:
+        cust = np.asarray(instance.customer_indices, dtype=np.int64)
+        feasible_now = [int(j) for j in cust[ev_analysis.direct_safe_customer_mask]]
+        ok_dep_now = bool(ev_analysis.safe_depot_return_direct)
+    else:
+        feasible_now = _feasible_customer_indices(
+            instance, ev, served, reserved,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=portions,
+        )
+        ok_dep_now, _ = safe_depot_return_from(
+            instance, ev.current_node, ev.current_time, ev.remaining_battery,
+            use_horizon_check=use_horizon_check,
+        )
     feasible_now_count = len(feasible_now)
-    ok_dep_now, _ = safe_depot_return_from(
-        instance, ev.current_node, ev.current_time, ev.remaining_battery,
-        use_horizon_check=use_horizon_check,
-    )
 
     hard_charge = getattr(env_state, "_hard_charge", {})
 
     for s in instance.charging_station_indices:
         if not hard_mask[s]:
             continue
+        nr = None
+        if ev_analysis is not None:
+            nr = ev_analysis.recharge_node_results.get(int(s))
         usefulness = compute_station_usefulness(
             instance, ev, s, served, reserved,
             all_customers_served=all_done,
@@ -256,6 +279,7 @@ def compute_optional_pruning_mask(
             feasible_now=feasible_now,
             ok_dep_now=ok_dep_now,
             precomputed_charge_mask=hard_charge.get(s),
+            recharge_node_result=nr,
         )
         # Unsafe heuristic: "customer feasible ⇒ every station useless".
         # Only applied when explicitly enabled.
@@ -296,19 +320,27 @@ def compute_optional_pruning_mask(
         use_horizon_check=use_horizon_check,
         use_depot_charging=use_depot_charging,
         charging_portions=portions,
+        ev_analysis=ev_analysis,
     )
     hard_recharge = bool(hard_depot_mode[0])
-    useful_recharge, ur_reason, _ = compute_depot_recharge_usefulness(
-        instance, ev, served, reserved,
-        all_customers_served=all_done,
-        global_svc=global_svc,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=portions,
-        feasible_now_count=feasible_now_count,
-        feasible_now_indices=feasible_now,
-        precomputed_charge_mask=hard_charge.get(depot),
-    )
+    depot_nr = ev_analysis.recharge_node_results.get(int(depot)) if ev_analysis is not None else None
+    if depot_nr is not None and not all_done:
+        useful_recharge = bool(depot_nr.enabled_customer_count > 0)
+        ur_reason = (
+            "depot_recharge_enables_service" if useful_recharge else "depot_recharge_no_future_service"
+        )
+    else:
+        useful_recharge, ur_reason, _ = compute_depot_recharge_usefulness(
+            instance, ev, served, reserved,
+            all_customers_served=all_done,
+            global_svc=global_svc,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=portions,
+            feasible_now_count=feasible_now_count,
+            feasible_now_indices=feasible_now,
+            precomputed_charge_mask=hard_charge.get(depot),
+        )
     allow_recharge = hard_recharge and useful_recharge
     if hard_recharge and not useful_recharge:
         pruning_reasons[depot] = _prune_reason(ur_reason)

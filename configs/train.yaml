@@ -171,6 +171,7 @@ model:
   use_ev_communication: true
   use_dynamic_candidate_encoder: true
   use_edge_aware_encoder: false
+  torch_compile: false
 
 decoding:
   mode: sampling
@@ -222,6 +223,7 @@ outputs:
 
 dashboard:
   refresh_every_cycles: 1
+  generate_full_artifacts_during_training: false
   generate_full_solution_maps_every_cycles: 5
   save_representative_traces_every_cycles: 5
   save_representative_traces: true

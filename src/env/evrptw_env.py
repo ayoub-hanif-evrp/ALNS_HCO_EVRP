@@ -162,6 +162,7 @@ class EVRPTWEnv:
         self._global_serviceability_cache = None
         self._decision_analysis_cache = {}
         self._recharge_state_cache = {}
+        self._ev_analysis_cache = {}
 
     def get_global_serviceability(self, *, force: bool = False):
         """Cached recharge-aware global serviceability.
@@ -206,6 +207,7 @@ class EVRPTWEnv:
                 use_depot_charging=self.use_depot_charging,
                 charging_portions=self.charging_portions,
                 environment_config=getattr(self, "environment_config", None),
+                env=self,
             )
             self._svc_computations_this_state = comps + 1
             self.last_global_serviceability = self._global_serviceability_cache
@@ -239,6 +241,7 @@ class EVRPTWEnv:
         self._action_mask_cache = {}
         self._decision_analysis_cache = {}
         self._recharge_state_cache = {}
+        self._ev_analysis_cache = {}
         self.last_decision_analysis = None
         self._svc_computations_this_state = 0
         metrics = getattr(self, "_cache_metrics", None)

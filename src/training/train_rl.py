@@ -178,7 +178,7 @@ def train(config: dict) -> dict:
     perf = (config.get("environment") or {}).get("performance") or {}
     gpu_cfg = config.get("gpu") or {}
     configure_cuda_runtime(cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)))
-    compile_models = bool(gpu_cfg.get("torch_compile", True)) and device.type == "cuda"
+    compile_models = bool(gpu_cfg.get("torch_compile", False)) and device.type == "cuda"
     if compile_models:
         policy = maybe_compile_module(policy, enabled=True)
     value_critic, q_critic = build_critics(

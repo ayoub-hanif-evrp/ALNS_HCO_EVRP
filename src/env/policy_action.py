@@ -82,30 +82,56 @@ def compute_pre_action_context(
 ) -> dict:
     """Pre-action usefulness, serviceability, and feasible-mask snapshot.
 
-    Expensive: global serviceability + full feasible-action recomputation.
-    Use only for traces / evaluation diagnostics, not every training step.
+    Reuses ``env.last_decision_analysis`` / cached global serviceability when fresh.
     """
     asp = _action_space()
     tw = _tw_diagnostics()
     inst = env.instance
-    gs = asp.compute_global_serviceability(
-        inst, env.evs, env.served_mask, env.reserved_mask,
-        use_horizon_check=env.use_horizon_check,
-        use_depot_charging=env.use_depot_charging,
-        charging_portions=env.charging_portions,
-    )
-    mask, reasons, summary, _ = asp.compute_full_feasible_actions(
-        inst, env, ev,
-        env.use_horizon_check, env.use_depot_charging, env.charging_portions,
-    )
+    analysis = getattr(env, "last_decision_analysis", None)
+    ev_analysis = None
+    if (
+        analysis is not None
+        and int(analysis.state_version) == int(getattr(env, "state_version", -1))
+        and int(analysis.active_ev_id) == int(ev.ev_id)
+    ):
+        gs = analysis.global_serviceability
+        ev_analysis = analysis.active_ev_analysis
+    elif hasattr(env, "get_global_serviceability"):
+        gs = env.get_global_serviceability(force=False)
+    else:
+        from .serviceability import compute_global_serviceability_recharge_aware
+        gs = compute_global_serviceability_recharge_aware(
+            inst, env.evs, env.served_mask, env.reserved_mask,
+            use_horizon_check=env.use_horizon_check,
+            use_depot_charging=env.use_depot_charging,
+            charging_portions=env.charging_portions,
+            environment_config=getattr(env, "environment_config", None),
+            env=env,
+        )
+    if analysis is not None and analysis.mask_result is not None:
+        summary = getattr(env, "last_feasible_summary", None)
+        if summary is None:
+            mask, reasons, summary, _ = asp.compute_full_feasible_actions(
+                inst, env, ev,
+                env.use_horizon_check, env.use_depot_charging, env.charging_portions,
+                global_svc=gs,
+            )
+        else:
+            mask, reasons = analysis.final_node_mask, analysis.node_reasons
+    else:
+        mask, reasons, summary, _ = asp.compute_full_feasible_actions(
+            inst, env, ev,
+            env.use_horizon_check, env.use_depot_charging, env.charging_portions,
+            global_svc=gs,
+        )
     all_done = env.num_served_customers >= inst.num_customers
     node_obj = inst.nodes[node]
     ctx: dict = {
         "pre_global_serviceability": gs.to_dict(),
-        "pre_feasible_customers": float(summary.has_customer),
-        "pre_feasible_stations": float(summary.has_useful_station),
-        "pre_feasible_depot_recharge": float(summary.has_useful_depot_recharge),
-        "pre_feasible_depot_finish": float(summary.has_depot_finish),
+        "pre_feasible_customers": float(summary.has_customer) if summary else 0.0,
+        "pre_feasible_stations": float(summary.has_useful_station) if summary else 0.0,
+        "pre_feasible_depot_recharge": float(summary.has_useful_depot_recharge) if summary else 0.0,
+        "pre_feasible_depot_finish": float(summary.has_depot_finish) if summary else 0.0,
         "pre_expired_customers": float(tw.count_time_expired_customers(env)),
         "pre_num_served": int(env.num_served_customers),
         "selected_charge_portion": charge_portion,
@@ -113,6 +139,9 @@ def compute_pre_action_context(
     }
 
     if node_obj.is_charging_station:
+        nr = None
+        if ev_analysis is not None:
+            nr = ev_analysis.recharge_node_results.get(int(node))
         u = asp.compute_station_usefulness(
             inst, ev, node, env.served_mask, env.reserved_mask,
             all_customers_served=all_done,
@@ -120,20 +149,22 @@ def compute_pre_action_context(
             use_horizon_check=env.use_horizon_check,
             use_depot_charging=env.use_depot_charging,
             charging_portions=env.charging_portions,
-        )
-        cp = asp.evaluate_charge_portions_for_node(
-            inst, ev, node, env.served_mask, env.reserved_mask,
-            use_horizon_check=env.use_horizon_check,
-            use_depot_charging=env.use_depot_charging,
-            charging_portions=env.charging_portions,
+            recharge_node_result=nr,
         )
         ctx.update({
             "usefulness_before_action": bool(u.useful),
             "usefulness_reason_before_action": u.reason,
             "useful_station": bool(u.useful),
-            "enabled_customers": int(u.enabled_customers_count),
-            **cp.to_log_dict(),
+            "enabled_customers": int(u.enabled_customer_count if hasattr(u, "enabled_customer_count") else u.enabled_customers_count),
         })
+        if nr is None:
+            cp = asp.evaluate_charge_portions_for_node(
+                inst, ev, node, env.served_mask, env.reserved_mask,
+                use_horizon_check=env.use_horizon_check,
+                use_depot_charging=env.use_depot_charging,
+                charging_portions=env.charging_portions,
+            )
+            ctx.update(cp.to_log_dict())
     elif node_obj.is_depot and not depot_finish:
         useful, reason, enables = asp.compute_depot_recharge_usefulness(
             inst, ev, env.served_mask, env.reserved_mask,
@@ -143,6 +174,14 @@ def compute_pre_action_context(
             use_depot_charging=env.use_depot_charging,
             charging_portions=env.charging_portions,
         )
+        if ev_analysis is not None:
+            depot_nr = ev_analysis.recharge_node_results.get(int(inst.depot_index))
+            if depot_nr is not None:
+                useful = depot_nr.enabled_customer_count > 0
+                enables = depot_nr.enabled_customer_count
+                reason = (
+                    "depot_recharge_enables_service" if useful else "depot_recharge_no_future_service"
+                )
         ctx.update({
             "usefulness_before_action": bool(useful),
             "usefulness_reason_before_action": reason,
@@ -156,6 +195,7 @@ def compute_pre_action_context(
             use_horizon_check=env.use_horizon_check,
             use_depot_charging=env.use_depot_charging,
             charging_portions=env.charging_portions,
+            ev_analysis=ev_analysis,
         )
         ctx.update({
             "depot_finish_validity_reason": fv.reason,
@@ -170,7 +210,7 @@ def compute_pre_action_context(
             "finish_would_reduce_global_serviceability": bool(fv.finish_would_reduce_global_serviceability),
         })
 
-    _ = mask, reasons  # pre-action mask available for debugging via env.last_feasible_summary
+    _ = mask, reasons
     return ctx
 
 
@@ -189,15 +229,18 @@ def _minimal_pre_action_context(
 
 
 def _attach_post_action_metrics(env, info: dict, pre: dict) -> dict:
-    asp = _action_space()
     tw = _tw_diagnostics()
-    inst = env.instance
-    gs_after = asp.compute_global_serviceability(
-        inst, env.evs, env.served_mask, env.reserved_mask,
-        use_horizon_check=env.use_horizon_check,
-        use_depot_charging=env.use_depot_charging,
-        charging_portions=env.charging_portions,
-    )
+    if hasattr(env, "get_global_serviceability"):
+        gs_after = env.get_global_serviceability(force=False)
+    else:
+        from .serviceability import compute_global_serviceability_recharge_aware
+        gs_after = compute_global_serviceability_recharge_aware(
+            env.instance, env.evs, env.served_mask, env.reserved_mask,
+            use_horizon_check=env.use_horizon_check,
+            use_depot_charging=env.use_depot_charging,
+            charging_portions=env.charging_portions,
+            env=env,
+        )
     info["post_global_serviceability"] = gs_after.to_dict()
     info["globally_serviceable_customers_after"] = float(
         gs_after.globally_serviceable_customers_count,

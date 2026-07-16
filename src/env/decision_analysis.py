@@ -3,6 +3,11 @@
 Training / eval / dashboard MUST call ``analyze_decision_state`` and reuse the
 returned ``DecisionStateAnalysis``. Low-level mask helpers may run inside the
 analyzer only.
+
+Optimized path is EV-state-first:
+  for each unfinished EV → one recharge search + vectorized customers
+  global_serviceability = OR of EV serviceable masks
+  active EV analysis reused for hard/pruning/depot/station/features
 """
 from __future__ import annotations
 
@@ -27,6 +32,8 @@ _CALL_COUNTS: dict[str, int] = {
     "analyze_decision_state_reference": 0,
     "global_serviceability": 0,
     "dynamic_feature_builder": 0,
+    "recharge_search": 0,
+    "ev_decision_analysis": 0,
 }
 
 
@@ -55,26 +62,34 @@ class PrefilterStats:
 
 @dataclass
 class TimingBreakdown:
-    basic_customer_filter_ms: float = 0.0
+    decision_analysis_ms: float = 0.0
+    direct_customer_vectorized_ms: float = 0.0
+    recharge_search_ms: float = 0.0
+    label_customer_vectorized_ms: float = 0.0
     safe_continuation_ms: float = 0.0
-    recharge_simulation_ms: float = 0.0
-    charging_chain_search_ms: float = 0.0
     global_serviceability_ms: float = 0.0
     hard_mask_ms: float = 0.0
     pruning_ms: float = 0.0
+    dynamic_feature_ms: float = 0.0
+    # Legacy aliases
+    basic_customer_filter_ms: float = 0.0
+    recharge_simulation_ms: float = 0.0
+    charging_chain_search_ms: float = 0.0
     dynamic_features_ms: float = 0.0
     total_ms: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         return {
-            "basic_customer_filter_ms": self.basic_customer_filter_ms,
+            "decision_analysis_ms": self.decision_analysis_ms,
+            "direct_customer_vectorized_ms": self.direct_customer_vectorized_ms,
+            "recharge_search_ms": self.recharge_search_ms,
+            "label_customer_vectorized_ms": self.label_customer_vectorized_ms,
             "safe_continuation_ms": self.safe_continuation_ms,
-            "recharge_simulation_ms": self.recharge_simulation_ms,
-            "charging_chain_search_ms": self.charging_chain_search_ms,
             "global_serviceability_ms": self.global_serviceability_ms,
             "hard_mask_ms": self.hard_mask_ms,
             "pruning_ms": self.pruning_ms,
-            "dynamic_features_ms": self.dynamic_features_ms,
+            "dynamic_feature_ms": self.dynamic_feature_ms or self.dynamic_features_ms,
+            "basic_customer_filter_ms": self.basic_customer_filter_ms,
             "total_ms": self.total_ms,
         }
 
@@ -104,14 +119,19 @@ class DecisionStateAnalysis:
     recharge_state_analysis: Any = None
     global_serviceability: Any = None
 
+    ev_analyses: dict[int, Any] = field(default_factory=dict)
+    active_ev_analysis: Any = None
+
     dynamic_candidate_features: np.ndarray | None = None
     global_features: np.ndarray | None = None
     mask_summary_features: np.ndarray | None = None
 
     mask_result: ActionMaskResult | None = None
     mask_reason_counts: dict[str, int] = field(default_factory=dict)
+    reason_counts: dict[str, int] = field(default_factory=dict)
     prefilter_stats: PrefilterStats = field(default_factory=PrefilterStats)
     timing: TimingBreakdown = field(default_factory=TimingBreakdown)
+    cache_stats: dict[str, int] = field(default_factory=dict)
     cache_hit: bool = False
     implementation: str = "optimized"
 
@@ -151,54 +171,23 @@ def vectorized_basic_customer_prefilter(
     served_mask: np.ndarray,
     reserved_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, dict[int, str], PrefilterStats]:
-    """Cheap vectorized customer prefilter (no safe-continuation yet).
+    """Cheap vectorized customer prefilter (no safe-continuation yet)."""
+    from .ev_decision_analysis import vectorized_basic_from_state
 
-    Returns:
-        basic_ok: bool over ``customer_indices``
-        customer_indices
-        reject_reasons: node_id -> exact cheap reject reason
-        stats
-    """
-    instance.ensure_hot_arrays()
-    cust = np.asarray(instance.customer_indices, dtype=np.int64)
-    stats = PrefilterStats(total_customers=int(cust.size))
-    reject: dict[int, str] = {}
-    if cust.size == 0:
-        return np.zeros(0, dtype=bool), cust, reject, stats
-
-    demands = instance.demand_array()
-    ready = instance.ready_time_array()
-    due = instance.due_time_array()
-    r = ev.current_node
-    travel_t = instance.travel_time_matrix[r, cust]
-    travel_e = instance.energy_matrix[r, cust]
-    arrival = ev.current_time + travel_t
-    service_start = np.maximum(arrival, ready[cust])
-
-    served_b = served_mask[cust]
-    reserved_b = reserved_mask[cust]
-    cap_ok = demands[cust] <= ev.remaining_capacity + EPS
-    batt_ok = travel_e <= ev.remaining_battery + EPS
-    tw_ok = service_start <= due[cust] + EPS
-
-    basic = (~served_b) & (~reserved_b) & cap_ok & batt_ok & tw_ok
-    for i, j in enumerate(cust):
-        if basic[i]:
-            continue
-        jj = int(j)
-        if served_b[i]:
-            reject[jj] = "customer_already_served"
-        elif reserved_b[i]:
-            reject[jj] = "customer_reserved"
-        elif not cap_ok[i]:
-            reject[jj] = "customer_capacity_infeasible"
-        elif not batt_ok[i]:
-            reject[jj] = "customer_battery_unreachable"
-        else:
-            reject[jj] = "customer_time_window_infeasible"
-
-    stats.customers_rejected_by_vectorized_prefilter = int((~basic).sum())
-    stats.customers_sent_to_continuation_analysis = int(basic.sum())
+    basic, cust, reject = vectorized_basic_from_state(
+        instance,
+        node=ev.current_node,
+        current_time=ev.current_time,
+        battery=ev.remaining_battery,
+        capacity=ev.remaining_capacity,
+        served_mask=served_mask,
+        reserved_mask=reserved_mask,
+    )
+    stats = PrefilterStats(
+        total_customers=int(cust.size),
+        customers_rejected_by_vectorized_prefilter=int((~basic).sum()) if cust.size else 0,
+        customers_sent_to_continuation_analysis=int(basic.sum()) if cust.size else 0,
+    )
     return basic, cust, reject, stats
 
 
@@ -211,6 +200,9 @@ def _build_analysis_from_mask(
     timing: TimingBreakdown,
     prefilter_stats: PrefilterStats | None = None,
     dyn: np.ndarray | None = None,
+    ev_analyses: dict | None = None,
+    active_ev_analysis: Any = None,
+    cache_stats: dict | None = None,
 ) -> DecisionStateAnalysis:
     from src.models.dynamic_candidate import compute_dynamic_candidate_features
     from src.models.state_features import global_state_features, mask_summary_features
@@ -219,7 +211,8 @@ def _build_analysis_from_mask(
     if dyn is None:
         _CALL_COUNTS["dynamic_feature_builder"] += 1
         dyn = compute_dynamic_candidate_features(env, ev, mask)
-    timing.dynamic_features_ms = (time.perf_counter() - t_dyn0) * 1000.0
+    timing.dynamic_feature_ms = (time.perf_counter() - t_dyn0) * 1000.0
+    timing.dynamic_features_ms = timing.dynamic_feature_ms
 
     hard = mask.hard_node_mask if mask.hard_node_mask is not None else mask.node_mask
     prune = mask.pruning_node_mask if mask.pruning_node_mask is not None else mask.node_mask.copy()
@@ -228,6 +221,7 @@ def _build_analysis_from_mask(
     if not hard_charge:
         hard_charge = dict(mask.charge_masks)
 
+    reason_counts = dict(mask.mask_reason_counts)
     analysis = DecisionStateAnalysis(
         state_version=int(getattr(env, "state_version", 0)),
         active_ev_id=int(ev.ev_id),
@@ -242,36 +236,64 @@ def _build_analysis_from_mask(
         depot_recharge_reason=depot_reasons[0] if len(depot_reasons) > 0 else "",
         depot_finish_reason=depot_reasons[1] if len(depot_reasons) > 1 else "",
         global_serviceability=mask.global_serviceability,
+        ev_analyses=dict(ev_analyses or {}),
+        active_ev_analysis=active_ev_analysis,
         dynamic_candidate_features=dyn,
         global_features=np.asarray(global_state_features(env, mask), dtype=np.float32),
         mask_summary_features=np.asarray(mask_summary_features(env, mask), dtype=np.float32),
         mask_result=mask,
-        mask_reason_counts=dict(mask.mask_reason_counts),
+        mask_reason_counts=reason_counts,
+        reason_counts=reason_counts,
         prefilter_stats=prefilter_stats or PrefilterStats(),
         timing=timing,
+        cache_stats=dict(cache_stats or getattr(env, "_cache_metrics", {}) or {}),
         implementation=implementation,
     )
     return analysis
 
 
 def analyze_decision_state_reference(env, ev: EVState) -> DecisionStateAnalysis:
-    """Clarity-first reference analysis (exact semantics)."""
+    """Clarity-first reference analysis (exact semantics, customer-first GS)."""
+    from .serviceability import compute_global_serviceability_recharge_aware_reference
+
     _CALL_COUNTS["analyze_decision_state_reference"] += 1
     t0 = time.perf_counter()
+    # Force customer-first global serviceability for true reference semantics/timing.
+    env._global_serviceability_cache = None
+    env.last_decision_analysis = None
+    gs = compute_global_serviceability_recharge_aware_reference(
+        env.instance, env.evs, env.served_mask, env.reserved_mask,
+        use_horizon_check=env.use_horizon_check,
+        use_depot_charging=env.use_depot_charging,
+        charging_portions=env.charging_portions,
+        environment_config=getattr(env, "environment_config", None),
+    )
+    env._global_serviceability_cache = gs
+    env.last_global_serviceability = gs
+    if hasattr(env, "_sync_expired_from_serviceability"):
+        env._sync_expired_from_serviceability(gs)
+    _CALL_COUNTS["global_serviceability"] += 1
+
     mask = compute_action_masks_reference(env, ev)
+    mask.global_serviceability = gs
     timing = TimingBreakdown(
         hard_mask_ms=float(mask.computation_time_ms),
+        global_serviceability_ms=(time.perf_counter() - t0) * 1000.0,
         total_ms=0.0,
     )
     analysis = _build_analysis_from_mask(
         env, ev, mask, implementation="reference", timing=timing,
     )
     analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
+    analysis.timing.decision_analysis_ms = analysis.timing.total_ms
     return analysis
 
 
 def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
-    """Vectorized / cached analysis with identical exact semantics."""
+    """EV-state-first vectorized / cached analysis with identical exact semantics."""
+    from .ev_decision_analysis import compute_all_ev_analyses, get_or_compute_ev_analysis
+    from .serviceability import compute_global_serviceability_recharge_aware
+
     _CALL_COUNTS["analyze_decision_state_optimized"] += 1
     env.instance.ensure_hot_arrays()
     state_version = int(getattr(env, "state_version", 0))
@@ -279,6 +301,13 @@ def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
     cache_key = (instance_id, state_version, int(ev.ev_id))
     cache = getattr(env, "_decision_analysis_cache", None)
     metrics = getattr(env, "_cache_metrics", None)
+    if metrics is None:
+        metrics = {
+            "hits": 0, "misses": 0, "invalidations": 0, "size": 0,
+            "ev_analysis_hits": 0, "ev_analysis_misses": 0,
+            "duplicate_computations_avoided": 0,
+        }
+        env._cache_metrics = metrics
     if cache is None:
         cache = {}
         env._decision_analysis_cache = cache
@@ -291,47 +320,115 @@ def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
     if use_cache and cache_key in cache:
         hit = cache[cache_key]
         hit.cache_hit = True
-        if metrics is not None:
-            metrics["hits"] = int(metrics.get("hits", 0)) + 1
+        metrics["hits"] = int(metrics.get("hits", 0)) + 1
+        metrics["duplicate_computations_avoided"] = (
+            int(metrics.get("duplicate_computations_avoided", 0)) + 1
+        )
         return hit
 
     t0 = time.perf_counter()
-    t_basic0 = time.perf_counter()
-    basic, cust, reject, pref_stats = vectorized_basic_customer_prefilter(
-        env.instance, ev, env.served_mask, env.reserved_mask,
+
+    # 1) EV-state-first analyses for unfinished EVs (cached by state_version).
+    t_ev0 = time.perf_counter()
+    env._analysis_active_ev_id = int(ev.ev_id)
+    ev_analyses = compute_all_ev_analyses(env)
+    env._analysis_active_ev_id = None
+    active_ev_analysis = ev_analyses.get(int(ev.ev_id))
+    if active_ev_analysis is None:
+        active_ev_analysis = get_or_compute_ev_analysis(env, ev)
+        ev_analyses[int(ev.ev_id)] = active_ev_analysis
+    _CALL_COUNTS["ev_decision_analysis"] += len(ev_analyses)
+    _CALL_COUNTS["recharge_search"] += sum(
+        1 for a in ev_analyses.values() if a.recharge_labels
     )
-    basic_ms = (time.perf_counter() - t_basic0) * 1000.0
-    # Store prefilter for hard-mask layer to consume (same decision scope).
+    ev_ms = (time.perf_counter() - t_ev0) * 1000.0
+
+    # Aggregate timing from active EV analysis.
+    at = active_ev_analysis.timing or {}
+    pref_stats = PrefilterStats(
+        total_customers=int(active_ev_analysis.direct_basic_customer_mask.size),
+        customers_rejected_by_vectorized_prefilter=int(
+            (~active_ev_analysis.direct_basic_customer_mask).sum()
+        ),
+        customers_sent_to_continuation_analysis=int(
+            active_ev_analysis.direct_basic_customer_mask.sum()
+        ),
+    )
+
+    # 2) Global serviceability once from OR of EV masks.
+    t_gs0 = time.perf_counter()
+    if getattr(env, "_global_serviceability_cache", None) is None:
+        _CALL_COUNTS["global_serviceability"] += 1
+        gs = compute_global_serviceability_recharge_aware(
+            env.instance, env.evs, env.served_mask, env.reserved_mask,
+            use_horizon_check=env.use_horizon_check,
+            use_depot_charging=env.use_depot_charging,
+            charging_portions=env.charging_portions,
+            environment_config=env_cfg,
+            ev_analyses=ev_analyses,
+            env=env,
+        )
+        env._global_serviceability_cache = gs
+        env.last_global_serviceability = gs
+        if hasattr(env, "_sync_expired_from_serviceability"):
+            env._sync_expired_from_serviceability(gs)
+        env._svc_computations_this_state = int(
+            getattr(env, "_svc_computations_this_state", 0)
+        ) + 1
+    else:
+        gs = env._global_serviceability_cache
+        metrics["duplicate_computations_avoided"] = (
+            int(metrics.get("duplicate_computations_avoided", 0)) + 1
+        )
+    gs_ms = (time.perf_counter() - t_gs0) * 1000.0
+
+    # 3) Expose analyses to hard/pruning layers.
+    env._pending_ev_analysis = active_ev_analysis
     env._pending_customer_prefilter = {
-        "basic_ok": basic,
-        "customer_indices": cust,
-        "reject_reasons": reject,
+        "basic_ok": active_ev_analysis.direct_basic_customer_mask,
+        "customer_indices": np.asarray(env.instance.customer_indices, dtype=np.int64),
+        "reject_reasons": dict(active_ev_analysis.direct_customer_reasons),
         "stats": pref_stats,
     }
 
     t_mask0 = time.perf_counter()
     mask = compute_action_masks_optimized_exact(env, ev)
     mask_ms = (time.perf_counter() - t_mask0) * 1000.0
+    # Ensure global svc on mask is the shared object.
+    mask.global_serviceability = gs
+
     env._pending_customer_prefilter = None
+    env._pending_ev_analysis = None
 
     timing = TimingBreakdown(
-        basic_customer_filter_ms=basic_ms,
+        decision_analysis_ms=0.0,
+        direct_customer_vectorized_ms=float(at.get("direct_customer_vectorized_ms", 0.0)),
+        recharge_search_ms=float(at.get("recharge_search_ms", 0.0)),
+        label_customer_vectorized_ms=float(at.get("label_customer_vectorized_ms", 0.0)),
+        safe_continuation_ms=float(at.get("safe_continuation_ms", 0.0)),
+        global_serviceability_ms=gs_ms,
         hard_mask_ms=mask_ms,
+        basic_customer_filter_ms=float(at.get("direct_customer_vectorized_ms", 0.0)),
+        charging_chain_search_ms=float(at.get("recharge_search_ms", 0.0)),
+        recharge_simulation_ms=ev_ms,
     )
     analysis = _build_analysis_from_mask(
         env, ev, mask,
         implementation="optimized",
         timing=timing,
         prefilter_stats=pref_stats,
+        ev_analyses=ev_analyses,
+        active_ev_analysis=active_ev_analysis,
+        cache_stats=metrics,
     )
     analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
+    analysis.timing.decision_analysis_ms = analysis.timing.total_ms
     analysis.cache_hit = False
 
     if use_cache:
         cache[cache_key] = analysis
-        if metrics is not None:
-            metrics["misses"] = int(metrics.get("misses", 0)) + 1
-            metrics["size"] = len(cache)
+        metrics["misses"] = int(metrics.get("misses", 0)) + 1
+        metrics["size"] = len(cache)
     return analysis
 
 

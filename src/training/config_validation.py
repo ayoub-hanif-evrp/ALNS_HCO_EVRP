@@ -186,7 +186,7 @@ def apply_safe_training_defaults(config: dict) -> dict:
     config["model"].setdefault("use_edge_aware_encoder", False)
     config["training"].setdefault("use_local_search_in_training", False)
     config["training"].setdefault("method", "actor_critic")
-    config["training"].setdefault("generate_static_dashboard", True)
+    config["training"].setdefault("generate_static_dashboard", False)
     config["training"].setdefault("live_checkpoint_every", 0)  # superseded by checkpointing.save_last_every_updates
     config["training"].setdefault("maps_checkpoint_every", 0)
     dcfg = config.setdefault("dashboard", {})
@@ -199,6 +199,7 @@ def apply_safe_training_defaults(config: dict) -> dict:
     dcfg.setdefault("live_random_interval_sec", 45)
     dcfg.setdefault("live_refresh_min_epoch_delta", 1)
     dcfg.setdefault("refresh_every_cycles", 1)
+    dcfg.setdefault("generate_full_artifacts_during_training", False)
     dcfg.setdefault("generate_full_solution_maps_every_cycles", 5)
     dcfg.setdefault("save_representative_traces_every_cycles", 5)
     mcfg = config.setdefault("maps_dashboard", {})

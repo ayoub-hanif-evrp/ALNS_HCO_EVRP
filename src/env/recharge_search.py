@@ -64,6 +64,16 @@ class RechargeLabel:
     predecessor: int | None
     charge_portion: float | None
     hops: int = 0
+    # Optional vectorized customer results attached by EV-state-first analysis.
+    basic_customer_mask: object = None
+    safe_customer_mask: object = None
+    enabled_customer_ids: list | None = None
+    enabled_customer_count: int = 0
+    enables_depot_return: bool = False
+
+    @property
+    def battery_after_charge(self) -> float:
+        return float(self.battery)
 
 
 @dataclass
@@ -76,16 +86,20 @@ class RechargeReachabilityResult:
 
 
 def _dominates(a: RechargeLabel, b: RechargeLabel) -> bool:
-    """A dominates B if no later departure, no lower battery, no greater charge time."""
-    return (
+    """A dominates B if departure no later, battery no lower, hops no greater, charge time no greater."""
+    weakly = (
         a.departure_time <= b.departure_time + EPS
         and a.battery + EPS >= b.battery
+        and a.hops <= b.hops
         and a.cumulative_charging_time <= b.cumulative_charging_time + EPS
-        and (
-            a.departure_time < b.departure_time - EPS
-            or a.battery > b.battery + EPS
-            or a.cumulative_charging_time < b.cumulative_charging_time - EPS
-        )
+    )
+    if not weakly:
+        return False
+    return (
+        a.departure_time < b.departure_time - EPS
+        or a.battery > b.battery + EPS
+        or a.hops < b.hops
+        or a.cumulative_charging_time < b.cumulative_charging_time - EPS
     )
 
 
@@ -94,6 +108,7 @@ def _is_dominated(label: RechargeLabel, existing: list[RechargeLabel]) -> bool:
         if (
             other.departure_time <= label.departure_time + EPS
             and other.battery + EPS >= label.battery
+            and other.hops <= label.hops
             and other.cumulative_charging_time <= label.cumulative_charging_time + EPS
         ):
             return True

@@ -5,6 +5,8 @@ Categories (mutually refined — TW expiration is NOT a synonym for unserviceabl
 * time_window_expired — no unfinished EV can begin service within due time,
   even after a valid bounded recharge chain
 * battery / capacity / no_safe_continuation — other structural unserviceability
+
+Hot path uses EV-state-first analysis (one recharge search per EV, not per customer).
 """
 from __future__ import annotations
 
@@ -95,7 +97,6 @@ def _earliest_service_start_any_path(
         if instance.nodes[node].is_depot and not use_depot_charging:
             continue
         for lab in labs:
-            # Cheap TW gate before full feasibility.
             travel = float(instance.travel_time_matrix[lab.node, customer])
             energy = float(instance.energy_matrix[lab.node, customer])
             if lab.battery + EPS < energy:
@@ -135,14 +136,33 @@ def compute_ev_customer_serviceability(
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
     recharge_config: RechargeSearchConfig | None = None,
+    ev_analysis=None,
 ) -> CustomerServiceabilityResult:
-    """Whether ``ev`` can serve ``customer`` via direct or recharge-chain path."""
+    """Whether ``ev`` can serve ``customer`` via direct or recharge-chain path.
+
+    When ``ev_analysis`` is provided, reuse its masks (no per-customer recharge search).
+    """
     portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
     cfg = recharge_config or RechargeSearchConfig()
     if served_mask[customer] or reserved_mask[customer]:
         return CustomerServiceabilityResult(
             False, "unserviceable", None, None, None, None, False,
             "already_served", category="other",
+        )
+
+    # Fast path: reuse EV-state-first analysis.
+    if ev_analysis is not None:
+        cust = np.asarray(instance.customer_indices, dtype=np.int64)
+        idx = int(np.where(cust == int(customer))[0][0]) if customer in set(cust.tolist()) else -1
+        if idx >= 0 and bool(ev_analysis.serviceable_customer_mask[idx]):
+            mode = ev_analysis.serviceability_mode_by_customer.get(int(customer), "direct")
+            return CustomerServiceabilityResult(
+                True, mode, None, None, None, None, True, mode, category="serviceable",
+            )
+        reason = ev_analysis.direct_customer_reasons.get(int(customer), "no_recharge_chain")
+        return CustomerServiceabilityResult(
+            False, "unserviceable", None, None, None, None, False, reason,
+            category=_classify_reason(reason),
         )
 
     reason = "customer_infeasible"
@@ -261,6 +281,56 @@ def _simulate_charge(instance, ev: EVState, node: int, portion: float) -> EVStat
     )
 
 
+def _earliest_ss_from_ev_analysis(instance, ev_analysis, customer: int) -> float | None:
+    """Cheapest earliest service-start estimate from stored EV analysis labels."""
+    cust = np.asarray(instance.customer_indices, dtype=np.int64)
+    if customer not in set(cust.tolist()):
+        return None
+    idx = int(np.where(cust == int(customer))[0][0])
+    if not bool(ev_analysis.serviceable_customer_mask[idx]):
+        return None
+    ready = float(instance.nodes[customer].ready_time)
+    earliest: float | None = None
+    # Direct: use current EV would require the EV object; approximate via reasons.
+    for lab in ev_analysis.recharge_labels:
+        if lab.safe_customer_mask is None or not bool(lab.safe_customer_mask[idx]):
+            continue
+        travel = float(instance.travel_time_matrix[lab.node, customer])
+        ss = max(lab.departure_time + travel, ready)
+        if earliest is None or ss < earliest:
+            earliest = ss
+    return earliest
+
+
+def _is_time_window_expired_from_analyses(
+    instance,
+    ev_analyses: dict,
+    customer: int,
+) -> bool:
+    due = float(instance.nodes[customer].due_time)
+    for ev_a in ev_analyses.values():
+        cust = np.asarray(instance.customer_indices, dtype=np.int64)
+        idx = int(np.where(cust == int(customer))[0][0])
+        # If serviceable, clearly not TW-expired.
+        if bool(ev_a.serviceable_customer_mask[idx]):
+            return False
+        # Check whether any label (or direct basic) can arrive within due ignoring safe-cont.
+        if bool(ev_a.direct_basic_customer_mask[idx]):
+            # Basic OK means TW is currently meetable from that EV.
+            return False
+        for lab in ev_a.recharge_labels:
+            if lab.basic_customer_mask is None:
+                continue
+            if not bool(lab.basic_customer_mask[idx]):
+                continue
+            travel = float(instance.travel_time_matrix[lab.node, customer])
+            ready = float(instance.nodes[customer].ready_time)
+            ss = max(lab.departure_time + travel, ready)
+            if ss <= due + EPS:
+                return False
+    return True
+
+
 def _is_time_window_expired_global(
     instance,
     active_evs: list[EVState],
@@ -285,12 +355,10 @@ def _is_time_window_expired_global(
         )
         if ss is not None and ss <= due + EPS:
             return False
-    # Also check capacity: if ANY EV has capacity for demand, capacity is not the blocker.
-    # If no EV could reach within due regardless of capacity → TW expired.
     return True
 
 
-def compute_global_serviceability_recharge_aware(
+def compute_global_serviceability_recharge_aware_reference(
     instance,
     evs: list[EVState],
     served_mask,
@@ -301,7 +369,7 @@ def compute_global_serviceability_recharge_aware(
     charging_portions: list[float] | None = None,
     environment_config: dict | None = None,
 ):
-    """Global serviceability using recharge-chain analysis + separate TW categories."""
+    """Clarity-first customer×EV serviceability (slow reference for parity / benches)."""
     from .action_space import GlobalServiceability
 
     remaining = [j for j in instance.customer_indices if not served_mask[j]]
@@ -319,8 +387,8 @@ def compute_global_serviceability_recharge_aware(
     cont_ids: list[int] = []
     other_unsvc: list[int] = []
     recharge_pending: list[int] = []
+    fail_category: dict[int, str] = {}
 
-    # Phase 1: cheap direct feasibility.
     for j in remaining:
         for ev in active_evs:
             ok, _ = customer_feasible(
@@ -333,8 +401,6 @@ def compute_global_serviceability_recharge_aware(
         else:
             recharge_pending.append(j)
 
-    # Phase 2: one-hop + multi-hop recharge chain.
-    fail_category: dict[int, str] = {}
     for j in recharge_pending:
         best_cat = "other"
         for ev in active_evs:
@@ -353,13 +419,122 @@ def compute_global_serviceability_recharge_aware(
         else:
             fail_category[j] = best_cat
 
-    # Phase 3: categorize remaining unserviceable — TW expired only if truly TW.
     for j in remaining:
         if j in serviceable:
             continue
-        # Prefer capacity / battery classification from reasons; override with
-        # explicit TW expiration test when that is the root cause.
         cat = fail_category.get(j, "other")
+        demand = float(instance.nodes[j].demand)
+        any_capacity = any(ev.remaining_capacity + EPS >= demand for ev in active_evs)
+        if not any_capacity:
+            cap_ids.append(j)
+            continue
+        if _is_time_window_expired_global(
+            instance, active_evs, j, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+            config=cfg,
+        ):
+            tw_expired.append(j)
+            continue
+        if cat == "battery":
+            batt_ids.append(j)
+        elif cat == "no_safe_continuation":
+            cont_ids.append(j)
+        else:
+            other_unsvc.append(j)
+
+    unserviceable = sorted(set(remaining) - serviceable)
+    gs.globally_serviceable_customers_count = len(serviceable)
+    gs.serviceable_customer_ids = sorted(serviceable)
+    gs.time_window_expired_customer_ids = sorted(set(tw_expired))
+    gs.battery_unserviceable_customer_ids = sorted(set(batt_ids))
+    gs.capacity_unserviceable_customer_ids = sorted(set(cap_ids))
+    gs.no_safe_continuation_customer_ids = sorted(set(cont_ids))
+    gs.globally_unserviceable_customer_ids = unserviceable
+    gs.globally_expired_customers_count = len(gs.time_window_expired_customer_ids)
+    gs.globally_unreachable_battery_count = len(gs.battery_unserviceable_customer_ids)
+    gs.globally_unreachable_capacity_count = len(gs.capacity_unserviceable_customer_ids)
+    gs.globally_no_safe_continuation_count = len(gs.no_safe_continuation_customer_ids)
+    gs.globally_unserviceable_customers_count = len(unserviceable)
+    gs.no_service_possible = len(serviceable) == 0
+    return gs
+
+
+def compute_global_serviceability_recharge_aware(
+    instance,
+    evs: list[EVState],
+    served_mask,
+    reserved_mask,
+    *,
+    use_horizon_check: bool = True,
+    use_depot_charging: bool = True,
+    charging_portions: list[float] | None = None,
+    environment_config: dict | None = None,
+    ev_analyses: dict | None = None,
+    env=None,
+):
+    """Global serviceability via EV-state-first OR of per-EV serviceable masks.
+
+    Prefer passing ``ev_analyses`` (or ``env`` for caching). Do not run recharge
+    search once per customer.
+    """
+    from .action_space import GlobalServiceability
+    from .ev_decision_analysis import (
+        compute_ev_decision_analysis,
+        get_or_compute_ev_analysis,
+    )
+
+    remaining = [j for j in instance.customer_indices if not served_mask[j]]
+    gs = GlobalServiceability(remaining_customers_count=len(remaining))
+    if not remaining:
+        gs.no_service_possible = False
+        return gs
+
+    cfg = RechargeSearchConfig.from_env_config(environment_config)
+    portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
+    active_evs = [ev for ev in evs if not ev.finished]
+    cust = np.asarray(instance.customer_indices, dtype=np.int64)
+    n_cust = int(cust.size)
+
+    analyses: dict[int, object] = {}
+    if ev_analyses is not None:
+        analyses = {int(k): v for k, v in ev_analyses.items()}
+    elif env is not None:
+        for ev in active_evs:
+            analyses[int(ev.ev_id)] = get_or_compute_ev_analysis(
+                env, ev,
+                use_horizon_check=use_horizon_check,
+                use_depot_charging=use_depot_charging,
+                charging_portions=portions,
+            )
+    else:
+        state_version = 0
+        for ev in active_evs:
+            analyses[int(ev.ev_id)] = compute_ev_decision_analysis(
+                instance, ev, served_mask, reserved_mask,
+                state_version=state_version,
+                use_horizon_check=use_horizon_check,
+                use_depot_charging=use_depot_charging,
+                charging_portions=portions,
+                recharge_config=cfg,
+            )
+
+    global_mask = np.zeros(n_cust, dtype=bool)
+    for ev_a in analyses.values():
+        global_mask |= np.asarray(ev_a.serviceable_customer_mask, dtype=bool)
+
+    serviceable = {int(j) for j in cust[global_mask]}
+
+    tw_expired: list[int] = []
+    batt_ids: list[int] = []
+    cap_ids: list[int] = []
+    cont_ids: list[int] = []
+    other_unsvc: list[int] = []
+
+    for j in remaining:
+        if j in serviceable:
+            continue
         demand = float(instance.nodes[j].demand)
         any_capacity = any(
             ev.remaining_capacity + EPS >= demand for ev in active_evs
@@ -368,30 +543,29 @@ def compute_global_serviceability_recharge_aware(
             cap_ids.append(j)
             continue
 
-        # Structural TW expiration: cannot begin service within due on any path.
-        if _is_time_window_expired_global(
-            instance, active_evs, j, served_mask, reserved_mask,
-            use_horizon_check=use_horizon_check,
-            use_depot_charging=use_depot_charging,
-            charging_portions=charging_portions,
-            config=cfg,
-        ):
-            # Confirm it is not solely a capacity issue already handled.
+        # Prefer analysis-based TW expiration (no extra recharge searches).
+        if analyses and _is_time_window_expired_from_analyses(instance, analyses, j):
             tw_expired.append(j)
             continue
 
-        if cat == "battery":
+        # Classify using per-EV direct reasons / modes.
+        cats = []
+        for ev_a in analyses.values():
+            reason = ev_a.direct_customer_reasons.get(int(j), "no_recharge_chain")
+            cats.append(_classify_reason(reason))
+        if "battery" in cats and all(c in {"battery", "other", "no_safe_continuation"} for c in cats):
+            if all(c == "battery" for c in cats):
+                batt_ids.append(j)
+                continue
+        if all(c == "no_safe_continuation" for c in cats):
+            cont_ids.append(j)
+            continue
+        if "battery" in cats:
             batt_ids.append(j)
-        elif cat == "no_safe_continuation":
+        elif "no_safe_continuation" in cats:
             cont_ids.append(j)
         else:
-            # Still unserviceable for other structural reasons.
-            if cat == "capacity":
-                cap_ids.append(j)
-            else:
-                other_unsvc.append(j)
-                if cat == "battery":
-                    batt_ids.append(j)
+            other_unsvc.append(j)
 
     unserviceable = sorted(set(remaining) - serviceable)
 
@@ -408,4 +582,6 @@ def compute_global_serviceability_recharge_aware(
     gs.globally_no_safe_continuation_count = len(gs.no_safe_continuation_customer_ids)
     gs.globally_unserviceable_customers_count = len(unserviceable)
     gs.no_service_possible = len(serviceable) == 0
+    # Attach analyses for downstream reuse when called without env.
+    gs._ev_analyses = analyses  # type: ignore[attr-defined]
     return gs
