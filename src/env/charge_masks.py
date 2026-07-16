@@ -145,6 +145,9 @@ def feasible_charge_portions(
 ) -> tuple[np.ndarray, list[str]]:
     """Boolean mask over charge portions with full continuation checks."""
     from .feasibility_scratch import ev_state_key, get_scratch
+    from .analysis_counters import bump_outside_analyze
+
+    bump_outside_analyze("charge_portion_recompute_calls")
 
     p_list = list(portions or CHARGE_PORTIONS)
     scratch = get_scratch()

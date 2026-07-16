@@ -295,6 +295,9 @@ def _feasible_customer_indices(
 ) -> list[int]:
     from .feasibility_scratch import ev_state_key, get_scratch
     from .masks import customer_feasible
+    from .analysis_counters import bump_outside_analyze
+
+    bump_outside_analyze("feasible_customer_indices_calls")
 
     scratch = get_scratch()
     key = ev_state_key(ev)
@@ -1053,8 +1056,15 @@ def would_be_no_progress_action(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    recharge_node_result=None,
+    feasible_before_count: int | None = None,
+    ok_dep_before: bool | None = None,
 ) -> tuple[bool, str]:
-    """True if the action would not make meaningful progress."""
+    """True if the action would not make meaningful progress.
+
+    Prefer cached ``recharge_node_result`` / feasible counts from
+    ``DecisionStateAnalysis`` — do not recompute masks when provided.
+    """
     if action_kind == "customer":
         return False, ""
     if action_kind == "depot_finish":
@@ -1068,19 +1078,60 @@ def would_be_no_progress_action(
 
     from .charge_masks import safe_depot_return_from
 
-    ok_dep_before, _ = safe_depot_return_from(
-        instance, ev.current_node, ev.current_time, ev.remaining_battery,
-        use_horizon_check=use_horizon_check,
-    )
+    if ok_dep_before is None:
+        ok_dep_before, _ = safe_depot_return_from(
+            instance, ev.current_node, ev.current_time, ev.remaining_battery,
+            use_horizon_check=use_horizon_check,
+        )
     batt_before = ev.remaining_battery
-    feasible_before = len(_feasible_customer_indices(
-        instance, ev, served_mask, reserved_mask,
-        use_horizon_check=use_horizon_check,
-        use_depot_charging=use_depot_charging,
-        charging_portions=charging_portions,
-    ))
+    if feasible_before_count is not None:
+        feasible_before = int(feasible_before_count)
+    else:
+        feasible_before = len(_feasible_customer_indices(
+            instance, ev, served_mask, reserved_mask,
+            use_horizon_check=use_horizon_check,
+            use_depot_charging=use_depot_charging,
+            charging_portions=charging_portions,
+        ))
+
+    # Fast path: reuse cached recharge-node result (no portion×customer recompute).
+    if recharge_node_result is not None and (node.is_charging_station or node.is_depot):
+        if node.is_charging_station:
+            usefulness = compute_station_usefulness(
+                instance, ev, target_node, served_mask, reserved_mask,
+                all_customers_served=all_customers_served,
+                global_svc=global_svc,
+                use_horizon_check=use_horizon_check,
+                use_depot_charging=use_depot_charging,
+                charging_portions=charging_portions,
+                feasible_now=[],  # count provided separately
+                ok_dep_now=ok_dep_before,
+                recharge_node_result=recharge_node_result,
+            )
+            # Override feasible_now_count semantics via explicit before count.
+            if feasible_before > 0 and ok_dep_before and not all_customers_served:
+                # Proactive charge with customers feasible is allowed progress-wise.
+                return False, ""
+            if not usefulness.useful:
+                return True, "no_progress_useless_station"
+        else:
+            if not bool(recharge_node_result.useful) and int(
+                recharge_node_result.enabled_customer_count
+            ) <= 0:
+                return True, "depot_recharge_no_future_service"
+        enabled = int(recharge_node_result.enabled_customer_count)
+        depot_improved = (not ok_dep_before) and bool(recharge_node_result.enables_depot_return)
+        if enabled > feasible_before or depot_improved or all_customers_served:
+            return False, ""
+        if progress is not None and bool(progress.loop_detected):
+            return True, "no_progress_near_zero_loop"
+        if is_near_zero_move(instance, ev.current_node, target_node):
+            return True, "no_progress_near_zero_loop"
+        return True, "no_progress_no_improvement"
 
     if node.is_charging_station:
+        from .analysis_counters import bump_outside_analyze
+        bump_outside_analyze("station_usefulness_recompute_calls")
         usefulness = compute_station_usefulness(
             instance, ev, target_node, served_mask, reserved_mask,
             all_customers_served=all_customers_served,

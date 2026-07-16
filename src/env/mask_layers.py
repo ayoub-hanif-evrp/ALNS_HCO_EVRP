@@ -308,6 +308,9 @@ def compute_optional_pruning_mask(
                     use_horizon_check=use_horizon_check,
                     use_depot_charging=use_depot_charging,
                     charging_portions=portions,
+                    recharge_node_result=nr,
+                    feasible_before_count=feasible_now_count,
+                    ok_dep_before=ok_dep_now,
                 )
                 if no_prog:
                     pruning_mask[s] = False
@@ -356,6 +359,9 @@ def compute_optional_pruning_mask(
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
             charging_portions=portions,
+            recharge_node_result=depot_nr,
+            feasible_before_count=feasible_now_count,
+            ok_dep_before=ok_dep_now,
         )
         if no_prog:
             allow_recharge = False

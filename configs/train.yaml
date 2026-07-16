@@ -75,7 +75,7 @@ optimizer:
   critic_lr: 0.0003
   actor_grad_clip: 1.0
   critic_grad_clip: 1.0
-  critic_updates_per_actor_update: 2
+  critic_updates_per_actor_update: 1
   critic_loss: huber
 
 training:
@@ -104,7 +104,7 @@ critic:
   detach_actor_embeddings: true
   critic_loss: huber
   critic_lr: 0.0003
-  critic_updates_per_actor_update: 2
+  critic_updates_per_actor_update: 1
   critic_grad_clip: 1.0
   normalize_returns_for_critic: false
   auxiliary_coef: 0.1
@@ -160,7 +160,7 @@ rl:
   max_q_actions: 64
   detach_critic_inputs: true
   critic_loss: huber
-  critic_updates_per_actor_update: 2
+  critic_updates_per_actor_update: 1
 
 model:
   embedding_dim: 192
@@ -235,6 +235,7 @@ dashboard:
 
 diagnostics:
   parameter_delta_every_updates: 20
+  full_mask_reason_dump_every_updates: 20
   timing_enabled: true
 
 checkpointing:

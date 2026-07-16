@@ -1,6 +1,8 @@
 """Actor-critic training step (centralized fleet critic + optional Q, memory-safe)."""
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -125,6 +127,19 @@ def actor_critic_train_step(
 
     rollout_pairs: list[tuple] = []
     total_rollouts = 0
+    timing = {
+        "decision_analysis_ms": 0.0,
+        "controlled_closure_ms": 0.0,
+        "policy_forward_ms": 0.0,
+        "environment_step_ms": 0.0,
+        "reward_diagnostics_ms": 0.0,
+        "critic_update_ms": 0.0,
+        "actor_update_ms": 0.0,
+        "logging_ms": 0.0,
+        "checkpoint_ms": 0.0,
+        "dashboard_ms": 0.0,
+    }
+    t_epoch0 = time.perf_counter()
 
     for idx in batch_idx:
         instance = train_ds[idx]
@@ -143,6 +158,12 @@ def actor_critic_train_step(
         for result, trajectory in rollouts:
             total_rollouts += 1
             rollout_pairs.append((result, trajectory, instance))
+            ts = getattr(trajectory, "training_stats", None) or {}
+            for k in (
+                "decision_analysis_ms", "controlled_closure_ms", "policy_forward_ms",
+                "environment_step_ms", "reward_diagnostics_ms",
+            ):
+                timing[k] += float(ts.get(k, 0.0))
 
             num_decisions_list.append(trajectory.num_steps)
             feas_action_list.append(trajectory.mean_feasible_actions())
@@ -205,6 +226,7 @@ def actor_critic_train_step(
     grad_norm = torch.tensor(0.0)
 
     for _pass in range(critic_passes):
+        t_c0 = time.perf_counter()
         critic_optimizer.zero_grad(set_to_none=True)
         for pair in rollout_pairs:
             out = _compute_loss(pair, critic_only=True)
@@ -215,7 +237,8 @@ def actor_critic_train_step(
             else:
                 scaled.backward()
 
-        if use_amp and device_t.type == "cuda" and scaler is not None:
+        amp_critic = use_amp and device_t.type == "cuda" and scaler is not None
+        if amp_critic:
             scaler.unscale_(critic_optimizer)
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
             critic_parameters(value_critic, q_critic), critic_grad_clip,
@@ -223,13 +246,19 @@ def actor_critic_train_step(
         if not torch.isfinite(critic_grad_norm):
             critic_optimizer.zero_grad(set_to_none=True)
             LOGGER.warning("Skipping critic step: non-finite gradient norm")
-        elif use_amp and device_t.type == "cuda" and scaler is not None:
+            # After unscale_(), GradScaler requires update() even when step() is skipped,
+            # otherwise the next critic pass raises "unscale_() has already been called".
+            if amp_critic:
+                scaler.update()
+        elif amp_critic:
             scaler.step(critic_optimizer)
             scaler.update()
         else:
             critic_optimizer.step()
+        timing["critic_update_ms"] += (time.perf_counter() - t_c0) * 1000.0
 
     if not critic_only_warmup:
+        t_a0 = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
         for pair in rollout_pairs:
             out = _compute_loss(pair, actor_only=True)
@@ -242,18 +271,22 @@ def actor_critic_train_step(
             else:
                 scaled.backward()
 
-        if use_amp and device_t.type == "cuda" and scaler is not None:
+        amp_actor = use_amp and device_t.type == "cuda" and scaler is not None
+        if amp_actor:
             scaler.unscale_(optimizer)
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), actor_grad_clip)
         grad_norm = actor_grad_norm
         if not torch.isfinite(actor_grad_norm):
             optimizer.zero_grad(set_to_none=True)
             LOGGER.warning("Skipping actor step: non-finite gradient norm")
-        elif use_amp and device_t.type == "cuda" and scaler is not None:
+            if amp_actor:
+                scaler.update()
+        elif amp_actor:
             scaler.step(optimizer)
             scaler.update()
         else:
             optimizer.step()
+        timing["actor_update_ms"] += (time.perf_counter() - t_a0) * 1000.0
 
     if measure_param_delta and actor_params_before is not None and critic_params_before is not None:
         actor_param_delta = float(torch.norm(_flat_params(policy) - actor_params_before).item())
@@ -286,8 +319,14 @@ def actor_critic_train_step(
             f"mean_{k}": float(np.mean([bd.get(k, 0.0) for bd in breakdowns])) for k in breakdowns[0]
         }
 
+    from src.env.analysis_counters import get_cycle_counters, snapshot_for_log
+    timing["total_epoch_ms"] = (time.perf_counter() - t_epoch0) * 1000.0
+    counter_snap = snapshot_for_log(get_cycle_counters())
+
     return {
         "algorithm": "actor_critic",
+        **{f"timing_{k}": float(v) for k, v in timing.items()},
+        **{f"dup_{k}": int(v) for k, v in counter_snap.items()},
         "cost": float(np.mean(raw_costs)),
         "cost_raw": float(np.mean(raw_costs)),
         "reward": float(np.mean(shaped_return_list)) if shaped_return_list else float(

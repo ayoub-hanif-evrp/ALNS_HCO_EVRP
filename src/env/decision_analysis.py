@@ -255,45 +255,48 @@ def _build_analysis_from_mask(
 def analyze_decision_state_reference(env, ev: EVState) -> DecisionStateAnalysis:
     """Clarity-first reference analysis (exact semantics, customer-first GS)."""
     from .serviceability import compute_global_serviceability_recharge_aware_reference
+    from .analysis_counters import bump, enter_analyze, exit_analyze
 
     _CALL_COUNTS["analyze_decision_state_reference"] += 1
     t0 = time.perf_counter()
-    # Force customer-first global serviceability for true reference semantics/timing.
-    env._global_serviceability_cache = None
-    env.last_decision_analysis = None
-    gs = compute_global_serviceability_recharge_aware_reference(
-        env.instance, env.evs, env.served_mask, env.reserved_mask,
-        use_horizon_check=env.use_horizon_check,
-        use_depot_charging=env.use_depot_charging,
-        charging_portions=env.charging_portions,
-        environment_config=getattr(env, "environment_config", None),
-    )
-    env._global_serviceability_cache = gs
-    env.last_global_serviceability = gs
-    if hasattr(env, "_sync_expired_from_serviceability"):
-        env._sync_expired_from_serviceability(gs)
-    _CALL_COUNTS["global_serviceability"] += 1
+    enter_analyze()
+    try:
+        # Force customer-first global serviceability for true reference semantics/timing.
+        env._global_serviceability_cache = None
+        env.last_decision_analysis = None
+        gs = compute_global_serviceability_recharge_aware_reference(
+            env.instance, env.evs, env.served_mask, env.reserved_mask,
+            use_horizon_check=env.use_horizon_check,
+            use_depot_charging=env.use_depot_charging,
+            charging_portions=env.charging_portions,
+            environment_config=getattr(env, "environment_config", None),
+        )
+        env._global_serviceability_cache = gs
+        env.last_global_serviceability = gs
+        if hasattr(env, "_sync_expired_from_serviceability"):
+            env._sync_expired_from_serviceability(gs)
+        _CALL_COUNTS["global_serviceability"] += 1
+        bump("global_serviceability_calls")
 
-    mask = compute_action_masks_reference(env, ev)
-    mask.global_serviceability = gs
-    timing = TimingBreakdown(
-        hard_mask_ms=float(mask.computation_time_ms),
-        global_serviceability_ms=(time.perf_counter() - t0) * 1000.0,
-        total_ms=0.0,
-    )
-    analysis = _build_analysis_from_mask(
-        env, ev, mask, implementation="reference", timing=timing,
-    )
-    analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
-    analysis.timing.decision_analysis_ms = analysis.timing.total_ms
-    return analysis
+        mask = compute_action_masks_reference(env, ev)
+        mask.global_serviceability = gs
+        timing = TimingBreakdown(
+            hard_mask_ms=float(mask.computation_time_ms),
+            global_serviceability_ms=(time.perf_counter() - t0) * 1000.0,
+            total_ms=0.0,
+        )
+        analysis = _build_analysis_from_mask(
+            env, ev, mask, implementation="reference", timing=timing,
+        )
+        analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
+        analysis.timing.decision_analysis_ms = analysis.timing.total_ms
+        return analysis
+    finally:
+        exit_analyze()
 
 
 def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
     """EV-state-first vectorized / cached analysis with identical exact semantics."""
-    from .ev_decision_analysis import compute_all_ev_analyses, get_or_compute_ev_analysis
-    from .serviceability import compute_global_serviceability_recharge_aware
-
     _CALL_COUNTS["analyze_decision_state_optimized"] += 1
     env.instance.ensure_hot_arrays()
     state_version = int(getattr(env, "state_version", 0))
@@ -327,6 +330,32 @@ def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
         return hit
 
     t0 = time.perf_counter()
+    from .analysis_counters import enter_analyze, exit_analyze
+    enter_analyze()
+    env._inside_analyze_decision = True
+    try:
+        return _analyze_decision_state_optimized_inner(
+            env, ev, cache_key=cache_key, cache=cache, metrics=metrics,
+            use_cache=use_cache, env_cfg=env_cfg, t0=t0,
+        )
+    finally:
+        env._inside_analyze_decision = False
+        exit_analyze()
+
+
+def _analyze_decision_state_optimized_inner(
+    env,
+    ev: EVState,
+    *,
+    cache_key,
+    cache,
+    metrics,
+    use_cache: bool,
+    env_cfg: dict,
+    t0: float,
+) -> DecisionStateAnalysis:
+    from .ev_decision_analysis import compute_all_ev_analyses, get_or_compute_ev_analysis
+    from .serviceability import compute_global_serviceability_recharge_aware
 
     # 1) EV-state-first analyses for unfinished EVs (cached by state_version).
     t_ev0 = time.perf_counter()
@@ -338,9 +367,10 @@ def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
         active_ev_analysis = get_or_compute_ev_analysis(env, ev)
         ev_analyses[int(ev.ev_id)] = active_ev_analysis
     _CALL_COUNTS["ev_decision_analysis"] += len(ev_analyses)
-    _CALL_COUNTS["recharge_search"] += sum(
-        1 for a in ev_analyses.values() if a.recharge_labels
-    )
+    n_recharge = sum(1 for a in ev_analyses.values() if a.recharge_labels)
+    _CALL_COUNTS["recharge_search"] += n_recharge
+    from .analysis_counters import bump
+    bump("recharge_search_calls", n_recharge)
     ev_ms = (time.perf_counter() - t_ev0) * 1000.0
 
     # Aggregate timing from active EV analysis.
@@ -359,6 +389,7 @@ def analyze_decision_state_optimized(env, ev: EVState) -> DecisionStateAnalysis:
     t_gs0 = time.perf_counter()
     if getattr(env, "_global_serviceability_cache", None) is None:
         _CALL_COUNTS["global_serviceability"] += 1
+        bump("global_serviceability_calls")
         gs = compute_global_serviceability_recharge_aware(
             env.instance, env.evs, env.served_mask, env.reserved_mask,
             use_horizon_check=env.use_horizon_check,
@@ -439,7 +470,10 @@ def analyze_decision_state(
     implementation: str | None = None,
 ) -> DecisionStateAnalysis:
     """Official entry — used by training, eval, dashboard, baselines."""
+    from .analysis_counters import bump
+
     _CALL_COUNTS["analyze_decision_state"] += 1
+    bump("analyze_decision_state_calls")
     env_cfg = getattr(env, "environment_config", None) or {}
     impl = (implementation or str(env_cfg.get("implementation", "optimized"))).lower()
     if impl in {"reference", "ref", "clarity"}:

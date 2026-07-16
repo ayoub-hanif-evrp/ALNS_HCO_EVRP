@@ -82,6 +82,14 @@ def is_customer_time_expired(instance, ev, j: int, served_mask, reserved_mask) -
 
 def count_time_expired_customers(env) -> int:
     """Unserved customers with no feasible service due to closed time windows."""
+    analysis = getattr(env, "last_decision_analysis", None)
+    if (
+        analysis is not None
+        and int(getattr(analysis, "state_version", -1)) == int(getattr(env, "state_version", -2))
+        and analysis.global_serviceability is not None
+    ):
+        gs = analysis.global_serviceability
+        return int(getattr(gs, "globally_expired_customers_count", getattr(env, "last_expired_count", 0)))
     cached = getattr(env, "last_expired_count", None)
     if cached is not None and getattr(env, "_global_serviceability_cache", None) is not None:
         return int(cached)
@@ -96,11 +104,13 @@ def aggregate_mask_reasons(
     *,
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
+    analysis=None,
 ) -> tuple[MaskReasonCounts, np.ndarray, dict[int, str]]:
     """Aggregate mask diagnostics from the canonical decision analysis."""
     from src.env.decision_analysis import analyze_decision_state
 
-    analysis = getattr(env_state, "last_decision_analysis", None)
+    if analysis is None:
+        analysis = getattr(env_state, "last_decision_analysis", None)
     fresh = (
         analysis is not None
         and int(analysis.state_version) == int(getattr(env_state, "state_version", -1))
@@ -115,6 +125,17 @@ def aggregate_mask_reasons(
     counts = MaskReasonCounts()
     feasible = analysis.final_node_mask
     reasons = analysis.node_reasons
+    # Prefer precomputed reason counts from analysis when present.
+    if analysis.reason_counts:
+        mrc = analysis.reason_counts
+        counts.feasible_customers_count = int(mrc.get("feasible_customers", 0))
+        counts.feasible_stations_count = int(mrc.get("feasible_stations", 0))
+        counts.masked_by_time_window_count = int(mrc.get("masked_by_time_window", 0))
+        counts.masked_by_battery_count = int(mrc.get("masked_by_battery", 0))
+        counts.masked_by_capacity_count = int(mrc.get("masked_by_capacity", 0))
+        counts.masked_by_already_served_count = int(mrc.get("masked_by_already_served", 0))
+        counts.masked_by_reservation_count = int(mrc.get("masked_by_reservation", 0))
+        return counts, feasible, reasons
     for j in instance.customer_indices:
         if feasible[j]:
             counts.feasible_customers_count += 1
@@ -150,7 +171,6 @@ def aggregate_mask_reasons(
     depot = instance.depot_index
     if feasible[depot]:
         counts.feasible_depot = 1
-    # Preserve remaining aggregation logic via mask_result counters when available.
     if result is not None and getattr(result, "mask_reason_counts", None):
         mrc = result.mask_reason_counts
         counts.feasible_customers_count = max(
@@ -252,8 +272,12 @@ def selected_station_is_necessary(
     use_horizon_check: bool = True,
     use_depot_charging: bool = True,
     charging_portions: list[float] | None = None,
+    analysis=None,
 ) -> tuple[bool, dict[str, float]]:
-    """Return whether the selected station is useful for the current EV decision."""
+    """Return whether the selected station is useful for the current EV decision.
+
+    Prefer ``analysis.active_ev_analysis.recharge_node_results`` — do not recompute.
+    """
     if hasattr(env_or_instance, "instance"):
         env = env_or_instance
         inst = env.instance
@@ -276,8 +300,40 @@ def selected_station_is_necessary(
             "selected_station_enables_customer_count": 0.0,
         }
 
-    from src.env.action_space import compute_station_usefulness, compute_global_serviceability
+    # Hot path: reuse cached recharge-node result from DecisionStateAnalysis.
+    ea = None
+    if analysis is not None:
+        ea = getattr(analysis, "active_ev_analysis", None)
+    elif hasattr(env_or_instance, "last_decision_analysis"):
+        last = env_or_instance.last_decision_analysis
+        if (
+            last is not None
+            and int(getattr(last, "state_version", -1)) == int(getattr(env_or_instance, "state_version", -2))
+            and int(getattr(last, "active_ev_id", -1)) == int(ev_ref.ev_id)
+        ):
+            ea = getattr(last, "active_ev_analysis", None)
+    if ea is not None:
+        nr = ea.recharge_node_results.get(int(selected_station))
+        if nr is not None:
+            useful = bool(nr.useful)
+            return useful, {
+                "selected_station_necessary": float(useful),
+                "unnecessary_selected_station": float(not useful),
+                "selected_station_no_continuation": float(not useful and not nr.enables_depot_return),
+                "selected_station_enables_customer_count": float(nr.enabled_customer_count),
+            }
+        # Station absent from recharge labels → not useful for continuation.
+        return False, {
+            "selected_station_necessary": 0.0,
+            "unnecessary_selected_station": 1.0,
+            "selected_station_no_continuation": 1.0,
+            "selected_station_enables_customer_count": 0.0,
+        }
 
+    from src.env.action_space import compute_station_usefulness, compute_global_serviceability
+    from src.env.analysis_counters import bump_outside_analyze
+
+    bump_outside_analyze("station_usefulness_recompute_calls")
     all_done = int(np.sum(served[inst.customer_indices])) >= inst.num_customers if inst.customer_indices else True
     if hasattr(env_or_instance, "get_global_serviceability"):
         gs = env_or_instance.get_global_serviceability()

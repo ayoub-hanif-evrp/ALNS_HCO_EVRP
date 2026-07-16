@@ -180,6 +180,8 @@ class TransformerEVRPTWPolicy(nn.Module):
         if analysis is not None and analysis.dynamic_candidate_features is not None:
             dyn_feats_np = analysis.dynamic_candidate_features
         else:
+            from src.env.analysis_counters import bump_outside_analyze
+            bump_outside_analyze("dynamic_feature_recompute_calls")
             dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
         dyn_cont = self.dynamic_continuous_normalizer(
             torch.tensor(dyn_feats_np[:, : DYNAMIC_CANDIDATE_FEAT_DIM - 4], device=device, dtype=dtype),
@@ -229,8 +231,20 @@ class TransformerEVRPTWPolicy(nn.Module):
         node_embeddings: torch.Tensor,
         mask_result,
         mode: str = "sampling",
+        *,
+        analysis=None,
     ) -> ActionOutput:
-        state = self.build_decision_state(env, ev, node_embeddings, mask_result)
+        if analysis is None:
+            last = getattr(env, "last_decision_analysis", None)
+            if (
+                last is not None
+                and int(getattr(last, "state_version", -1)) == int(getattr(env, "state_version", -2))
+                and int(getattr(last, "active_ev_id", -1)) == int(ev.ev_id)
+            ):
+                analysis = last
+        state = self.build_decision_state(
+            env, ev, node_embeddings, mask_result, analysis=analysis,
+        )
         return self.select_action_from_state(
             env, ev, node_embeddings, mask_result, state, mode=mode,
         )

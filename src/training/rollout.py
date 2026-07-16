@@ -27,11 +27,6 @@ class EpisodeResult:
     fleet_size: int = 0
 
 
-def _step_or_close(env: EVRPTWEnv, ev) -> dict | None:
-    """Close the route if required; return close info or None."""
-    return env.try_auto_close_route(ev)
-
-
 def run_episode(
     instance,
     policy,
@@ -69,14 +64,16 @@ def run_episode(
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
-        closure_info = env.try_controlled_closure()
-        if closure_info is not None:
+        # Canonical order: analyze once, then closure / action from that analysis.
+        analysis = env.analyze_decision(ev)
+        if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
             continue
-        if _step_or_close(env, ev):
+        if env.try_auto_close_from_analysis(ev, analysis) is not None:
             continue
-        feasible_mask, _ = env.feasible_mask(ev)
-        mask_result = env.last_action_mask_result
-        action = policy.select_action(env, ev, node_embeddings, mask_result, mode=mode)
+        mask_result = analysis.mask_result
+        action = policy.select_action(
+            env, ev, node_embeddings, mask_result, mode=mode, analysis=analysis,
+        )
         log_prob_sum = log_prob_sum + action.log_prob
         entropy_sum = entropy_sum + action.entropy
         num_decisions += 1

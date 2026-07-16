@@ -189,7 +189,9 @@ class EVRPTWEnv:
             return analysis.global_serviceability
 
         if self._global_serviceability_cache is None:
+            from .analysis_counters import bump
             _CALL_COUNTS["global_serviceability"] += 1
+            bump("global_serviceability_calls")
             debug = bool(
                 ((getattr(self, "environment_config", None) or {}).get("debug") or {}).get(
                     "assert_single_serviceability", False
@@ -437,39 +439,49 @@ class EVRPTWEnv:
         return False
 
     def try_controlled_closure(self) -> dict | None:
-        """Force-close episode when no service is possible and mask is empty."""
+        """Legacy entry: analyze acting EV then close from that analysis.
+
+        Prefer ``try_controlled_closure_from_analysis`` in rollout after a
+        canonical ``analyze_decision`` call.
+        """
+        ev = self.select_acting_ev()
+        if ev is None:
+            return None
+        analysis = self.analyze_decision(ev)
+        return self.try_controlled_closure_from_analysis(ev, analysis)
+
+    def try_controlled_closure_from_analysis(self, active_ev, analysis) -> dict | None:
+        """Force-close when precomputed analysis proves no meaningful service remains.
+
+        Must not call get_global_serviceability / analyze_decision again.
+        """
+        from .analysis_counters import bump
+        from .action_space import FeasibleActionSummary, should_auto_close
+
+        bump("controlled_closure_calls")
         if self.done_reason is not None:
             return None
-        from .action_space import should_auto_close
-
-        # Use cached serviceability from the current state — never force=True
-        # in the training hot path (defeats caching and duplicates work).
-        gs = self.get_global_serviceability(force=False)
-        self.last_global_serviceability = gs
-        if not gs.no_service_possible:
+        gs = analysis.global_serviceability
+        if gs is None or not bool(getattr(gs, "no_service_possible", False)):
             return None
+
+        mask = analysis.final_node_mask
+        summary = FeasibleActionSummary(
+            has_customer=int(np.sum(mask[self.instance.customer_indices])) > 0,
+            has_useful_station=int(np.sum(mask[self.instance.charging_station_indices])) > 0,
+            has_useful_depot_recharge=bool(analysis.depot_mode_mask[0]),
+            has_depot_finish=bool(analysis.depot_mode_mask[1]),
+            has_any=bool(mask.any()),
+        )
+        # Active EV still has a meaningful action — do not terminal-close.
+        if mask.any() and not should_auto_close(summary, global_svc=gs):
+            return None
+
         active = [ev for ev in self.evs if not ev.finished]
         if not active:
             self.done_reason = "terminal_no_service_possible"
             return {"type": "terminal_closure", "reason": "no_service_possible"}
-        all_empty = True
-        for ev in active:
-            # Reuse analysis cache via analyze_decision — one per EV at this state.
-            analysis = self.analyze_decision(ev)
-            mask = analysis.final_node_mask
-            from .action_space import FeasibleActionSummary
-            summary = FeasibleActionSummary(
-                has_customer=int(np.sum(mask[self.instance.customer_indices])) > 0,
-                has_useful_station=int(np.sum(mask[self.instance.charging_station_indices])) > 0,
-                has_useful_depot_recharge=bool(analysis.depot_mode_mask[0]),
-                has_depot_finish=bool(analysis.depot_mode_mask[1]),
-                has_any=bool(mask.any()),
-            )
-            if mask.any() and not should_auto_close(summary, global_svc=gs):
-                all_empty = False
-                break
-        if not all_empty:
-            return None
+
         info = {"type": "terminal_closure", "reason": "no_service_possible", "closed_evs": []}
         for ev in active:
             close = self.auto_close_route(ev, forced=True, return_info=True, action_type="forced_close")
@@ -480,6 +492,51 @@ class EVRPTWEnv:
         self.infeasibility_reasons.append("terminal_no_service_possible")
         return info
 
+    def try_auto_close_from_analysis(self, ev, analysis) -> dict | None:
+        """Close the acting EV when analysis shows no meaningful policy action.
+
+        Reuses ``analysis`` only — does not recompute masks or serviceability.
+        """
+        from .action_space import FeasibleActionSummary, should_auto_close
+
+        mask = analysis.final_node_mask
+        gs = analysis.global_serviceability
+        summary = FeasibleActionSummary(
+            has_customer=int(np.sum(mask[self.instance.customer_indices])) > 0,
+            has_useful_station=int(np.sum(mask[self.instance.charging_station_indices])) > 0,
+            has_useful_depot_recharge=bool(analysis.depot_mode_mask[0]),
+            has_depot_finish=bool(analysis.depot_mode_mask[1]),
+            has_any=bool(mask.any()),
+        )
+        self.last_feasible_summary = summary
+        self.last_global_serviceability = gs
+        if mask.any() and not should_auto_close(summary, global_svc=gs):
+            return None
+        if not mask.any():
+            return self.auto_close_route(ev, forced=True, return_info=True)
+        # Mask bits exist but none are meaningful — finish if analysis allows.
+        if bool(analysis.depot_mode_mask[1]):
+            return self.auto_close_route(
+                ev, forced=True, return_info=True, action_type="forced_close",
+            )
+        ea = getattr(analysis, "active_ev_analysis", None)
+        if ea is not None and bool(getattr(ea, "feasible_depot_finish", False)):
+            return self.auto_close_route(
+                ev, forced=True, return_info=True, action_type="forced_close",
+            )
+        self.terminal_no_safe_return = True
+        self.infeasible = True
+        self.infeasibility_reasons.append(
+            f"ev_{ev.ev_id}_no_safe_return_no_meaningful_action"
+        )
+        return self.auto_close_route(
+            ev, forced=True, return_info=True, action_type="forced_infeasible_close",
+        )
+
+    def try_auto_close_route(self, ev: EVState) -> dict | None:
+        """Legacy entry: analyze then close from analysis (prefer analysis-aware API)."""
+        analysis = self.analyze_decision(ev)
+        return self.try_auto_close_from_analysis(ev, analysis)
     # ------------------------------------------------------------------ #
     # Reservation
     # ------------------------------------------------------------------ #
@@ -881,36 +938,6 @@ class EVRPTWEnv:
             "charging_time": 0.0,
             "charged_energy": 0.0,
         }
-
-    def try_auto_close_route(self, ev: EVState) -> dict | None:
-        """Close the route only when no meaningful policy action remains."""
-        mask, _, summary, global_svc = self.compute_full_feasible(ev)
-        if mask.any() and not should_auto_close(summary, global_svc=global_svc):
-            return None
-        if not mask.any():
-            return self.auto_close_route(ev, forced=True, return_info=True)
-        # Mask has actions but none are meaningful — unsafe to continue looping.
-        finish_val = compute_depot_finish_validity(
-            self.instance, ev, self.served_mask, self.reserved_mask,
-            self.num_served_customers,
-            global_svc=global_svc,
-            use_horizon_check=self.use_horizon_check,
-            use_depot_charging=self.use_depot_charging,
-            charging_portions=self.charging_portions,
-            forced=True,
-        )
-        if finish_val.valid:
-            return self.auto_close_route(
-                ev, forced=True, return_info=True, action_type="forced_close",
-            )
-        self.terminal_no_safe_return = True
-        self.infeasible = True
-        self.infeasibility_reasons.append(
-            f"ev_{ev.ev_id}_no_safe_return_no_meaningful_action"
-        )
-        return self.auto_close_route(
-            ev, forced=True, return_info=True, action_type="forced_infeasible_close",
-        )
 
     def get_episode_diagnostics(self) -> dict:
         """Full episode diagnostic bundle for training logs and dashboard."""

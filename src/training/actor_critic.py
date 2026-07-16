@@ -1,6 +1,7 @@
 """Centralized actor-critic: GAE, optional counterfactual Q, optional multi-sample rollout baseline, potential shaping."""
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -78,7 +79,7 @@ class RLConfig:
     assert_action_mask: bool = False
     use_dynamic_candidate_encoder: bool = True
     critic_loss_type: str = "huber"
-    critic_updates_per_actor_update: int = 2
+    critic_updates_per_actor_update: int = 1
     actor_grad_clip: float = 1.0
     critic_grad_clip: float = 1.0
     auxiliary_coef: float = 0.1
@@ -195,7 +196,7 @@ class RLConfig:
             critic_loss_type=str(rcfg.get("critic_loss", "huber")),
             critic_updates_per_actor_update=int(rcfg.get(
                 "critic_updates_per_actor_update",
-                ccfg.get("critic_updates_per_actor_update", 2),
+                ccfg.get("critic_updates_per_actor_update", 1),
             )),
             auxiliary_coef=float(ccfg.get("auxiliary_coef", rcfg.get("auxiliary_coef", 0.1))),
             actor_grad_clip=float(rcfg.get("actor_grad_clip", ocfg.get("actor_grad_clip", tcfg.get("grad_clip", 1.0)))),
@@ -365,42 +366,69 @@ def actor_critic_loss(
         for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")
     } if compute_aux else {k: [] for k in ("unserved_ratio", "serviceable_ratio", "objective_estimate", "feasibility_prob")}
 
-    critic_states: list = []
-    state_indices: list[int] = []
-    for i, dec in enumerate(decisions):
-        state = getattr(dec, "decision_state", None)
-        if state is None:
-            continue
-        st = state.detach_for_critic() if detach else state
-        critic_states.append(st)
-        state_indices.append(i)
+    # Actor-only: reuse stored value predictions — never re-forward the critic.
+    use_stored_values = False
+    if actor_only:
+        stored = []
+        for dec in decisions:
+            vp = getattr(dec, "value_prediction", None)
+            if vp is None:
+                stored = []
+                break
+            stored.append(vp.detach().to(device_t).reshape(()))
+        if stored and len(stored) == len(decisions):
+            values_list = stored
+            use_stored_values = True
 
-    if critic_states:
-        from src.utils.gpu_runtime import autocast_ctx
-        amp_on = bool(use_amp and device_t.type == "cuda")
-        with autocast_ctx(device_t, enabled=amp_on):
-            if hasattr(value_critic, "forward_from_states_batch"):
-                batch_values, batch_aux = value_critic.forward_from_states_batch(critic_states)
-            else:
-                batch_values_list = []
-                batch_aux_lists = {k: [] for k in aux_preds_stacked}
-                for st in critic_states:
-                    v, aux_out = value_critic.forward_from_state(st)
-                    batch_values_list.append(v.squeeze() if v.dim() > 0 else v)
-                    for k in batch_aux_lists:
-                        batch_aux_lists[k].append(aux_out[k].reshape(()))
-                batch_values = torch.stack(batch_values_list)
-                batch_aux = {k: torch.stack(v) for k, v in batch_aux_lists.items()}
+    if not use_stored_values:
+        critic_states: list = []
+        state_indices: list[int] = []
+        for i, dec in enumerate(decisions):
+            state = getattr(dec, "decision_state", None)
+            if state is None:
+                continue
+            st = state.detach_for_critic() if detach else state
+            critic_states.append(st)
+            state_indices.append(i)
 
-        for j in range(len(critic_states)):
-            pos = state_indices[j]
-            values_list[pos] = batch_values[j]
-            if compute_aux:
-                for k in aux_preds_stacked:
-                    aux_preds_stacked[k][pos] = batch_aux[k][j].reshape(())
+        if critic_states:
+            from src.utils.gpu_runtime import autocast_ctx
+            from src.env.analysis_counters import bump
+            if actor_only:
+                bump("critic_forward_calls_actor_phase")
+            amp_on = bool(use_amp and device_t.type == "cuda")
+            forward_ctx = torch.no_grad() if actor_only else contextlib.nullcontext()
+            with forward_ctx:
+                with autocast_ctx(device_t, enabled=amp_on):
+                    if hasattr(value_critic, "forward_from_states_batch"):
+                        batch_values, batch_aux = value_critic.forward_from_states_batch(critic_states)
+                    else:
+                        batch_values_list = []
+                        batch_aux_lists = {k: [] for k in aux_preds_stacked}
+                        for st in critic_states:
+                            v, aux_out = value_critic.forward_from_state(st)
+                            batch_values_list.append(v.squeeze() if v.dim() > 0 else v)
+                            for k in batch_aux_lists:
+                                batch_aux_lists[k].append(aux_out[k].reshape(()))
+                        batch_values = torch.stack(batch_values_list)
+                        batch_aux = {k: torch.stack(v) for k, v in batch_aux_lists.items()}
+
+            for j in range(len(critic_states)):
+                pos = state_indices[j]
+                val = batch_values[j].detach() if actor_only else batch_values[j]
+                values_list[pos] = val
+                if critic_only:
+                    decisions[pos].value_prediction = val.detach()
+                if compute_aux and not actor_only:
+                    for k in aux_preds_stacked:
+                        aux_preds_stacked[k][pos] = batch_aux[k][j].reshape(())
 
     policy_values = torch.stack(values_list) if values_list else torch.zeros(0, device=device_t)
     policy_values = policy_values.float()
+    if critic_only:
+        for i, dec in enumerate(decisions):
+            if getattr(dec, "value_prediction", None) is None and i < len(values_list):
+                dec.value_prediction = values_list[i].detach()
 
     rewards_list = trajectory.smdp_reward_sequence()
     rewards = torch.tensor(rewards_list, dtype=torch.float32, device=device)

@@ -319,6 +319,15 @@ def train(config: dict) -> dict:
     critic_updates = int(rl_cfg.critic_updates_per_actor_update)
     diag_cfg = config.get("diagnostics") or {}
     param_delta_every = int(diag_cfg.get("parameter_delta_every_updates", 20))
+    timing_enabled = bool(diag_cfg.get("timing_enabled", True))
+    from src.env.analysis_counters import (
+        expected_per_decision_ok,
+        reset_cycle_counters,
+        set_debug_warn,
+        snapshot_for_log,
+        get_cycle_counters,
+    )
+    set_debug_warn(bool((config.get("debug") or {}).get("analysis_counter_stack_warn", False)))
 
     for epoch in range(start_epoch, epoch_schedule):
         if sequential_schedule is not None:
@@ -335,6 +344,13 @@ def train(config: dict) -> dict:
             batch_idx = indices[:batch_size] if batch_size <= len(indices) else [
                 rng.choice(indices) for _ in range(batch_size)
             ]
+
+        # Reset duplicate-call counters at the start of each cycle's first update.
+        if updates_per_cycle and cycle_num is not None:
+            if epoch % int(updates_per_cycle) == 0:
+                reset_cycle_counters()
+        elif epoch == start_epoch:
+            reset_cycle_counters()
 
         record = actor_critic_train_step(
             policy, value_critic, q_critic, optimizer, critic_optimizer,
@@ -443,7 +459,6 @@ def train(config: dict) -> dict:
         if sequential_schedule and not single_mode and cycle_len > 0:
             if len(cycle_rows) >= cycle_len and len(cycle_rows) % cycle_len == 0:
                 summary = aggregate_cycle(cycle_rows[-cycle_len:], cycle_id=int(cycle_num or 0))
-                cycle_logger.log(summary)
                 c_obj = float(summary.get("mean_objective", float("inf")))
                 c_feas = float(summary.get("feasibility_rate", 0.0))
                 if c_obj < best_cycle_objective:
@@ -464,10 +479,43 @@ def train(config: dict) -> dict:
                         amp_scaler=amp_scaler, rng=rng,
                         training_meta={"cycle": cycle_num, "feasibility_rate": c_feas, "phase": phase},
                     )
+                dup = snapshot_for_log(get_cycle_counters())
+                dup_warn = expected_per_decision_ok(dup)
                 LOGGER.info(
                     "cycle %d summary | objective %.0f | served %.2f | feas %.2f",
                     cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
                 )
+                if timing_enabled:
+                    timing_keys = [
+                        "timing_decision_analysis_ms", "timing_controlled_closure_ms",
+                        "timing_policy_forward_ms", "timing_environment_step_ms",
+                        "timing_reward_diagnostics_ms", "timing_critic_update_ms",
+                        "timing_actor_update_ms", "timing_total_epoch_ms",
+                    ]
+                    vals = {k: [float(r.get(k, 0.0)) for r in cycle_rows[-cycle_len:]] for k in timing_keys}
+                    parts = []
+                    for k, xs in vals.items():
+                        if not xs:
+                            continue
+                        arr = sorted(xs)
+                        p95 = arr[int(0.95 * (len(arr) - 1))] if arr else 0.0
+                        parts.append(
+                            f"{k.replace('timing_', '')}: "
+                            f"mean={sum(xs)/len(xs):.1f} p95={p95:.1f} max={max(xs):.1f}"
+                        )
+                    LOGGER.info("cycle %d timing | %s", cycle_num, " | ".join(parts))
+                LOGGER.info(
+                    "cycle %d analysis_counters | %s",
+                    cycle_num,
+                    " ".join(f"{k}={v}" for k, v in dup.items()),
+                )
+                if dup_warn:
+                    LOGGER.warning(
+                        "cycle %d duplicate-call warnings: %s",
+                        cycle_num, ", ".join(dup_warn),
+                    )
+                summary["analysis_counters"] = dup
+                cycle_logger.log(summary)
 
     _save_checkpoint(
         policy, config, Path(out_cfg["checkpoints"]) / "last.pt",

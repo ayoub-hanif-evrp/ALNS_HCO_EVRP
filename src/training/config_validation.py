@@ -179,6 +179,7 @@ def apply_safe_training_defaults(config: dict) -> dict:
     cache.setdefault("cache_by_state_version", True)
     diag = config.setdefault("diagnostics", {})
     diag.setdefault("parameter_delta_every_updates", 20)
+    diag.setdefault("full_mask_reason_dump_every_updates", 20)
     diag.setdefault("timing_enabled", True)
     ckpt = config.setdefault("checkpointing", {})
     ckpt.setdefault("save_last_every_updates", 20)

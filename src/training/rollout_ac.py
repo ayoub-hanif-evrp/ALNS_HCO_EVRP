@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -119,6 +120,13 @@ def run_episode_trajectory(
     phi_holder = [phi_prev]
     original_step_infos: list = []
     pending_decision: DecisionTransition | None = None
+    timing_ms = {
+        "decision_analysis_ms": 0.0,
+        "controlled_closure_ms": 0.0,
+        "policy_forward_ms": 0.0,
+        "environment_step_ms": 0.0,
+        "reward_diagnostics_ms": 0.0,
+    }
 
     def _flush_decision() -> None:
         nonlocal pending_decision
@@ -176,33 +184,50 @@ def run_episode_trajectory(
         if ev is None:
             env.done_reason = "no_acting_ev"
             break
+
+        # Canonical order: one DecisionStateAnalysis per active decision first.
+        t_a0 = time.perf_counter()
+        analysis = env.analyze_decision(ev)
+        analysis.assert_fresh(env, ev)
+        timing_ms["decision_analysis_ms"] += (time.perf_counter() - t_a0) * 1000.0
+
         before_term = snapshot_env(env)
-        closure_info = env.try_controlled_closure()
+        t_c0 = time.perf_counter()
+        closure_info = env.try_controlled_closure_from_analysis(ev, analysis)
+        timing_ms["controlled_closure_ms"] += (time.perf_counter() - t_c0) * 1000.0
         if closure_info is not None:
             _append_env_transition(before_term, closure_info)
             continue
+
         before_close = snapshot_env(env)
-        close_info = env.try_auto_close_route(ev)
+        t_c1 = time.perf_counter()
+        close_info = env.try_auto_close_from_analysis(ev, analysis)
+        timing_ms["controlled_closure_ms"] += (time.perf_counter() - t_c1) * 1000.0
         if close_info is not None:
             _append_env_transition(before_close, close_info)
             continue
 
         before = snapshot_env(env)
         pre_context = env.snapshot_decision_context(ev)
-        analysis = env.analyze_decision(ev)
-        analysis.assert_fresh(env, ev)
         mask_result = analysis.mask_result
         feasible_mask = analysis.final_node_mask
         mask_reasons = analysis.node_reasons
+        t_r0 = time.perf_counter()
         mask_counts, _, _ = aggregate_mask_reasons(
             instance, env, ev,
             use_horizon_check=use_horizon_check,
             use_depot_charging=use_depot_charging,
+            analysis=analysis,
         )
-        # aggregate_mask_reasons reuses the cached analysis for this state.
-        pre_expired = int(getattr(env, "last_expired_count", 0))
+        timing_ms["reward_diagnostics_ms"] += (time.perf_counter() - t_r0) * 1000.0
+        pre_expired = int(
+            getattr(analysis.global_serviceability, "globally_expired_customers_count", 0)
+            if analysis.global_serviceability is not None
+            else getattr(env, "last_expired_count", 0)
+        )
 
         from src.utils.gpu_runtime import autocast_ctx
+        t_p0 = time.perf_counter()
         with autocast_ctx(device, enabled=amp_on):
             decision_state = policy.build_decision_state(
                 env, ev, node_embeddings, mask_result, analysis=analysis,
@@ -213,6 +238,7 @@ def run_episode_trajectory(
             action = policy.select_action_from_state(
                 env, ev, node_embeddings, mask_result, decision_state, mode=mode,
             )
+        timing_ms["policy_forward_ms"] += (time.perf_counter() - t_p0) * 1000.0
         need_slack_stats = (
             train_calc is not None
             and (
@@ -228,14 +254,16 @@ def run_episode_trajectory(
         inst = env.instance
         pre_st_necessary = True
         pre_st_diag: dict[str, float] = {}
-        # Skip expensive station-usefulness simulation unless the penalty is enabled
-        # and a station was actually selected.
         if (
             train_calc is not None
             and train_calc.cfg.use_unnecessary_station_penalty
             and inst.nodes[action.node].is_charging_station
         ):
-            pre_st_necessary, pre_st_diag = selected_station_is_necessary(env, ev, action.node)
+            t_r1 = time.perf_counter()
+            pre_st_necessary, pre_st_diag = selected_station_is_necessary(
+                env, ev, action.node, analysis=analysis,
+            )
+            timing_ms["reward_diagnostics_ms"] += (time.perf_counter() - t_r1) * 1000.0
 
         pre_action_features = env.compute_action_features(
             ev, action.node, action.charge_portion, depot_finish=action.depot_finish,
@@ -265,13 +293,12 @@ def run_episode_trajectory(
                 })
                 raise
 
+        t_e0 = time.perf_counter()
         info = apply_policy_action(env, ev, action, mask_result=mask_result)
-        # Invalidation happens inside apply_action / bump_state_version.
-        # Refresh serviceability from the NEW state only when needed (cache miss).
-        expired_after = int(getattr(env, "last_expired_count", 0))
-        if getattr(env, "_global_serviceability_cache", None) is None:
-            env.get_global_serviceability(force=False)
-            expired_after = int(getattr(env, "last_expired_count", 0))
+        timing_ms["environment_step_ms"] += (time.perf_counter() - t_e0) * 1000.0
+        # Do not recompute global serviceability after the action — next loop
+        # iteration will analyze the new state_version once.
+        expired_after = pre_expired
         node_type = str(info.get("type", "unknown"))
         served = bool(info.get("customer_served", False))
 
@@ -421,6 +448,8 @@ def run_episode_trajectory(
                 training_stats["depot_mode_entropy"] = depot_mode_entropy_sum / n_depot_modes
                 training_stats["depot_mode_finish_prob"] = depot_mode_finish_prob_sum / n_depot_modes
                 training_stats["depot_mode_recharge_prob"] = depot_mode_recharge_prob_sum / n_depot_modes
+        training_stats.update(timing_ms)
+        training_stats["num_policy_decisions"] = float(num_decisions)
         trajectory.training_stats = training_stats
         original_infos = [s for s in step_infos if s is not None and not getattr(s, "terminal", False)]
         raw_terminal = StepRewardCalculator(weights, reward_scale=rl_cfg.reward_scale).terminal_adjustment(

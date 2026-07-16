@@ -44,11 +44,12 @@ def run_heuristic_episode(env: EVRPTWEnv, policy) -> EVRPTWEnv:
         ev = env.select_acting_ev()
         if ev is None:
             break
-        if env.try_controlled_closure() is not None:
+        analysis = env.analyze_decision(ev)
+        if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
             continue
-        if env.try_auto_close_route(ev) is not None:
+        if env.try_auto_close_from_analysis(ev, analysis) is not None:
             continue
-        mask_result = env.analyze_decision(ev).mask_result
+        mask_result = analysis.mask_result
         action = policy.select(env, ev, mask_result)
         apply_policy_action(env, ev, action, mask_result=mask_result)
     for ev in env.evs:
