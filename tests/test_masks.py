@@ -24,7 +24,7 @@ def test_served_and_reserved_are_masked(small_instance):
     ev2 = env.evs[1]
     mask2, reasons2 = env.feasible_mask(ev2)
     assert not mask2[j]
-    assert reasons2[j] == "customer_reserved"
+    assert reasons2[j] in {"customer_reserved", "hard_customer_reserved"}
 
 
 def test_energy_cannot_reach_is_masked(small_instance):
@@ -37,11 +37,17 @@ def test_energy_cannot_reach_is_masked(small_instance):
         assert not mask[j]
         assert reasons[j] in {
             "customer_battery_unreachable",
+            "hard_customer_battery_unreachable",
             "customer_no_safe_direct_depot",
+            "hard_customer_no_safe_direct_depot",
             "customer_no_reachable_station",
+            "hard_customer_no_reachable_station",
             "customer_station_has_no_feasible_charge",
+            "hard_customer_station_has_no_feasible_charge",
             "customer_no_safe_continuation",
+            "hard_customer_no_safe_continuation",
             "customer_infeasible_after_service_battery",
+            "hard_customer_infeasible_after_service_battery",
         }
 
 
@@ -137,7 +143,14 @@ def test_station_self_loop_masked(small_instance):
     ev.current_node = s
     mask, reasons = env.feasible_mask(ev)
     assert not mask[s]
-    assert reasons[s] in {"station_loop_blocked", "station_no_useful_continuation", "station_no_progress"}
+    assert reasons[s] in {
+        "station_loop_blocked",
+        "hard_station_loop_blocked",
+        "station_no_useful_continuation",
+        "hard_station_no_useful_continuation",
+        "station_no_progress",
+        "hard_station_no_progress",
+    }
 
 
 def test_depot_return_window_blocks_customer(small_instance):
@@ -169,7 +182,12 @@ def test_depot_blocked_at_start_when_customers_feasible(small_instance):
     mask, reasons = env.feasible_mask(ev)
     # At route start on depot, recharge is a self-loop and finish is not allowed yet.
     assert not mask[inst.depot_index]
-    assert reasons[inst.depot_index] in {"depot_self_loop", "depot_finish_at_start"}
+    assert reasons[inst.depot_index] in {
+        "depot_self_loop",
+        "hard_depot_self_loop",
+        "depot_finish_at_start",
+        "hard_depot_finish_at_start",
+    }
 
 
 def test_all_served_stations_allowed_for_depot_return(small_instance):

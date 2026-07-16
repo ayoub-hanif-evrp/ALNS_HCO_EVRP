@@ -60,6 +60,9 @@ def test_depot_recharge_not_silently_finished():
 
 
 def test_nearest_baseline_returns_policy_action():
+    from src.env.action_masks import ActionMaskResult
+    from src.env.action_space import GlobalServiceability
+
     policy = NearestFeasiblePolicy()
     env = MagicMock()
     env.instance = MagicMock()
@@ -71,8 +74,23 @@ def test_nearest_baseline_returns_policy_action():
     env.instance.depot_has_charging = True
     ev = EVState(ev_id=0, current_node=0, current_time=0.0, remaining_battery=50.0, remaining_capacity=100.0)
     mask = np.array([False, True, False])
+    mask_result = ActionMaskResult(
+        state_version=0,
+        node_mask=mask,
+        node_reasons={},
+        charge_masks={},
+        charge_reasons={},
+        depot_mode_mask=np.array([False, False]),
+        depot_mode_reasons=["", ""],
+        feasible_customer_count=1,
+        feasible_station_count=0,
+        feasible_depot_recharge=False,
+        feasible_depot_finish=False,
+        global_serviceability=GlobalServiceability(),
+        mask_reason_counts={},
+    )
 
-    action = policy.select(env, ev, mask)
+    action = policy.select(env, ev, mask_result)
     assert isinstance(action, PolicyAction)
     assert action.node == 1
     assert action.depot_finish is False
@@ -121,10 +139,12 @@ def test_charge_portion_picks_unlocking_portion():
 
     with patch("src.env.charge_masks.feasible_charge_portions") as fcp, \
          patch("src.env.action_space._feasible_customer_indices") as fci, \
+         patch("src.env.action_space._count_newly_enabled_customers") as cne, \
          patch("src.env.charge_masks.simulate_recharge_departure") as sim, \
          patch("src.env.charge_masks.safe_depot_return_from") as sdr:
         fcp.return_value = (np.array([True, False, True, False]), [])
-        fci.side_effect = [[], [1], [1, 2]]
+        fci.return_value = []
+        cne.side_effect = [1, 2]
         sim.side_effect = [(1.0, 20.0, 1.0, 0.0), (5.0, 80.0, 5.0, 0.0)]
         sdr.return_value = (True, "ok")
         analysis = evaluate_charge_portions_for_node(

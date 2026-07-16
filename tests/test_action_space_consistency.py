@@ -47,11 +47,13 @@ def test_charge_portion_picks_highest_enabled_customers():
 
     with patch("src.env.charge_masks.feasible_charge_portions") as fcp, \
          patch("src.env.action_space._feasible_customer_indices") as fci, \
+         patch("src.env.action_space._count_newly_enabled_customers") as cne, \
          patch("src.env.charge_masks.simulate_recharge_departure") as sim, \
          patch("src.env.charge_masks.safe_depot_return_from") as sdr:
         fcp.return_value = (np.array([True, False, True, False]), [])
-        # feasible_now=[]; after 25% -> [1] (+1); after 75% -> [1,2] (+2)
-        fci.side_effect = [[], [1], [1, 2]]
+        # feasible_now=[]; after 25% -> +1; after 75% -> +2
+        fci.return_value = []
+        cne.side_effect = [1, 2]
         sim.side_effect = [
             (1.0, 20.0, 1.0, 0.0),
             (5.0, 80.0, 5.0, 0.0),
@@ -94,7 +96,7 @@ def test_apply_policy_action_attaches_pre_context(small_instance):
     cust = next((j for j in small_instance.customer_indices if mask[j]), None)
     if cust is None:
         pytest.skip("no feasible customer")
-    info = apply_policy_action(env, ev, PolicyAction(node=cust))
+    info = apply_policy_action(env, ev, PolicyAction(node=cust), collect_diagnostics=True)
     assert "pre_global_serviceability" in info
     assert "post_global_serviceability" in info
 
@@ -118,12 +120,16 @@ def test_depot_finish_blocked_when_useful_station_exists(small_instance):
 
 def test_controlled_closure_recomputes_serviceability(small_instance):
     from src.env.evrptw_env import EVRPTWEnv
+    from src.env.action_space import GlobalServiceability
 
     env = EVRPTWEnv(small_instance, m=2)
     env.last_global_serviceability = None
-    with patch("src.env.action_space.compute_global_serviceability") as cgs:
-        from src.env.action_space import GlobalServiceability
-        cgs.return_value = GlobalServiceability(no_service_possible=False)
+    env._global_serviceability_cache = None
+    env.last_decision_analysis = None
+    with patch(
+        "src.env.serviceability.compute_global_serviceability_recharge_aware",
+        return_value=GlobalServiceability(no_service_possible=False),
+    ) as cgs:
         env.try_controlled_closure()
         assert cgs.called
 

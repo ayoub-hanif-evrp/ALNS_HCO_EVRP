@@ -1,19 +1,12 @@
-"""Entry point for the exact-mask semi-MDP training pipeline.
+"""Entry point for exact-mask semi-MDP training.
 
-Three training phases (choose via config):
+Quick test:
 
-  Phase 1 — Single RC:
-    python main_train.py --config configs/train_phase1_single_RC21.yaml --device cuda
+    python main_train.py --phase0-only
 
-  Phase 2 — Full RC:
-    python main_train.py --config configs/train_phase2_full_RC21.yaml --device cuda
+Full training:
 
-  Phase 3 — All classes:
-    python main_train.py --config configs/train_phase3_all_classes.yaml --device cuda
-
-Sanity only (not a training phase):
-
-    python main_train.py --config configs/train_phase1_single_RC21.yaml --phase0-only
+    python main_train.py --config configs/train.yaml --device cuda
 """
 from __future__ import annotations
 
@@ -23,7 +16,6 @@ import sys
 
 from src.utils.config import load_config
 
-# Pytest cases that do not load the pandas/pyarrow instance fixture (Windows-safe).
 _QUICK_TEST_TARGETS = [
     "tests/test_scientific_semantics.py::test_critic_remaining_cost_targets",
     "tests/test_scientific_semantics.py::test_normalizer_checkpoint_roundtrip",
@@ -32,25 +24,25 @@ _QUICK_TEST_TARGETS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Exact-mask semi-MDP training (Phase 1 / 2 / 3 via config).",
+        description="Exact-mask semi-MDP training (C/R/RC interleaving via configs/train.yaml).",
     )
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/train_phase1_single_RC21.yaml",
-        help="Path to YAML config (default: Phase 1).",
+        default="configs/train.yaml",
+        help="Path to YAML config (default: configs/train.yaml).",
     )
     parser.add_argument(
         "--cycles",
         type=int,
         default=None,
-        help="Optional override for training.cycles (Phase 2/3).",
+        help="Optional override for training.cycles.",
     )
     parser.add_argument(
         "--updates",
         type=int,
         default=None,
-        help="Optional override for training.updates (Phase 1).",
+        help="Optional override for training.updates (single-instance debug configs).",
     )
     parser.add_argument("--epochs", type=int, default=None, help="Override number of epochs.")
     parser.add_argument("--device", type=str, default=None, help="Override device (cpu/cuda/auto).")
@@ -64,27 +56,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--phase0-only",
         action="store_true",
-        help="Run only Phase 0 environment/mask sanity checks and exit.",
+        help="Run only environment/mask sanity checks and exit.",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Continue even if Phase 0 or quick tests fail.",
+        help="Continue even if optional gates fail.",
     )
     parser.add_argument(
         "--skip-phase0",
         action="store_true",
-        help="Skip Phase 0 sanity checks before training.",
+        help="Skip sanity checks when using --run-gates.",
     )
     parser.add_argument(
         "--skip-tests",
         action="store_true",
-        help="Skip fast deterministic unit tests before training.",
+        help="Skip quick unit tests when using --run-gates.",
     )
     parser.add_argument(
         "--run-gates",
         action="store_true",
-        help="Also run Phase 0 + quick tests before this training phase (optional).",
+        help="Also run sanity checks + quick tests before training (optional).",
     )
     return parser.parse_args()
 
@@ -122,21 +114,20 @@ def main() -> None:
         ok = _run_phase0(config)
         raise SystemExit(0 if ok else 1)
 
-    # Default: training commands do not re-run gates (see COMMANDS.md §0).
     run_gates = bool(args.run_gates) and not args.skip_phase0
     if run_gates:
         print("=" * 60)
-        print("Optional gates — Phase 0 sanity checks")
+        print("Optional gates — environment/mask sanity checks")
         print("=" * 60)
         if not _run_phase0(config):
             if not args.force:
-                print("Phase 0 failed. Fix issues or pass --force to continue.")
+                print("Sanity checks failed. Fix issues or pass --force to continue.")
                 raise SystemExit(1)
-            print("WARNING: Phase 0 failed but --force set; continuing.")
+            print("WARNING: sanity checks failed but --force set; continuing.")
 
     if run_gates and not args.skip_tests:
         print("=" * 60)
-        print("Optional gates — quick deterministic unit tests")
+        print("Optional gates — quick unit tests")
         print("=" * 60)
         if not _run_quick_tests():
             if not args.force:
@@ -154,13 +145,10 @@ def main() -> None:
     if args.resume is not None:
         tcfg["resume_from"] = args.resume
 
-    from src.data.training_phases import normalize_training_phase
     from src.training.train_rl import train
 
-    phase = normalize_training_phase(config)
     print("=" * 60)
-    print(f"Training — phase: {phase}")
-    print(f"Config: {args.config}")
+    print(f"Full training | config: {args.config}")
     print("=" * 60)
     train(config)
 

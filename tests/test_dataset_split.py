@@ -88,6 +88,11 @@ def test_validate_safe_config():
             "train_instances": SCHNEIDER_RC21_TRAIN,
             "eval_instances": SCHNEIDER_RC21_EVAL,
             "expected_train_count": 13,
+            "training_phase": "full_rc",
+        },
+        "environment": {
+            "mask_semantics": "exact_original_evrptw",
+            "action_pruning": {"enabled": True},
         },
         "training": {"cycles": 50},
         "rl": {"use_counterfactual_critic": False, "use_pomo": False},
@@ -98,7 +103,15 @@ def test_validate_safe_config():
 
 def test_validate_rejects_all_advanced_modules():
     cfg = {
-        "dataset": {"train_instances": SCHNEIDER_RC21_TRAIN, "eval_instances": SCHNEIDER_RC21_EVAL},
+        "dataset": {
+            "train_instances": SCHNEIDER_RC21_TRAIN,
+            "eval_instances": SCHNEIDER_RC21_EVAL,
+            "training_phase": "full_rc",
+        },
+        "environment": {
+            "mask_semantics": "exact_original_evrptw",
+            "action_pruning": {"enabled": True},
+        },
         "rl": {"use_counterfactual_critic": True, "use_pomo": True},
         "model": {"use_edge_aware_encoder": True},
         "debug": {},

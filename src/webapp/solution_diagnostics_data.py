@@ -103,5 +103,5 @@ def build_solution_behavior_section(
         "trace_files": trace_files,
         "any_figure": live_any or any_static,
         "static_index_url": f"{FIGURES_MOUNT}/index.html" if static_index.is_file() else None,
-        "figures_pending": live_enabled and not live_any and not live.get("generating"),
+        "figures_pending": live_enabled and not live_any and not any_static and not live.get("generating"),
     }

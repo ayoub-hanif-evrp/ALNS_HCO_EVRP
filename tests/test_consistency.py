@@ -15,7 +15,7 @@ from src.models.policy import TransformerEVRPTWPolicy
 from src.training.actor_critic import RLConfig, actor_critic_loss
 from src.training.rollout_ac import run_episode_trajectory
 from src.training.rollout_transitions import record_transition_reward
-from src.training.trajectory import EpisodeTransition, Trajectory
+from src.training.trajectory import DecisionEpochTransition, EpisodeTransition, Trajectory
 
 
 def test_auto_close_included_in_objective_reconstruction(small_instance):
@@ -154,8 +154,13 @@ def test_depot_mode_head_learnable(model_cfg):
     policy = TransformerEVRPTWPolicy(model_cfg)
     for p in policy.pointer.depot_mode_head.parameters():
         assert p.requires_grad
-    ctx = torch.randn(policy.embedding_dim, requires_grad=True)
-    logits = policy.pointer.depot_mode_logits(ctx)
+    d = policy.embedding_dim
+    ctx = torch.randn(d, requires_grad=True)
+    depot_emb = torch.randn(d)
+    global_ctx = torch.randn(d)
+    mask_ctx = torch.randn(d)
+    logits = policy.pointer.depot_mode_logits(ctx, depot_emb, global_ctx, mask_ctx)
+    assert logits.shape[-1] == 2
     lp = torch.log_softmax(logits, dim=-1)[0]
     assert lp.requires_grad
     lp.backward()
@@ -167,23 +172,18 @@ def test_autoclose_gae_includes_env_transition(model_cfg, small_instance):
     traj = Trajectory()
     ctx = torch.randn(8)
     log_p = torch.tensor(-0.5, requires_grad=True)
-    traj.transitions.append(
-        EpisodeTransition(
-            is_policy_action=True,
+    # SMDP decision epoch aggregates the environment autoclose reward into shaped_reward.
+    traj.decision_transitions.append(
+        DecisionEpochTransition(
             decoder_context=ctx,
-            log_prob=log_p,
+            total_log_prob=log_p,
             entropy=torch.tensor(0.1),
-            shaped_reward=0.0,
-            feasible_mask=np.ones(5, dtype=bool),
-            node=1,
-            ev_id=0,
-        )
-    )
-    traj.transitions.append(
-        EpisodeTransition(
-            is_policy_action=False,
             shaped_reward=-5.0,
             raw_reward=-5.0,
+            feasible_mask=np.ones(5, dtype=bool),
+            action_node=1,
+            ev_id=0,
+            environment_events=[{"type": "auto_close", "shaped_reward": -5.0}],
         )
     )
     traj.terminal_info = None
@@ -192,9 +192,13 @@ def test_autoclose_gae_includes_env_transition(model_cfg, small_instance):
         def forward(self, x):
             return torch.zeros(x.shape[0])
 
-    out = actor_critic_loss(traj, DummyCritic(), None, RLConfig(use_gae=True, gamma=0.99, gae_lambda=0.95), device=device)
+    out = actor_critic_loss(
+        traj, DummyCritic(), None,
+        RLConfig(use_gae=True, gamma=0.99, gae_lambda=0.95, normalize_advantages=False),
+        device=device,
+    )
     assert out.advantages.numel() == 1
-    assert float(out.advantages[0]) != 0.0
+    assert float(out.advantages.reshape(-1)[0]) != 0.0
 
 
 def test_pre_action_slack_before_mutation(small_instance):

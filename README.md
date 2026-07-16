@@ -2,7 +2,7 @@
 
 Research-grade reinforcement learning solver for the **Electric Vehicle Routing Problem with Time Windows and Recharging Stations (E-VRPTW)**.
 
-The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses **centralized actor-critic** (step rewards, GAE) on Schneider **RC _21** instances with flat cyclic scheduling.
+The policy uses a **Transformer encoder–decoder** with **asynchronous multi-agent** decision-making, **hard feasibility masks**, reservation masks, partial charging, and **fleet-size search**. Training uses **centralized actor-critic** (step rewards, GAE) on Schneider **100-customer** C / R / RC instances with deterministic C→R→RC interleaving.
 
 ## Features
 
@@ -10,10 +10,9 @@ The policy uses a **Transformer encoder–decoder** with **asynchronous multi-ag
 - Event-driven multi-EV decoding (acting EV = smallest `current_time`)
 - Hard masks for battery, capacity, time windows, anti-stranding, and reservations
 - Weighted cost function **J(π)** with fleet, distance, duration, charging time, **Hanif charging price**, waiting, and feasibility penalties
-- Flat cyclic training on 13 Schneider RC `_21` train instances (3 held out for eval)
-- Phase 0 sanity checks (optional via `--phase0-only`)
-- Live NiceGUI + Plotly training dashboard with grouped metric sections
-- Per-class validation and multi-checkpoint saving (`best_C.pt`, `best_R.pt`, …)
+- Full training on 100-customer C+R+RC with fixed interleaved order and reserved holdouts
+- Live NiceGUI + Plotly training dashboard
+- Per-class evaluation and macro-average reporting
 
 ## Repository layout
 
@@ -31,14 +30,14 @@ Transformer_MARL_EVRP/
 │   ├── data/                 # Loaders, Hanif parser/converter, dataset splits
 │   ├── env/                  # EVRPTW environment, masks, cost function
 │   ├── models/               # Transformer policy
-│   ├── training/             # Actor-critic, flat schedule, validation, Phase 0
+│   ├── training/             # Actor-critic, schedules, validation
 │   ├── evaluation/           # Fleet search, baselines, metrics
 │   └── webapp/               # Live dashboard
 ├── tests/
 ├── main_train.py
 ├── main_evaluate.py
 ├── main_dashboard.py
-├── COMMANDS.md               # Full command reference
+├── COMMANDS.md               # Command reference (quick test / train / dashboard)
 └── outputs/                  # Logs, checkpoints, figures (generated)
 ```
 
@@ -68,56 +67,30 @@ pip install torch --index-url https://download.pytorch.org/whl/cu124
 
 Pick the correct wheel at [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/).
 
-When training starts you should see:
-
-```text
-Curriculum training on device: cuda — NVIDIA GeForce RTX … (… GB)
-```
-
-With GPU, Hanif steps are typically **several× faster** than CPU (~45–90 s/step on CPU).
+When training starts you should see a CUDA device line in the log.
 
 Set `deterministic: true` in the config for fully reproducible runs (slightly slower on GPU).
 
-## Quick start (Hanif benchmark — recommended)
+## Quick start
 
-Run from the **project root**.
-
-### 1. Convert dataset (one time, ~1 GB local cache)
-
-The converted NPZ folders are **not** stored in git. Regenerate them:
+Run from the **project root**. See **[COMMANDS.md](COMMANDS.md)** for the three commands:
 
 ```powershell
-python scripts/convert_hanif_dataset.py
-```
+python -m compileall src
+pytest -q
+python main_train.py --phase0-only
 
-This writes `dataset/converted_hanif_data/` (60 instances, 1000 customers each, per-station charging rates and prices).
+python main_train.py --config configs/train.yaml --device cuda
 
-### 2. Run tests
-
-```powershell
-python -m pytest tests/ -v
-```
-
-### 3. Train (Schneider RC _21)
-
-```powershell
-python main_train.py
-```
-
-Trains on **13 RC _21** instances in cyclic order (configurable `cycles` in `configs/train.yaml`). Use `--overfit` for a single-instance sanity check.
-
-**Terminal 2** — live dashboard:
-
-```powershell
 python main_dashboard.py
 ```
 
-Open **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, training cycles, model size, etc.
+Dashboard: **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, cycles, model size, etc.
 
-### 4. Evaluate
+### Evaluate
 
 ```powershell
-python main_evaluate.py --checkpoint outputs/checkpoints/last.pt
+python main_evaluate.py --checkpoint outputs/checkpoints/last.pt --macro-average
 ```
 
 See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which params to tune.
@@ -126,8 +99,8 @@ See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which pa
 
 | Config | Purpose |
 |--------|---------|
-| `configs/train.yaml` | **Primary** — Schneider RC _21 flat actor-critic |
-| `configs/train_schneider_RC21_safe.yaml` | Explicit copy of safe baseline config |
+| `configs/train.yaml` | **Primary** — 100-customer C/R/RC interleaved training |
+| `configs/train_schneider_RC21_safe.yaml` | Explicit copy of safe RC-only baseline |
 | `configs/default.yaml` | Flat actor-critic (legacy small tests) |
 
 ### Training algorithm
@@ -186,9 +159,9 @@ Use the **Sections** jump bar to scroll to each block.
 - Multi-sample rollout baseline uses K=4 sampled rollouts by default (`rl.multi_sample_K`); increase only if VRAM allows.
 - `deterministic: false` (default) enables cuDNN autotune for faster GPU training.
 
-## Phase 0 checks
+## Sanity checks
 
-Before training, optional Phase 0 checks validate loaders, matrices, masks, battery/capacity/TW logic, and depot return:
+Optional environment/mask checks before training:
 
 ```powershell
 python main_train.py --phase0-only

@@ -3,7 +3,7 @@
 Phases:
   single_rc   — Phase 1: one RC _21 instance, update-based debugging
   full_rc     — Phase 2: all RC _21 training instances (holdout reserved)
-  all_classes — Phase 3: balanced C + R + RC joint training
+  all_classes — Phase 3: 100-customer C+R+RC with deterministic C→R→RC interleaving
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from src.data.instance_class import instance_class
 from src.data.instance_loader import list_instance_dirs
+from src.data.interleaved_schedule import build_interleaved_class_schedule
 from src.data.mixed_class_split import (
     BalancedClassSampler,
     resolve_mixed_c_r_rc_split,
@@ -167,14 +168,21 @@ def log_training_phase_startup(meta: dict, *, updates: int | None = None, cycles
     if phase == "all_classes" and "mixed" in meta:
         counts = meta["mixed"]["meta"]["train_counts"]
         LOGGER.info(
-            "  Balanced class sampling P(C)=P(R)=P(RC)=1/3 | train C=%d R=%d RC=%d",
+            "  Deterministic interleave C→R→RC | train C=%d R=%d RC=%d | holdout reserved",
             counts["C"], counts["R"], counts["RC"],
         )
     if updates is not None and int(updates) > 0:
         LOGGER.info("  Planned updates: %d", int(updates))
     if cycles is not None and int(cycles) > 0:
-        n = int(meta.get("num_train") or 0)
-        LOGGER.info("  Planned cycles: %d (= %d updates if sequential)", int(cycles), int(cycles) * max(n, 1))
+        inter = meta.get("interleave") or {}
+        if inter:
+            LOGGER.info(
+                "  Planned cycles: %d × %d interleaved updates/cycle = %d updates (no shuffle)",
+                int(cycles), int(inter.get("updates_per_cycle", 0)), int(inter.get("total_updates", 0)),
+            )
+        else:
+            n = int(meta.get("num_train") or 0)
+            LOGGER.info("  Planned cycles: %d (= %d updates if sequential)", int(cycles), int(cycles) * max(n, 1))
     LOGGER.info("=" * 60)
 
 
@@ -204,6 +212,7 @@ __all__ = [
     "TRAINING_PHASES",
     "BalancedClassSampler",
     "build_balanced_schedule",
+    "build_interleaved_class_schedule",
     "log_training_phase_startup",
     "log_rc21_split_startup",
     "normalize_training_phase",

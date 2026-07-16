@@ -32,7 +32,7 @@ def test_served_customer_cannot_be_selected_again(small_instance):
     env.apply_action(env.evs[0], j)
     mask, reasons = env.feasible_mask(env.evs[1])
     assert not mask[j]
-    assert reasons[j] == "already_served"
+    assert reasons[j] in {"already_served", "hard_customer_already_served", "customer_already_served"}
 
 
 def test_station_reusable_and_charging_math(small_instance):

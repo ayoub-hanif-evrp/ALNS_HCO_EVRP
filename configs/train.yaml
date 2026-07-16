@@ -1,5 +1,7 @@
-# Schneider RC _21 exact-mask semi-MDP training baseline.
-#   python main_train.py
+# Full training — 100-customer C + R + RC with deterministic interleaving.
+#   Order each cycle: C1 -> R1 -> RC1 -> C2 -> R2 -> RC2 -> ... (filename-sorted, no shuffle).
+#   Smaller class lists wrap so C/R/RC contribute equally; repeat for 20 cycles.
+#   python main_train.py --config configs/train.yaml --device cuda
 
 seed: 42
 device: cuda
@@ -39,17 +41,34 @@ gpu:
 
 dataset:
   path: dataset/Schneider/evrptw_instances
-  class_filter: ["RC"]
+  training_phase: all_classes
+  classes:
+    - C
+    - R
+    - RC
+  # Schneider full-size 100-customer instances
+  instance_suffix: "_21"
+  customers: 100
+  sampling: interleaved_deterministic
+  class_order: ["C", "R", "RC"]
+  shuffle_instances: false
+  class_filter: ["C", "R", "RC"]
   train_size_filter: ["_21"]
   eval_size_filter: ["_21"]
-  auto_discover_rc21: true
-  expected_train_count: 13
-  expected_eval_count: 3
-  fail_if_train_count_mismatch: true
-  eval_instances:
-    - rc101_21
-    - rc104_21
-    - rc208_21
+  auto_discover_rc21: false
+  holdout_by_class:
+    C:
+      - c101_21
+      - c104_21
+      - c208_21
+    R:
+      - r101_21
+      - r104_21
+      - r211_21
+    RC:
+      - rc101_21
+      - rc104_21
+      - rc208_21
 
 optimizer:
   actor_lr: 0.0001
@@ -65,7 +84,7 @@ training:
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  cycles: 100
+  cycles: 20
   shuffle_within_pass: false
   reward_scale: 10000.0
   log_every: 1
@@ -77,18 +96,9 @@ training:
   use_local_search_in_training: false
   critic_warmup_steps: 0
   debug_overfit_one_instance: false
-  overfit_instance_name: rc102_21
-  debug_overfit_updates: 50
-  fail_on_overfit_regression: true
   generate_static_dashboard: false
   live_checkpoint_every: 0
   maps_checkpoint_every: 0
-
-checkpointing:
-  save_last_every_updates: 20
-  save_cycle_checkpoint: true
-  save_best_cycle_objective: true
-  save_best_cycle_feasibility: true
 
 critic:
   detach_actor_embeddings: true
@@ -235,3 +245,12 @@ maps_dashboard:
   port: 8081
   cache_snapshots: true
   use_cached_if_present: true
+
+evaluation:
+  decoding: greedy
+  multi_sample_n: 16
+  local_search:
+    enabled: false
+    max_iterations: 50
+  save_routes: true
+  save_figures: true

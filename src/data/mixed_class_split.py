@@ -61,11 +61,11 @@ def resolve_mixed_c_r_rc_split(config: dict) -> dict:
         for name in holdout:
             if name not in all_cls:
                 raise ValueError(f"Holdout '{name}' not found among {cls} _21 instances")
-        train = [n for n in all_cls if n not in set(holdout)]
+        train = sorted(n for n in all_cls if n not in set(holdout))
         if not train:
             raise ValueError(f"No training instances left for class {cls}")
         train_by_class[cls] = train
-        holdout_by_class[cls] = holdout
+        holdout_by_class[cls] = sorted(holdout)
 
     train_names = sorted({n for lst in train_by_class.values() for n in lst})
     holdout_names = sorted({n for lst in holdout_by_class.values() for n in lst})

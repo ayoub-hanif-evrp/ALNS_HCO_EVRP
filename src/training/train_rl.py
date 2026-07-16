@@ -10,8 +10,8 @@ import torch
 
 from src.data.evrptw_dataset import split_dataset
 from src.data.instance_loader import load_capacity_from_config
+from src.data.interleaved_schedule import build_interleaved_class_schedule
 from src.data.training_phases import (
-    build_balanced_schedule,
     log_training_phase_startup,
     normalize_training_phase,
     resolve_training_phase_split,
@@ -236,8 +236,7 @@ def train(config: dict) -> dict:
     single_mode = _is_single_instance_phase(config)
     start_epoch = 0
 
-    # Build the instance schedule before optional resume restore so Phase 3
-    # balanced draws stay deterministic from the run seed.
+    # Build the instance schedule before optional resume restore.
     if single_mode:
         overfit_idx, epoch_schedule = _apply_single_instance_mode(config, train_ds)
         sequential_schedule = [overfit_idx] * epoch_schedule
@@ -246,22 +245,40 @@ def train(config: dict) -> dict:
         mixed = split_meta.get("mixed") or {}
         train_by_class = mixed.get("train_by_class")
         if not train_by_class:
-            raise ValueError("Phase 3 requires mixed train_by_class in split meta")
+            raise ValueError("all_classes training requires mixed train_by_class in split meta")
         name_to_idx = {n: i for i, n in enumerate(train_ds.names)}
-        upc = tcfg.get("updates_per_cycle")
-        sequential_schedule = build_balanced_schedule(
+        sequential_schedule, interleave_meta = build_interleaved_class_schedule(
             train_by_class,
             name_to_idx,
             cycles=max(cycles, 1),
-            updates_per_cycle=int(upc) if upc is not None else None,
-            rng=rng,
         )
         epoch_schedule = len(sequential_schedule)
-        updates_per_cycle = (epoch_schedule // max(cycles, 1)) if cycles > 0 else epoch_schedule
-        LOGGER.info(
-            "Phase 3 balanced schedule: %d cycles × %d updates/cycle = %d updates",
-            cycles, updates_per_cycle, epoch_schedule,
+        updates_per_cycle = int(interleave_meta["updates_per_cycle"])
+        split_meta["interleave"] = interleave_meta
+        holdout_meta["interleave"] = {
+            k: interleave_meta[k]
+            for k in (
+                "sampling", "class_order", "updates_per_cycle",
+                "steps_per_class_per_cycle", "class_train_sizes", "cycles", "total_updates",
+            )
+        }
+        holdout_meta["interleave"]["sorted_train_by_class"] = interleave_meta["sorted_train_by_class"]
+        (run_dir / "holdout_instances.json").write_text(
+            json.dumps(holdout_meta, indent=2), encoding="utf-8",
         )
+        LOGGER.info(
+            "Full training (interleaved C→R→RC): %d cycles × %d updates/cycle = %d updates | "
+            "per-class steps/cycle=%d (sizes C=%d R=%d RC=%d, no shuffle)",
+            cycles,
+            updates_per_cycle,
+            epoch_schedule,
+            interleave_meta["steps_per_class_per_cycle"],
+            interleave_meta["class_train_sizes"]["C"],
+            interleave_meta["class_train_sizes"]["R"],
+            interleave_meta["class_train_sizes"]["RC"],
+        )
+        preview = interleave_meta["one_cycle_names"][:9]
+        LOGGER.info("  First 9 steps of each cycle: %s", " → ".join(preview))
     else:
         epoch_schedule, sequential_schedule = _resolve_epochs_and_schedule(tcfg, len(train_ds), rng)
         updates_per_cycle = len(train_ds) if cycles > 0 else None

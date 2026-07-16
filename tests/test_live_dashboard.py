@@ -50,10 +50,12 @@ def test_flat_training_sections_and_charts():
     plan = training_plan_from_config(cfg)
     assert plan["training_mode"] == "flat"
     sections = get_training_chart_sections(df, plan)
-    assert sections[0]["id"] == "solution_quality"
-    assert any(s["id"] == "marl" for s in sections)
+    assert sections[0]["id"] == "sample_efficiency"
+    assert any(s["id"] == "solution_quality" for s in sections)
+    assert any(s["id"] == "rl_optimization" for s in sections)
     objective_spec = next(
-        c for s in sections for c in s["charts"] if c.get("title") == "Training objective over epochs"
+        c for s in sections for c in s["charts"]
+        if c.get("title") in {"Objective J over epochs", "Training objective over epochs"}
     )
     fig = build_chart_figure(df, plan, objective_spec)
     assert fig is not None
@@ -75,4 +77,10 @@ def test_reward_moving_average_line():
 def test_build_flat_sections_empty_df():
     plan = training_plan_from_config({"training": {"passes": 10}, "dataset": {"train_instances": ["r102_21"]}})
     sections = build_flat_training_sections(pd.DataFrame(), plan)
-    assert len(sections) == 6
+    assert len(sections) == 10
+    assert {s["id"] for s in sections} >= {
+        "sample_efficiency",
+        "solution_quality",
+        "rl_optimization",
+        "per_instance",
+    }

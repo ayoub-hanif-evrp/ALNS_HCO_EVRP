@@ -48,7 +48,7 @@ class PointerDecoder(nn.Module):
             nn.Linear(d, num_charging_portions),
         )
         self.depot_mode_head = nn.Sequential(
-            nn.Linear(3 * d, d),
+            nn.Linear(4 * d, d),
             nn.GELU(),
             nn.Linear(d, 2),
         )
