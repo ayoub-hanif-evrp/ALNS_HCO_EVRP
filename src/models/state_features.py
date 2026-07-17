@@ -137,6 +137,14 @@ def global_state_features(env, mask_result: ActionMaskResult | None = None) -> n
     fb = fleet_balance_features(env)
     fleet_route_balance = float(fb[0])
 
+    from src.data.instance_class import instance_class
+    cls = instance_class(str(getattr(inst, "instance_name", "") or ""))
+    class_one_hot = (
+        1.0 if cls == "C" else 0.0,
+        1.0 if cls == "R" else 0.0,
+        1.0 if cls == "RC" else 0.0,
+    )
+
     return np.clip(np.array([
         env.num_served_customers / n_cust,
         (n_cust - env.num_served_customers) / n_cust,
@@ -155,9 +163,9 @@ def global_state_features(env, mask_result: ActionMaskResult | None = None) -> n
         mean_slack,
         no_progress_ratio,
         fleet_route_balance,
-        0.0,
-        0.0,
-        0.0,
+        class_one_hot[0],
+        class_one_hot[1],
+        class_one_hot[2],
     ], dtype=np.float32)[:GLOBAL_STATE_FEATURE_DIM], 0.0, 1.0)
 
 

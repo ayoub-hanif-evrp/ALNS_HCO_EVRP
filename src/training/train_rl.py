@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 
 from src.data.evrptw_dataset import split_dataset
+from src.data.instance_class import CLASSES, instance_class
 from src.data.instance_loader import load_capacity_from_config
 from src.data.interleaved_schedule import build_interleaved_class_schedule
 from src.data.training_phases import (
@@ -25,7 +26,8 @@ from src.training.ac_train import actor_critic_train_step, build_critics, critic
 from src.training.actor_critic import RLConfig
 from src.training.config_validation import apply_safe_training_defaults, validate_training_config
 from src.training.cycle_summary import aggregate_cycle, dedupe_metric_rows
-from src.training.flat_schedule import build_sequential_schedule
+from src.training.flat_schedule import build_sequential_schedule, sample_fleet_size
+from src.training.rollout import run_episode
 from src.utils.logging_utils import CsvLogger, JsonlLogger, get_logger, write_csv
 from src.utils.output_cleanup import clear_training_outputs
 from src.utils.plotting import (
@@ -40,6 +42,100 @@ LOGGER = get_logger()
 
 def build_policy(config: dict, charging_portions: list[float]) -> TransformerEVRPTWPolicy:
     return TransformerEVRPTWPolicy(config["model"], charging_portions=charging_portions)
+
+
+def _resolve_probe_instances(
+    holdout_meta: dict,
+    train_ds,
+    eval_ds=None,
+) -> dict[str, object]:
+    """Fixed C/R/RC probe instances (prefer holdouts from eval_ds, else first train)."""
+    probes: dict[str, object] = {}
+    holdout_by = (holdout_meta.get("holdout_by_class") or {})
+    eval_by_name = {}
+    if eval_ds is not None:
+        eval_by_name = {n: eval_ds[i] for i, n in enumerate(eval_ds.names)}
+    train_by_name = {n: train_ds[i] for i, n in enumerate(train_ds.names)}
+
+    for cls in CLASSES:
+        chosen = None
+        for n in list(holdout_by.get(cls) or []):
+            if n in eval_by_name:
+                chosen = eval_by_name[n]
+                break
+            if n in train_by_name:
+                chosen = train_by_name[n]
+                break
+        if chosen is None:
+            # First eval instance of class, else first train instance.
+            for pool in (eval_ds, train_ds):
+                if pool is None:
+                    continue
+                for i, n in enumerate(pool.names):
+                    if instance_class(n) == cls:
+                        chosen = pool[i]
+                        break
+                if chosen is not None:
+                    break
+        if chosen is not None:
+            probes[cls] = chosen
+    return probes
+
+
+def _run_class_probes(
+    probes: dict[str, object],
+    policy,
+    weights: CostWeights,
+    *,
+    device,
+    charging_portions: list[float],
+    use_horizon: bool,
+    use_depot_charging: bool,
+    max_steps_factor: int,
+    extra_margin: int,
+    rng: random.Random,
+    previous_probe: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Greedy probe rollouts for cross-class interference detection."""
+    out: dict[str, float] = {}
+    policy.eval()
+    for cls, instance in probes.items():
+        m = sample_fleet_size(instance, extra_margin, rng)
+        with torch.no_grad():
+            result = run_episode(
+                instance, policy, m, weights,
+                mode="greedy", device=device,
+                charging_portions=charging_portions,
+                use_horizon_check=use_horizon,
+                use_depot_charging=use_depot_charging,
+                max_steps_factor=max_steps_factor,
+            )
+        n_cust = max(int(instance.num_customers), 1)
+        served = 1.0 - float(result.summary.unserved_customers) / n_cust
+        out[f"probe_objective_{cls}"] = float(result.objective)
+        out[f"probe_served_rate_{cls}"] = float(served)
+        out[f"probe_feasibility_{cls}"] = float(result.feasible)
+    # Interference: one class improves while another degrades vs previous cycle.
+    if previous_probe:
+        improved = []
+        degraded = []
+        for cls in CLASSES:
+            key = f"probe_served_rate_{cls}"
+            if key not in out or key not in previous_probe:
+                continue
+            delta = out[key] - previous_probe[key]
+            if delta > 0.01:
+                improved.append(cls)
+            elif delta < -0.01:
+                degraded.append(cls)
+        out["cross_class_interference"] = float(bool(improved) and bool(degraded))
+        if out["cross_class_interference"]:
+            LOGGER.warning(
+                "Cross-class interference suspected: improved=%s degraded=%s (probe served rates)",
+                improved, degraded,
+            )
+    policy.train()
+    return out
 
 
 def _resolve_cycles(tcfg: dict) -> int:
@@ -251,6 +347,9 @@ def train(config: dict) -> dict:
             train_by_class,
             name_to_idx,
             cycles=max(cycles, 1),
+            macro_updates=bool(
+                (config.get("training") or {}).get("macro_class_updates", True)
+            ),
         )
         epoch_schedule = len(sequential_schedule)
         updates_per_cycle = int(interleave_meta["updates_per_cycle"])
@@ -260,15 +359,17 @@ def train(config: dict) -> dict:
             for k in (
                 "sampling", "class_order", "updates_per_cycle",
                 "steps_per_class_per_cycle", "class_train_sizes", "cycles", "total_updates",
+                "macro_updates",
             )
+            if k in interleave_meta
         }
         holdout_meta["interleave"]["sorted_train_by_class"] = interleave_meta["sorted_train_by_class"]
         (run_dir / "holdout_instances.json").write_text(
             json.dumps(holdout_meta, indent=2), encoding="utf-8",
         )
         LOGGER.info(
-            "Full training (interleaved C→R→RC): %d cycles × %d updates/cycle = %d updates | "
-            "per-class steps/cycle=%d (sizes C=%d R=%d RC=%d, no shuffle)",
+            "Full training (macro C+R+RC updates): %d cycles × %d updates/cycle = %d updates | "
+            "per-class steps/cycle=%d (sizes C=%d R=%d RC=%d, no shuffle, macro=%s)",
             cycles,
             updates_per_cycle,
             epoch_schedule,
@@ -276,9 +377,18 @@ def train(config: dict) -> dict:
             interleave_meta["class_train_sizes"]["C"],
             interleave_meta["class_train_sizes"]["R"],
             interleave_meta["class_train_sizes"]["RC"],
+            interleave_meta.get("macro_updates", True),
         )
-        preview = interleave_meta["one_cycle_names"][:9]
-        LOGGER.info("  First 9 steps of each cycle: %s", " → ".join(preview))
+        preview = interleave_meta.get("one_cycle_triples") or []
+        if preview:
+            first = preview[:3]
+            LOGGER.info(
+                "  First 3 macro-updates each cycle: %s",
+                " → ".join(f"({t['C']},{t['R']},{t['RC']})" for t in first),
+            )
+        else:
+            preview_names = interleave_meta["one_cycle_names"][:9]
+            LOGGER.info("  First 9 steps of each cycle: %s", " → ".join(preview_names))
     else:
         epoch_schedule, sequential_schedule = _resolve_epochs_and_schedule(tcfg, len(train_ds), rng)
         updates_per_cycle = len(train_ds) if cycles > 0 else None
@@ -314,6 +424,15 @@ def train(config: dict) -> dict:
 
     cycle_rows: list[dict] = []
     cycle_logger = JsonlLogger(results_dir / "cycle_summaries.jsonl")
+    _class_histories: dict[str, list[float]] = {c: [] for c in CLASSES}
+    _class_served_histories: dict[str, list[float]] = {c: [] for c in CLASSES}
+    previous_probe: dict[str, float] = {}
+    probe_instances = _resolve_probe_instances(holdout_meta, train_ds, eval_ds)
+    if probe_instances:
+        LOGGER.info(
+            "Cycle probes: %s",
+            {c: getattr(inst, "instance_name", "?") for c, inst in probe_instances.items()},
+        )
 
     critic_warmup = int(tcfg.get("critic_warmup_steps", 0))
     critic_updates = int(rl_cfg.critic_updates_per_actor_update)
@@ -331,7 +450,12 @@ def train(config: dict) -> dict:
 
     for epoch in range(start_epoch, epoch_schedule):
         if sequential_schedule is not None:
-            batch_idx = [sequential_schedule[epoch]]
+            entry = sequential_schedule[epoch]
+            # Macro schedule entries are [c_idx, r_idx, rc_idx]; legacy is a bare int.
+            if isinstance(entry, (list, tuple)):
+                batch_idx = list(entry)
+            else:
+                batch_idx = [int(entry)]
             if single_mode:
                 cycle_num = 1
             elif updates_per_cycle:
@@ -371,12 +495,41 @@ def train(config: dict) -> dict:
         record["epoch"] = epoch
         record["learning_rate"] = actor_lr
         record["critic_learning_rate"] = critic_lr
+        record["update_kind"] = "macro_crc" if len(batch_idx) >= 3 else "single"
         if len(batch_idx) == 1:
             record["instance_name"] = train_ds.names[batch_idx[0]]
             record["instance_idx"] = batch_idx[0]
+            record["instance_class"] = instance_class(train_ds.names[batch_idx[0]])
+        elif len(batch_idx) >= 3:
+            names = [train_ds.names[i] for i in batch_idx]
+            record["instance_name"] = "+".join(names)
+            record["instance_names"] = names
+            record["instance_idx_C"] = batch_idx[0]
+            record["instance_idx_R"] = batch_idx[1]
+            record["instance_idx_RC"] = batch_idx[2]
+            record["instance_class"] = "MACRO"
         if cycle_num is not None:
             record["cycle"] = cycle_num
             record["pass"] = cycle_num
+
+        # Per-class moving averages over this class's own history only.
+        for cls in CLASSES:
+            key = f"objective_{cls}"
+            if key in record:
+                _class_histories[cls].append(float(record[key]))
+                k = int((config.get("dashboard") or {}).get("class_ma_window", 20))
+                window = _class_histories[cls][-max(k, 1):]
+                record[f"objective_{cls}_ma"] = float(sum(window) / len(window))
+                skey = f"served_rate_{cls}"
+                if skey in record:
+                    # parallel served MA from same-length history of served rates
+                    pass
+            skey = f"served_rate_{cls}"
+            if skey in record:
+                _class_served_histories[cls].append(float(record[skey]))
+                k = int((config.get("dashboard") or {}).get("class_ma_window", 20))
+                window = _class_served_histories[cls][-max(k, 1):]
+                record[f"served_rate_{cls}_ma"] = float(sum(window) / len(window))
 
         rel_mm = float(record.get("relative_objective_mismatch", 0.0))
         if rel_mm > mismatch_warn:
@@ -404,8 +557,12 @@ def train(config: dict) -> dict:
             inst = record.get("instance_name", "?")
             cyc_tag = f" cycle {cycle_num}" if cycle_num is not None else ""
             LOGGER.info(
-                f"epoch {epoch:4d}{cyc_tag} | {inst} | reward {batch_mean_reward:10.1f} | "
-                f"served {record.get('served_rate', 0):.2f} | "
+                f"epoch {epoch:4d}{cyc_tag} | {inst} | "
+                f"macro_J {record.get('macro_objective', record.get('cost', 0)):.0f} | "
+                f"served C/R/RC "
+                f"{record.get('served_rate_C', 0):.2f}/"
+                f"{record.get('served_rate_R', 0):.2f}/"
+                f"{record.get('served_rate_RC', 0):.2f} | "
                 f"mm {rel_mm:.4f} | ev {record.get('critic_explained_variance', 0):.3f}"
             )
 
@@ -482,9 +639,42 @@ def train(config: dict) -> dict:
                 dup = snapshot_for_log(get_cycle_counters())
                 dup_warn = expected_per_decision_ok(dup)
                 LOGGER.info(
-                    "cycle %d summary | objective %.0f | served %.2f | feas %.2f",
+                    "cycle %d summary | macro_J %.0f | served %.2f | feas %.2f | "
+                    "C/R/RC served %.2f/%.2f/%.2f",
                     cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
+                    summary.get("mean_served_rate_C", 0),
+                    summary.get("mean_served_rate_R", 0),
+                    summary.get("mean_served_rate_RC", 0),
                 )
+                if probe_instances:
+                    probe = _run_class_probes(
+                        probe_instances, policy, weights,
+                        device=device,
+                        charging_portions=charging_portions,
+                        use_horizon=use_horizon,
+                        use_depot_charging=use_depot_charging,
+                        max_steps_factor=max_steps_factor,
+                        extra_margin=extra_margin,
+                        rng=rng,
+                        previous_probe=previous_probe,
+                    )
+                    previous_probe = {
+                        k: float(v) for k, v in probe.items()
+                        if k.startswith("probe_")
+                    }
+                    summary.update(probe)
+                    LOGGER.info(
+                        "cycle %d probes | served C/R/RC %.2f/%.2f/%.2f | "
+                        "obj C/R/RC %.0f/%.0f/%.0f%s",
+                        cycle_num,
+                        probe.get("probe_served_rate_C", 0),
+                        probe.get("probe_served_rate_R", 0),
+                        probe.get("probe_served_rate_RC", 0),
+                        probe.get("probe_objective_C", 0),
+                        probe.get("probe_objective_R", 0),
+                        probe.get("probe_objective_RC", 0),
+                        " | INTERFERENCE" if probe.get("cross_class_interference") else "",
+                    )
                 if timing_enabled:
                     timing_keys = [
                         "timing_decision_analysis_ms", "timing_controlled_closure_ms",

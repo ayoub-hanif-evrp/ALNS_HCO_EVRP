@@ -599,8 +599,8 @@ def _ops_series(df: pd.DataFrame) -> list[tuple[str, str]]:
 def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
     """Paper-aligned MARL EVRP dashboard (TERRAN / CB-DRL / marl-eval conventions)."""
     n_inst = int(plan.get("n_train_instances") or 20)
-    obj_col = _pick_metric_col(df, "final_objective", "cost", "cost_raw")
-    served_col = _pick_metric_col(df, "served_rate", "served_ratio")
+    obj_col = _pick_metric_col(df, "macro_objective", "final_objective", "cost", "cost_raw")
+    served_col = _pick_metric_col(df, "macro_served_rate", "served_rate", "served_ratio")
     losses = _loss_series(df)
     returns = _return_comparison_series(df)
     decomp = _reward_decomp_series(df)
@@ -610,40 +610,67 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
     adv = _advantage_series(df)
     ops = _ops_series(df)
     constraints = _constraint_violation_series(df)
-    cycle_obj = [(obj_col, "mean objective")] if obj_col else []
+    cycle_obj = [(obj_col, "macro mean objective")] if obj_col else []
     has_served_feas = (
         served_col
         and served_col in df.columns
-        and "feasibility_rate" in df.columns
+        and ("macro_feasibility" in df.columns or "feasibility_rate" in df.columns)
     )
+    has_class_obj = all(c in df.columns for c in ("objective_C", "objective_R", "objective_RC"))
+    has_class_served = all(c in df.columns for c in ("served_rate_C", "served_rate_R", "served_rate_RC"))
 
     return [
         {
             "id": "sample_efficiency",
             "title": "1. Sample efficiency",
             "nav": "Sample eff.",
-            "subtitle": "Primary objective J vs training epochs with best-so-far curve (TERRAN / marl-eval style).",
+            "subtitle": "Macro-average objective (equal C/R/RC weight) is the primary learning curve.",
             "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": [
+                        ("objective_C", "C"),
+                        ("objective_R", "R"),
+                        ("objective_RC", "RC"),
+                        ("macro_objective", "macro avg"),
+                    ],
+                    "title": "Objective by class + macro average",
+                    "desc": "Equal-weight macro average is the main indicator. Per-class curves show distribution-specific progress.",
+                    "ylabel": "Objective J",
+                    "wide": True,
+                }] if has_class_obj else []),
                 *([{
                     "type": "series_ma",
                     "col": obj_col,
-                    "title": "Objective J over epochs",
-                    "desc": "Real EVRP cost (lower is better). Grey = per epoch, blue = moving average.",
-                    "ylabel": "Objective J",
+                    "title": "Macro objective over updates",
+                    "desc": "Equal-weight (C+R+RC)/3 objective per macro-update (lower is better).",
+                    "ylabel": "Macro objective J",
                     "wide": True,
-                }] if obj_col else []),
+                }] if obj_col and not has_class_obj else []),
+                *([{
+                    "type": "multi_series_ma",
+                    "series": [
+                        ("objective_C_ma", "C MA"),
+                        ("objective_R_ma", "R MA"),
+                        ("objective_RC_ma", "RC MA"),
+                    ],
+                    "title": "Per-class moving averages (own history only)",
+                    "desc": "Each class is smoothed over its own history — not across mixed C/R/RC order.",
+                    "ylabel": "Objective MA",
+                    "wide": True,
+                }] if all(c in df.columns for c in ("objective_C_ma", "objective_R_ma", "objective_RC_ma")) else []),
                 {
                     "type": "best_objective_so_far",
-                    "title": "Best objective so far",
-                    "desc": "Anytime / sample-efficiency curve: cumulative minimum of J across training.",
+                    "title": "Best macro objective so far",
+                    "desc": "Anytime / sample-efficiency curve: cumulative minimum of macro J.",
                     "wide": True,
                 },
                 *([{
                     "type": "cycle_lines",
                     "cols": cycle_obj,
-                    "title": "Cycle-level mean objective",
-                    "desc": f"Mean J over all {n_inst} training instances per cycle (one full pass).",
-                    "ylabel": "Mean objective J",
+                    "title": "Cycle-level macro objective",
+                    "desc": f"Mean macro J over all updates in a cycle (one full pass).",
+                    "ylabel": "Mean macro objective J",
                     "wide": True,
                 }] if cycle_obj else []),
             ],
@@ -652,12 +679,38 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
             "id": "solution_quality",
             "title": "2. Solution quality",
             "nav": "Quality",
-            "subtitle": "Customer coverage and feasibility — core metrics in CB-DRL-style EVRP learning curves.",
+            "subtitle": "Per-class and macro served/feasibility — watch for cross-class interference.",
             "charts": [
+                *([{
+                    "type": "multi_series_ma",
+                    "series": [
+                        ("served_rate_C", "C"),
+                        ("served_rate_R", "R"),
+                        ("served_rate_RC", "RC"),
+                        ("macro_served_rate", "macro"),
+                    ],
+                    "title": "Served rate by class",
+                    "desc": "Per-class served rates; macro is equal-weight average.",
+                    "ylabel": "Served rate",
+                    "wide": True,
+                }] if has_class_served else []),
+                *([{
+                    "type": "multi_series_ma",
+                    "series": [
+                        ("feasibility_C", "C"),
+                        ("feasibility_R", "R"),
+                        ("feasibility_RC", "RC"),
+                        ("macro_feasibility", "macro"),
+                    ],
+                    "title": "Feasibility by class",
+                    "desc": "Per-class feasibility; declining rates across classes indicate interference.",
+                    "ylabel": "Feasibility",
+                    "wide": True,
+                }] if all(c in df.columns for c in ("feasibility_C", "feasibility_R", "feasibility_RC")) else []),
                 *([{
                     "type": "sample_efficiency_quality",
                     "title": "Served % & feasibility (dual axis)",
-                    "desc": "CB-DRL Fig. 3 style: served-customer ratio and feasibility rate should rise together.",
+                    "desc": "Macro served-customer ratio and feasibility rate should rise together.",
                     "wide": True,
                 }] if has_served_feas else []),
                 {

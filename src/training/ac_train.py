@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from src.data.instance_class import CLASSES, instance_class
 from src.env.cost import CostWeights, training_reward
 from src.models.critic import CentralFleetValueCritic, QCritic
 from src.training.actor_critic import RLConfig, ActorCriticLossOut, actor_critic_loss
@@ -16,6 +17,23 @@ from src.training.rollout_ac import run_multi_sample_rollout_baseline
 from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
+
+
+def _group_rollouts_by_class(rollout_pairs: list[tuple]) -> dict[str, list[tuple]]:
+    groups: dict[str, list[tuple]] = {c: [] for c in CLASSES}
+    for pair in rollout_pairs:
+        _, _, instance = pair
+        cls = instance_class(str(getattr(instance, "instance_name", "") or ""))
+        if cls not in groups:
+            groups[cls] = []
+        groups[cls].append(pair)
+    return groups
+
+
+def _class_equal_mean(tensors: list[torch.Tensor]) -> torch.Tensor:
+    if not tensors:
+        raise ValueError("empty class loss list")
+    return torch.stack(tensors).mean()
 
 
 def build_critics(
@@ -127,6 +145,13 @@ def actor_critic_train_step(
 
     rollout_pairs: list[tuple] = []
     total_rollouts = 0
+    per_class_stats: dict[str, dict[str, list]] = {
+        c: {
+            "objective": [], "served_rate": [], "feasibility": [],
+            "serviceability": [], "instance_name": [],
+        }
+        for c in CLASSES
+    }
     timing = {
         "decision_analysis_ms": 0.0,
         "controlled_closure_ms": 0.0,
@@ -197,10 +222,27 @@ def actor_critic_train_step(
                 num_nodes_list, reconstructed_list, breakdown_acc,
                 customer_lateness_list, depot_lateness_list,
             )
+            cls = instance_class(str(getattr(instance, "instance_name", "") or ""))
+            n_cust = max(int(instance.num_customers), 1)
+            served = 1.0 - float(result.summary.unserved_customers) / n_cust
+            gs = getattr(result.env, "last_global_serviceability", None)
+            if gs is not None:
+                svc = float(getattr(gs, "globally_serviceable_customers_count", 0)) / n_cust
+            else:
+                svc = served
+            per_class_stats[cls]["objective"].append(float(result.objective))
+            per_class_stats[cls]["served_rate"].append(served)
+            per_class_stats[cls]["feasibility"].append(float(result.feasible))
+            per_class_stats[cls]["serviceability"].append(svc)
+            per_class_stats[cls]["instance_name"].append(
+                str(getattr(instance, "instance_name", "") or "")
+            )
 
     n_roll = max(1, len(rollout_pairs))
     if not rollout_pairs:
         return {"loss": 0.0, "algorithm": "actor_critic"}
+
+    by_class = _group_rollouts_by_class(rollout_pairs)
 
     def _compute_loss(pair, **kwargs):
         _, trajectory, _ = pair
@@ -219,23 +261,36 @@ def actor_critic_train_step(
             **kwargs,
         )
 
-  # Metrics from the last backward pass (avoid an extra forward-only pass).
+    # Metrics from the last backward pass (avoid an extra forward-only pass).
     critic_only_warmup = global_epoch < int(critic_warmup_steps)
     actor_grad_norm = torch.tensor(0.0)
     critic_grad_norm = torch.tensor(0.0)
     grad_norm = torch.tensor(0.0)
+    class_actor_loss_log: dict[str, float] = {}
+    class_critic_loss_log: dict[str, float] = {}
+    class_entropy_log: dict[str, float] = {}
 
     for _pass in range(critic_passes):
         t_c0 = time.perf_counter()
         critic_optimizer.zero_grad(set_to_none=True)
-        for pair in rollout_pairs:
-            out = _compute_loss(pair, critic_only=True)
-            metrics_out = out
-            scaled = (rl_cfg.critic_coef * out.critic_loss) / (n_roll * accum)
-            if use_amp and device_t.type == "cuda" and scaler is not None:
-                scaler.scale(scaled).backward()
-            else:
-                scaled.backward()
+        class_critic_terms: list[torch.Tensor] = []
+        for cls in CLASSES:
+            pairs = by_class.get(cls) or []
+            if not pairs:
+                continue
+            outs = [_compute_loss(pair, critic_only=True) for pair in pairs]
+            metrics_out = outs[-1]
+            cls_loss = torch.stack([o.critic_loss for o in outs]).mean()
+            class_critic_terms.append(cls_loss)
+            class_critic_loss_log[cls] = float(cls_loss.detach())
+        if not class_critic_terms:
+            continue
+        macro_critic = _class_equal_mean(class_critic_terms)
+        scaled = (rl_cfg.critic_coef * macro_critic) / accum
+        if use_amp and device_t.type == "cuda" and scaler is not None:
+            scaler.scale(scaled).backward()
+        else:
+            scaled.backward()
 
         amp_critic = use_amp and device_t.type == "cuda" and scaler is not None
         if amp_critic:
@@ -260,32 +315,52 @@ def actor_critic_train_step(
     if not critic_only_warmup:
         t_a0 = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
-        for pair in rollout_pairs:
-            out = _compute_loss(pair, actor_only=True)
-            metrics_out = out
-            scaled = (out.actor_loss - entropy_coef * out.entropy_term) / (n_roll * accum)
-            if use_q_now and out.q_critic_loss.requires_grad:
-                scaled = scaled + (rl_cfg.q_critic_coef * out.q_critic_loss) / (n_roll * accum)
+        class_actor_terms: list[torch.Tensor] = []
+        class_entropy_terms: list[torch.Tensor] = []
+        class_q_terms: list[torch.Tensor] = []
+        for cls in CLASSES:
+            pairs = by_class.get(cls) or []
+            if not pairs:
+                continue
+            outs = [_compute_loss(pair, actor_only=True) for pair in pairs]
+            metrics_out = outs[-1]
+            # Advantages already normalized per-trajectory inside actor_critic_loss.
+            cls_actor = torch.stack([o.actor_loss for o in outs]).mean()
+            cls_ent = torch.stack([o.entropy_term for o in outs]).mean()
+            class_actor_terms.append(cls_actor)
+            class_entropy_terms.append(cls_ent)
+            class_actor_loss_log[cls] = float(cls_actor.detach())
+            class_entropy_log[cls] = float(cls_ent.detach())
+            if use_q_now:
+                q_terms = [o.q_critic_loss for o in outs if o.q_critic_loss.requires_grad]
+                if q_terms:
+                    class_q_terms.append(torch.stack(q_terms).mean())
+        if class_actor_terms:
+            macro_actor = _class_equal_mean(class_actor_terms)
+            macro_entropy = _class_equal_mean(class_entropy_terms)
+            scaled = (macro_actor - entropy_coef * macro_entropy) / accum
+            if class_q_terms:
+                scaled = scaled + (rl_cfg.q_critic_coef * _class_equal_mean(class_q_terms)) / accum
             if use_amp and device_t.type == "cuda" and scaler is not None:
                 scaler.scale(scaled).backward()
             else:
                 scaled.backward()
 
-        amp_actor = use_amp and device_t.type == "cuda" and scaler is not None
-        if amp_actor:
-            scaler.unscale_(optimizer)
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), actor_grad_clip)
-        grad_norm = actor_grad_norm
-        if not torch.isfinite(actor_grad_norm):
-            optimizer.zero_grad(set_to_none=True)
-            LOGGER.warning("Skipping actor step: non-finite gradient norm")
+            amp_actor = use_amp and device_t.type == "cuda" and scaler is not None
             if amp_actor:
+                scaler.unscale_(optimizer)
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(list(policy.parameters()), actor_grad_clip)
+            grad_norm = actor_grad_norm
+            if not torch.isfinite(actor_grad_norm):
+                optimizer.zero_grad(set_to_none=True)
+                LOGGER.warning("Skipping actor step: non-finite gradient norm")
+                if amp_actor:
+                    scaler.update()
+            elif amp_actor:
+                scaler.step(optimizer)
                 scaler.update()
-        elif amp_actor:
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
+            else:
+                optimizer.step()
         timing["actor_update_ms"] += (time.perf_counter() - t_a0) * 1000.0
 
     if measure_param_delta and actor_params_before is not None and critic_params_before is not None:
@@ -323,12 +398,65 @@ def actor_critic_train_step(
     timing["total_epoch_ms"] = (time.perf_counter() - t_epoch0) * 1000.0
     counter_snap = snapshot_for_log(get_cycle_counters())
 
+    # Equal-weight macro metrics across present classes.
+    class_metric_out: dict[str, float] = {}
+    present_classes = [c for c in CLASSES if per_class_stats[c]["objective"]]
+    for cls in CLASSES:
+        st = per_class_stats[cls]
+        if not st["objective"]:
+            continue
+        class_metric_out[f"objective_{cls}"] = float(np.mean(st["objective"]))
+        class_metric_out[f"served_rate_{cls}"] = float(np.mean(st["served_rate"]))
+        class_metric_out[f"feasibility_{cls}"] = float(np.mean(st["feasibility"]))
+        class_metric_out[f"serviceability_{cls}"] = float(np.mean(st["serviceability"]))
+        if cls in class_actor_loss_log:
+            class_metric_out[f"actor_loss_{cls}"] = class_actor_loss_log[cls]
+        if cls in class_critic_loss_log:
+            class_metric_out[f"critic_loss_{cls}"] = class_critic_loss_log[cls]
+        if cls in class_entropy_log:
+            class_metric_out[f"entropy_{cls}"] = class_entropy_log[cls]
+        if st["instance_name"]:
+            class_metric_out[f"instance_name_{cls}"] = st["instance_name"][0]
+
+    def _macro_of(key: str) -> float:
+        vals = [class_metric_out[f"{key}_{c}"] for c in present_classes if f"{key}_{c}" in class_metric_out]
+        return float(np.mean(vals)) if vals else 0.0
+
+    macro_objective = _macro_of("objective")
+    macro_served = _macro_of("served_rate")
+    macro_feas = _macro_of("feasibility")
+    macro_svc = _macro_of("serviceability")
+
+    # Prefer class-equal logged losses when available.
+    if class_actor_loss_log:
+        logged_actor = float(np.mean(list(class_actor_loss_log.values())))
+    else:
+        logged_actor = float(torch.stack(actor_losses).mean().item()) if actor_losses else 0.0
+    if class_critic_loss_log:
+        logged_critic = float(np.mean(list(class_critic_loss_log.values())))
+    else:
+        logged_critic = float(torch.stack(critic_losses).mean().item()) if critic_losses else 0.0
+    if class_entropy_log:
+        logged_entropy = float(np.mean(list(class_entropy_log.values())))
+    else:
+        logged_entropy = float(torch.stack(entropies).mean().item()) if entropies else 0.0
+
     return {
         "algorithm": "actor_critic",
+        "macro_update": float(len(present_classes) >= 2),
+        "n_classes_in_update": float(len(present_classes)),
         **{f"timing_{k}": float(v) for k, v in timing.items()},
         **{f"dup_{k}": int(v) for k, v in counter_snap.items()},
-        "cost": float(np.mean(raw_costs)),
-        "cost_raw": float(np.mean(raw_costs)),
+        **class_metric_out,
+        "macro_objective": macro_objective,
+        "macro_served_rate": macro_served,
+        "macro_feasibility": macro_feas,
+        "macro_serviceability": macro_svc,
+        # Primary curves use equal-weight macro averages (not raw mixed objective).
+        "cost": macro_objective if present_classes else float(np.mean(raw_costs)),
+        "cost_raw": macro_objective if present_classes else float(np.mean(raw_costs)),
+        "final_objective": macro_objective if present_classes else float(np.mean(raw_costs)),
+        "final_original_objective": macro_objective if present_classes else float(np.mean(raw_costs)),
         "reward": float(np.mean(shaped_return_list)) if shaped_return_list else float(
             np.mean([training_reward(c, rl_cfg.reward_scale) for c in raw_costs])
         ),
@@ -337,11 +465,11 @@ def actor_critic_train_step(
             np.mean([training_reward(c, rl_cfg.reward_scale) for c in raw_costs])
         ),
         "reward_scale": rl_cfg.reward_scale,
-        "loss": float(torch.stack(actor_losses).mean().item()) if actor_losses else 0.0,
-        "actor_loss": float(torch.stack(actor_losses).mean().item()) if actor_losses else 0.0,
-        "critic_loss": float(torch.stack(critic_losses).mean().item()) if critic_losses else 0.0,
+        "loss": logged_actor,
+        "actor_loss": logged_actor,
+        "critic_loss": logged_critic,
         "q_critic_loss": float(torch.stack(q_losses).mean().item()) if q_losses else 0.0,
-        "entropy": float(torch.stack(entropies).mean().item()) if entropies else 0.0,
+        "entropy": logged_entropy,
         "advantage": float(np.mean(adv_list)),
         "advantage_std": float(np.std(adv_list)) if adv_list else 0.0,
         "advantage_min": float(np.min(adv_min_list)) if adv_min_list else 0.0,
@@ -367,10 +495,10 @@ def actor_critic_train_step(
         "return_mean": float(np.mean(return_mean_list)) if return_mean_list else 0.0,
         "return_std": float(np.mean(return_std_list)) if return_std_list else 0.0,
         "grad_norm": float(grad_norm),
-        "feasibility_rate": float(np.mean(feas_flags)),
-        "feasibility_rate_pct": 100.0 * float(np.mean(feas_flags)),
-        "served_rate": float(np.mean(served_rate_list)),
-        "served_rate_pct": 100.0 * float(np.mean(served_rate_list)),
+        "feasibility_rate": macro_feas if present_classes else float(np.mean(feas_flags)),
+        "feasibility_rate_pct": 100.0 * (macro_feas if present_classes else float(np.mean(feas_flags))),
+        "served_rate": macro_served if present_classes else float(np.mean(served_rate_list)),
+        "served_rate_pct": 100.0 * (macro_served if present_classes else float(np.mean(served_rate_list))),
         "avg_used_evs": float(np.mean(used_evs_list)),
         "avg_distance": float(np.mean(dist_list)),
         "avg_duration": float(np.mean(duration_list)),
@@ -384,8 +512,6 @@ def actor_critic_train_step(
         "mean_shaping_reward": float(np.mean(shaping_means)) if shaping_means else 0.0,
         "objective_mismatch": float(np.mean(mismatch_list)) if mismatch_list else 0.0,
         "relative_objective_mismatch": float(np.mean(rel_mismatch_list)) if rel_mismatch_list else 0.0,
-        "final_objective": float(np.mean(raw_costs)),
-        "final_original_objective": float(np.mean(raw_costs)),
         "reconstructed_objective": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
         "reconstructed_original_objective": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,
         "reconstructed_training_cost": float(np.mean(reconstructed_list)) if reconstructed_list else 0.0,

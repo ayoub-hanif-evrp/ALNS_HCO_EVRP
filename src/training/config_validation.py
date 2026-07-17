@@ -190,7 +190,9 @@ def apply_safe_training_defaults(config: dict) -> dict:
     config["training"].setdefault("generate_static_dashboard", False)
     config["training"].setdefault("live_checkpoint_every", 0)  # superseded by checkpointing.save_last_every_updates
     config["training"].setdefault("maps_checkpoint_every", 0)
+    config["training"].setdefault("macro_class_updates", True)
     dcfg = config.setdefault("dashboard", {})
+    dcfg.setdefault("class_ma_window", 20)
     dcfg.setdefault("save_representative_traces", True)
     dcfg.setdefault("num_random_solution_maps", 1)
     dcfg.setdefault("include_best_final_cycle", True)

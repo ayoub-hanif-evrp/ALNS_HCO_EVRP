@@ -26,14 +26,14 @@ def dedupe_metric_rows(rows: list[dict], key: str = "epoch") -> list[dict]:
 def aggregate_cycle(rows: list[dict], *, cycle_id: int) -> dict[str, Any]:
     if not rows:
         return {"cycle_id": cycle_id}
-    return {
+    out = {
         "cycle_id": cycle_id,
         "cycle": cycle_id,
         "cycle_epochs": len(rows),
-        "mean_objective": _mean(rows, "cost"),
+        "mean_objective": _mean(rows, "macro_objective") if any("macro_objective" in r for r in rows) else _mean(rows, "cost"),
         "mean_return": _mean(rows, "reward"),
-        "feasibility_rate": _mean(rows, "feasibility_rate"),
-        "mean_served_ratio": _mean(rows, "served_rate"),
+        "feasibility_rate": _mean(rows, "macro_feasibility") if any("macro_feasibility" in r for r in rows) else _mean(rows, "feasibility_rate"),
+        "mean_served_ratio": _mean(rows, "macro_served_rate") if any("macro_served_rate" in r for r in rows) else _mean(rows, "served_rate"),
         "mean_unserved_customers": _mean(rows, "unserved_customers"),
         "mean_battery_violations": _mean(rows, "avg_battery_violation"),
         "mean_time_window_violations": _mean(rows, "avg_lateness"),
@@ -57,3 +57,12 @@ def aggregate_cycle(rows: list[dict], *, cycle_id: int) -> dict[str, Any]:
         "mean_unnecessary_station_actions": _mean(rows, "unnecessary_station_actions"),
         "mean_feasible_customer_ratio": _mean(rows, "feasible_customer_ratio"),
     }
+    for cls in ("C", "R", "RC"):
+        out[f"mean_objective_{cls}"] = _mean(rows, f"objective_{cls}")
+        out[f"mean_served_rate_{cls}"] = _mean(rows, f"served_rate_{cls}")
+        out[f"mean_feasibility_{cls}"] = _mean(rows, f"feasibility_{cls}")
+        out[f"mean_serviceability_{cls}"] = _mean(rows, f"serviceability_{cls}")
+    out["macro_objective"] = out["mean_objective"]
+    out["macro_served_rate"] = out["mean_served_ratio"]
+    out["macro_feasibility"] = out["feasibility_rate"]
+    return out
