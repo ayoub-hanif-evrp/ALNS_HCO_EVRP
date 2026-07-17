@@ -355,112 +355,130 @@ def _analyze_decision_state_optimized_inner(
     t0: float,
 ) -> DecisionStateAnalysis:
     from .ev_decision_analysis import compute_all_ev_analyses, get_or_compute_ev_analysis
+    from .feasibility_scratch import feasibility_scratch_scope
     from .serviceability import compute_global_serviceability_recharge_aware
 
-    # 1) EV-state-first analyses for unfinished EVs (cached by state_version).
-    t_ev0 = time.perf_counter()
-    env._analysis_active_ev_id = int(ev.ev_id)
-    ev_analyses = compute_all_ev_analyses(env)
-    env._analysis_active_ev_id = None
-    active_ev_analysis = ev_analyses.get(int(ev.ev_id))
-    if active_ev_analysis is None:
-        active_ev_analysis = get_or_compute_ev_analysis(env, ev)
-        ev_analyses[int(ev.ev_id)] = active_ev_analysis
-    _CALL_COUNTS["ev_decision_analysis"] += len(ev_analyses)
-    n_recharge = sum(1 for a in ev_analyses.values() if a.recharge_labels)
-    _CALL_COUNTS["recharge_search"] += n_recharge
-    from .analysis_counters import bump
-    bump("recharge_search_calls", n_recharge)
-    ev_ms = (time.perf_counter() - t_ev0) * 1000.0
+    # One scratch scope for EV analysis + hard/pruning masks (memoizes nested exact checks).
+    with feasibility_scratch_scope():
+        # 1) EV-state-first analyses for unfinished EVs (cached by state_version).
+        t_ev0 = time.perf_counter()
+        env._analysis_active_ev_id = int(ev.ev_id)
+        ev_analyses = compute_all_ev_analyses(env)
+        env._analysis_active_ev_id = None
+        active_ev_analysis = ev_analyses.get(int(ev.ev_id))
+        if active_ev_analysis is None:
+            active_ev_analysis = get_or_compute_ev_analysis(env, ev)
+            ev_analyses[int(ev.ev_id)] = active_ev_analysis
+        _CALL_COUNTS["ev_decision_analysis"] += len(ev_analyses)
+        n_recharge = sum(1 for a in ev_analyses.values() if a.recharge_labels)
+        _CALL_COUNTS["recharge_search"] += n_recharge
+        from .analysis_counters import bump
+        bump("recharge_search_calls", n_recharge)
+        # Sum recharge/label time across ALL EVs (peers dominate wall clock).
+        ev_ms = (time.perf_counter() - t_ev0) * 1000.0
+        recharge_ms_all = sum(
+            float((a.timing or {}).get("recharge_search_ms", 0.0)) for a in ev_analyses.values()
+        )
+        label_ms_all = sum(
+            float((a.timing or {}).get("label_customer_vectorized_ms", 0.0))
+            for a in ev_analyses.values()
+        )
+        safe_ms_all = sum(
+            float((a.timing or {}).get("safe_continuation_ms", 0.0)) for a in ev_analyses.values()
+        )
+        direct_ms_all = sum(
+            float((a.timing or {}).get("direct_customer_vectorized_ms", 0.0))
+            for a in ev_analyses.values()
+        )
 
-    # Aggregate timing from active EV analysis.
-    at = active_ev_analysis.timing or {}
-    pref_stats = PrefilterStats(
-        total_customers=int(active_ev_analysis.direct_basic_customer_mask.size),
-        customers_rejected_by_vectorized_prefilter=int(
-            (~active_ev_analysis.direct_basic_customer_mask).sum()
-        ),
-        customers_sent_to_continuation_analysis=int(
-            active_ev_analysis.direct_basic_customer_mask.sum()
-        ),
-    )
+        # Aggregate timing from active EV analysis (+ peer totals above).
+        at = active_ev_analysis.timing or {}
+        pref_stats = PrefilterStats(
+            total_customers=int(active_ev_analysis.direct_basic_customer_mask.size),
+            customers_rejected_by_vectorized_prefilter=int(
+                (~active_ev_analysis.direct_basic_customer_mask).sum()
+            ),
+            customers_sent_to_continuation_analysis=int(
+                active_ev_analysis.direct_basic_customer_mask.sum()
+            ),
+        )
 
-    # 2) Global serviceability once from OR of EV masks.
-    t_gs0 = time.perf_counter()
-    if getattr(env, "_global_serviceability_cache", None) is None:
-        _CALL_COUNTS["global_serviceability"] += 1
-        bump("global_serviceability_calls")
-        gs = compute_global_serviceability_recharge_aware(
-            env.instance, env.evs, env.served_mask, env.reserved_mask,
-            use_horizon_check=env.use_horizon_check,
-            use_depot_charging=env.use_depot_charging,
-            charging_portions=env.charging_portions,
-            environment_config=env_cfg,
+        # 2) Global serviceability once from OR of EV masks.
+        t_gs0 = time.perf_counter()
+        if getattr(env, "_global_serviceability_cache", None) is None:
+            _CALL_COUNTS["global_serviceability"] += 1
+            bump("global_serviceability_calls")
+            gs = compute_global_serviceability_recharge_aware(
+                env.instance, env.evs, env.served_mask, env.reserved_mask,
+                use_horizon_check=env.use_horizon_check,
+                use_depot_charging=env.use_depot_charging,
+                charging_portions=env.charging_portions,
+                environment_config=env_cfg,
+                ev_analyses=ev_analyses,
+                env=env,
+            )
+            env._global_serviceability_cache = gs
+            env.last_global_serviceability = gs
+            if hasattr(env, "_sync_expired_from_serviceability"):
+                env._sync_expired_from_serviceability(gs)
+            env._svc_computations_this_state = int(
+                getattr(env, "_svc_computations_this_state", 0)
+            ) + 1
+        else:
+            gs = env._global_serviceability_cache
+            metrics["duplicate_computations_avoided"] = (
+                int(metrics.get("duplicate_computations_avoided", 0)) + 1
+            )
+        gs_ms = (time.perf_counter() - t_gs0) * 1000.0
+
+        # 3) Expose analyses to hard/pruning layers.
+        env._pending_ev_analysis = active_ev_analysis
+        env._pending_customer_prefilter = {
+            "basic_ok": active_ev_analysis.direct_basic_customer_mask,
+            "customer_indices": np.asarray(env.instance.customer_indices, dtype=np.int64),
+            "reject_reasons": dict(active_ev_analysis.direct_customer_reasons),
+            "stats": pref_stats,
+        }
+
+        t_mask0 = time.perf_counter()
+        mask = compute_action_masks_optimized_exact(env, ev)
+        mask_ms = (time.perf_counter() - t_mask0) * 1000.0
+        # Ensure global svc on mask is the shared object.
+        mask.global_serviceability = gs
+
+        env._pending_customer_prefilter = None
+        env._pending_ev_analysis = None
+
+        timing = TimingBreakdown(
+            decision_analysis_ms=0.0,
+            direct_customer_vectorized_ms=float(direct_ms_all or at.get("direct_customer_vectorized_ms", 0.0)),
+            recharge_search_ms=float(recharge_ms_all or at.get("recharge_search_ms", 0.0)),
+            label_customer_vectorized_ms=float(label_ms_all or at.get("label_customer_vectorized_ms", 0.0)),
+            safe_continuation_ms=float(safe_ms_all or at.get("safe_continuation_ms", 0.0)),
+            global_serviceability_ms=gs_ms,
+            hard_mask_ms=mask_ms,
+            basic_customer_filter_ms=float(direct_ms_all or at.get("direct_customer_vectorized_ms", 0.0)),
+            charging_chain_search_ms=float(recharge_ms_all or at.get("recharge_search_ms", 0.0)),
+            recharge_simulation_ms=ev_ms,
+        )
+        analysis = _build_analysis_from_mask(
+            env, ev, mask,
+            implementation="optimized",
+            timing=timing,
+            prefilter_stats=pref_stats,
             ev_analyses=ev_analyses,
-            env=env,
+            active_ev_analysis=active_ev_analysis,
+            cache_stats=metrics,
         )
-        env._global_serviceability_cache = gs
-        env.last_global_serviceability = gs
-        if hasattr(env, "_sync_expired_from_serviceability"):
-            env._sync_expired_from_serviceability(gs)
-        env._svc_computations_this_state = int(
-            getattr(env, "_svc_computations_this_state", 0)
-        ) + 1
-    else:
-        gs = env._global_serviceability_cache
-        metrics["duplicate_computations_avoided"] = (
-            int(metrics.get("duplicate_computations_avoided", 0)) + 1
-        )
-    gs_ms = (time.perf_counter() - t_gs0) * 1000.0
+        analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
+        analysis.timing.decision_analysis_ms = analysis.timing.total_ms
+        analysis.cache_hit = False
 
-    # 3) Expose analyses to hard/pruning layers.
-    env._pending_ev_analysis = active_ev_analysis
-    env._pending_customer_prefilter = {
-        "basic_ok": active_ev_analysis.direct_basic_customer_mask,
-        "customer_indices": np.asarray(env.instance.customer_indices, dtype=np.int64),
-        "reject_reasons": dict(active_ev_analysis.direct_customer_reasons),
-        "stats": pref_stats,
-    }
-
-    t_mask0 = time.perf_counter()
-    mask = compute_action_masks_optimized_exact(env, ev)
-    mask_ms = (time.perf_counter() - t_mask0) * 1000.0
-    # Ensure global svc on mask is the shared object.
-    mask.global_serviceability = gs
-
-    env._pending_customer_prefilter = None
-    env._pending_ev_analysis = None
-
-    timing = TimingBreakdown(
-        decision_analysis_ms=0.0,
-        direct_customer_vectorized_ms=float(at.get("direct_customer_vectorized_ms", 0.0)),
-        recharge_search_ms=float(at.get("recharge_search_ms", 0.0)),
-        label_customer_vectorized_ms=float(at.get("label_customer_vectorized_ms", 0.0)),
-        safe_continuation_ms=float(at.get("safe_continuation_ms", 0.0)),
-        global_serviceability_ms=gs_ms,
-        hard_mask_ms=mask_ms,
-        basic_customer_filter_ms=float(at.get("direct_customer_vectorized_ms", 0.0)),
-        charging_chain_search_ms=float(at.get("recharge_search_ms", 0.0)),
-        recharge_simulation_ms=ev_ms,
-    )
-    analysis = _build_analysis_from_mask(
-        env, ev, mask,
-        implementation="optimized",
-        timing=timing,
-        prefilter_stats=pref_stats,
-        ev_analyses=ev_analyses,
-        active_ev_analysis=active_ev_analysis,
-        cache_stats=metrics,
-    )
-    analysis.timing.total_ms = (time.perf_counter() - t0) * 1000.0
-    analysis.timing.decision_analysis_ms = analysis.timing.total_ms
-    analysis.cache_hit = False
-
-    if use_cache:
-        cache[cache_key] = analysis
-        metrics["misses"] = int(metrics.get("misses", 0)) + 1
-        metrics["size"] = len(cache)
-    return analysis
+        if use_cache:
+            cache[cache_key] = analysis
+            metrics["misses"] = int(metrics.get("misses", 0)) + 1
+            metrics["size"] = len(cache)
+        return analysis
 
 
 def analyze_decision_state(

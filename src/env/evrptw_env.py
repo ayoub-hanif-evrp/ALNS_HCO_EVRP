@@ -545,10 +545,15 @@ class EVRPTWEnv:
         self.reserved_mask[j] = True
         self.reserved_by[j] = ev.ev_id
         ev.current_reserved_customer = j
+        # Reservation changes feasibility; drop memoized analyses (apply_action bumps version).
+        self.invalidate_serviceability_cache()
+        self.last_decision_analysis = None
 
     def _release_reservation(self, j: int) -> None:
         self.reserved_mask[j] = False
         self.reserved_by[j] = -1
+        self.invalidate_serviceability_cache()
+        self.last_decision_analysis = None
 
     # ------------------------------------------------------------------ #
     # Action application (physics)

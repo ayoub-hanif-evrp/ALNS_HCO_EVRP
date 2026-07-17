@@ -111,6 +111,34 @@ def _can_continue_after_recharge(
     if ok_dep:
         return True, "charge_portion_feasible"
 
+    # Fast exact prefilter: any customer with vectorized basic + direct depot return.
+    from .ev_decision_analysis import (
+        vectorized_basic_from_state,
+        vectorized_safe_direct_depot_after_service,
+    )
+    basic, cust, _ = vectorized_basic_from_state(
+        instance,
+        node=node,
+        current_time=departure,
+        battery=battery_after,
+        capacity=ev.remaining_capacity,
+        served_mask=served_mask,
+        reserved_mask=reserved_mask,
+    )
+    if basic.any():
+        depot_ok = vectorized_safe_direct_depot_after_service(
+            instance,
+            node=node,
+            current_time=departure,
+            battery=battery_after,
+            capacity=ev.remaining_capacity,
+            basic_ok=basic,
+            cust=cust,
+            use_horizon_check=use_horizon_check,
+        )
+        if depot_ok.any():
+            return True, "charge_portion_feasible"
+
     sim = EVState(
         ev_id=ev.ev_id,
         current_node=node,

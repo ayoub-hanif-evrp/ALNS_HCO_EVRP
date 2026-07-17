@@ -118,9 +118,16 @@ def _is_dominated(label: RechargeLabel, existing: list[RechargeLabel]) -> bool:
 def _insert_nondominated(label: RechargeLabel, existing: list[RechargeLabel]) -> bool:
     if _is_dominated(label, existing):
         return False
-    kept = [x for x in existing if not _dominates(label, x)]
-    kept.append(label)
-    existing[:] = kept
+    kept: list[RechargeLabel] = []
+    changed = False
+    for x in existing:
+        if _dominates(label, x):
+            changed = True
+        else:
+            kept.append(x)
+    if changed:
+        existing[:] = kept
+    existing.append(label)
     return True
 
 
@@ -187,19 +194,29 @@ def bounded_recharge_reachability(
     labels: dict[int, list[RechargeLabel]] = {n: [] for n in nodes}
     heap: list[_HeapItem] = []
     label_store: list[RechargeLabel] = []
+    live_ids: set[int] = set()
+    label_obj_ids: dict[int, int] = {}  # id(label) -> lid
     next_id = 0
 
     def _push(label: RechargeLabel) -> None:
         nonlocal next_id
         node_labels = labels[label.node]
         if cfg.use_dominance_pruning:
+            before = {id(x) for x in node_labels}
             if not _insert_nondominated(label, node_labels):
                 return
+            # Drop stale heap entries for labels removed by dominance.
+            for rid in before - {id(x) for x in node_labels}:
+                stale_lid = label_obj_ids.pop(rid, None)
+                if stale_lid is not None:
+                    live_ids.discard(stale_lid)
         else:
             node_labels.append(label)
         lid = next_id
         next_id += 1
         label_store.append(label)
+        live_ids.add(lid)
+        label_obj_ids[id(label)] = lid
         heappush(
             heap,
             _HeapItem(
@@ -261,10 +278,10 @@ def bounded_recharge_reachability(
 
     while heap:
         item = heappop(heap)
-        label = label_store[item.label_id]
-        # Stale heap entry after dominance pruning.
-        if cfg.use_dominance_pruning and label not in labels[label.node]:
+        # O(1) stale check after dominance pruning (avoids O(#labels) list scan).
+        if cfg.use_dominance_pruning and item.label_id not in live_ids:
             continue
+        label = label_store[item.label_id]
         result.expanded += 1
         if label.hops >= cfg.max_station_hops:
             result.hop_limit_hits += 1
@@ -274,6 +291,14 @@ def bounded_recharge_reachability(
                 cfg.max_station_hops, label.node, label.departure_time, label.battery,
             )
             continue
+        # Reuse one temp EVState across portions for this expansion.
+        temp = EVState(
+            ev_id=ev.ev_id,
+            current_node=label.node,
+            current_time=label.departure_time,
+            remaining_battery=label.battery,
+            remaining_capacity=ev.remaining_capacity,
+        )
         for nxt in nodes:
             if nxt == label.node:
                 continue
@@ -283,13 +308,6 @@ def bounded_recharge_reachability(
             arrival = float(label.departure_time + travel[label.node, nxt])
             if use_horizon_check and arrival > horizon + EPS:
                 continue
-            temp = EVState(
-                ev_id=ev.ev_id,
-                current_node=label.node,
-                current_time=label.departure_time,
-                remaining_battery=label.battery,
-                remaining_capacity=ev.remaining_capacity,
-            )
             for p in p_list:
                 free = instance.nodes[nxt].is_depot
                 departure, batt, charge_time, _ = simulate_recharge_departure(

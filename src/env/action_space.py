@@ -344,9 +344,43 @@ def _has_feasible_customer(
         if cached is not None:
             return bool(cached)
 
-    for j in instance.customer_indices:
+    # Vectorized exact prefilter: any basic+depot-ok customer proves continuation.
+    from .ev_decision_analysis import (
+        vectorized_basic_from_state,
+        vectorized_safe_direct_depot_after_service,
+    )
+    basic, cust, _ = vectorized_basic_from_state(
+        instance,
+        node=ev.current_node,
+        current_time=ev.current_time,
+        battery=ev.remaining_battery,
+        capacity=ev.remaining_capacity,
+        served_mask=served_mask,
+        reserved_mask=reserved_mask,
+    )
+    if basic.any():
+        depot_ok = vectorized_safe_direct_depot_after_service(
+            instance,
+            node=ev.current_node,
+            current_time=ev.current_time,
+            battery=ev.remaining_battery,
+            capacity=ev.remaining_capacity,
+            basic_ok=basic,
+            cust=cust,
+            use_horizon_check=use_horizon_check,
+        )
+        if depot_ok.any():
+            if scratch is not None:
+                scratch.has_feasible[key] = True
+            return True
+        # Exact path only for basic survivors that need multi-hop continuation.
+        candidates = cust[basic & ~depot_ok]
+    else:
+        candidates = np.asarray([], dtype=np.int64)
+
+    for j in candidates:
         ok, _ = customer_feasible(
-            instance, ev, j, served_mask, reserved_mask,
+            instance, ev, int(j), served_mask, reserved_mask,
             use_horizon_check, use_depot_charging, charging_portions,
         )
         if ok:

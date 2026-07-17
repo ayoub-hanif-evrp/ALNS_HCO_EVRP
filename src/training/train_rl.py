@@ -427,12 +427,18 @@ def train(config: dict) -> dict:
     _class_histories: dict[str, list[float]] = {c: [] for c in CLASSES}
     _class_served_histories: dict[str, list[float]] = {c: [] for c in CLASSES}
     previous_probe: dict[str, float] = {}
-    probe_instances = _resolve_probe_instances(holdout_meta, train_ds, eval_ds)
+    diag_cfg_early = config.get("diagnostics") or {}
+    run_probes = bool(diag_cfg_early.get("run_cycle_probes", phase == "all_classes"))
+    probe_instances = (
+        _resolve_probe_instances(holdout_meta, train_ds, eval_ds) if run_probes else {}
+    )
     if probe_instances:
         LOGGER.info(
             "Cycle probes: %s",
             {c: getattr(inst, "instance_name", "?") for c, inst in probe_instances.items()},
         )
+    else:
+        LOGGER.info("Cycle probes: disabled")
 
     critic_warmup = int(tcfg.get("critic_warmup_steps", 0))
     critic_updates = int(rl_cfg.critic_updates_per_actor_update)

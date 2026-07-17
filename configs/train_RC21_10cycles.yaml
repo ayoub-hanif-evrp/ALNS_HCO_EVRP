@@ -242,9 +242,10 @@ dashboard:
   live_random_diagnostics: false
 
 diagnostics:
-  parameter_delta_every_updates: 20
-  full_mask_reason_dump_every_updates: 20
+  parameter_delta_every_updates: 0
+  full_mask_reason_dump_every_updates: 0
   timing_enabled: true
+  run_cycle_probes: false
 
 checkpointing:
   save_last_every_updates: 20

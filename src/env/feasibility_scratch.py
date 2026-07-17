@@ -41,6 +41,11 @@ def get_scratch() -> FeasibilityScratch | None:
 
 @contextmanager
 def feasibility_scratch_scope():
+    """Re-entrant: nested calls reuse the outer scratch (one memo table per decision)."""
+    existing = _current_scratch.get()
+    if existing is not None:
+        yield existing
+        return
     scratch = FeasibilityScratch()
     token = _current_scratch.set(scratch)
     try:

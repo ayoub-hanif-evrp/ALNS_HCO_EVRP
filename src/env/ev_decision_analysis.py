@@ -93,6 +93,10 @@ def _customer_arrays(instance):
     )
 
 
+def _customer_index_map(cust: np.ndarray) -> dict[int, int]:
+    return {int(j): i for i, j in enumerate(cust.tolist())}
+
+
 def vectorized_basic_from_state(
     instance,
     *,
@@ -255,14 +259,13 @@ def _annotate_label_customers(
         remaining_capacity=ev.remaining_capacity,
     )
     if need_exact.size:
+        cust_index = _customer_index_map(cust)
         for j in need_exact:
             ok, _ = customer_feasible(
                 instance, sim, int(j), served_mask, reserved_mask,
                 use_horizon_check, use_depot_charging, charging_portions,
             )
-            # Map back into customer-index order.
-            idx = int(np.where(cust == j)[0][0])
-            safe_over_cust[idx] = ok
+            safe_over_cust[cust_index[int(j)]] = ok
 
     label.safe_customer_mask = safe_over_cust
     enabled = cust[safe_over_cust]
@@ -283,105 +286,167 @@ def compute_ev_decision_analysis(
     recharge_config: RechargeSearchConfig | None = None,
     include_station_masks: bool = True,
     force_direct_only: bool = False,
+    seed_from: EVDecisionAnalysis | None = None,
 ) -> EVDecisionAnalysis:
-    """Compute one reusable EVDecisionAnalysis (exact EVRPTW semantics)."""
+    """Compute one reusable EVDecisionAnalysis (exact EVRPTW semantics).
+
+    If ``seed_from`` is a prior direct-only analysis for the same EV/state, its
+    direct masks are reused and only the recharge phase is computed (exact OR).
+    """
     t0 = time.perf_counter()
     portions = list(charging_portions or [0.25, 0.5, 0.75, 1.0])
     cfg = recharge_config or RechargeSearchConfig()
     cust, _d, _r, _du, _s = _customer_arrays(instance)
     n_cust = int(cust.size)
+    cust_index = _customer_index_map(cust)
     stations = list(instance.charging_station_indices)
     depot = instance.depot_index
 
     timing: dict[str, float] = {}
 
     # --- Direct vectorized basic + exact safe continuation ---
-    t_dir = time.perf_counter()
-    direct_basic, cust, reject = vectorized_basic_from_state(
-        instance,
-        node=ev.current_node,
-        current_time=ev.current_time,
-        battery=ev.remaining_battery,
-        capacity=ev.remaining_capacity,
-        served_mask=served_mask,
-        reserved_mask=reserved_mask,
-    )
-    timing["direct_customer_vectorized_ms"] = (time.perf_counter() - t_dir) * 1000.0
-
-    t_safe = time.perf_counter()
-    direct_depot_ok = vectorized_safe_direct_depot_after_service(
-        instance,
-        node=ev.current_node,
-        current_time=ev.current_time,
-        battery=ev.remaining_battery,
-        capacity=ev.remaining_capacity,
-        basic_ok=direct_basic,
-        cust=cust,
-        use_horizon_check=use_horizon_check,
-    )
-    direct_safe = direct_depot_ok.copy()
-    direct_reasons = dict(reject)
-    need_exact = cust[direct_basic & ~direct_depot_ok]
-    if need_exact.size:
-        for j in need_exact:
-            ok, reason = customer_feasible(
-                instance, ev, int(j), served_mask, reserved_mask,
-                use_horizon_check, use_depot_charging, portions,
+    if (
+        seed_from is not None
+        and int(seed_from.ev_id) == int(ev.ev_id)
+        and seed_from.direct_safe_customer_mask is not None
+        and int(seed_from.direct_safe_customer_mask.size) == n_cust
+    ):
+        t_dir = time.perf_counter()
+        direct_basic = np.asarray(seed_from.direct_basic_customer_mask, dtype=bool).copy()
+        direct_safe = np.asarray(seed_from.direct_safe_customer_mask, dtype=bool).copy()
+        direct_reasons = dict(seed_from.direct_customer_reasons)
+        timing["direct_customer_vectorized_ms"] = 0.0
+        timing["safe_continuation_ms"] = (time.perf_counter() - t_dir) * 1000.0
+        mode_by_cust: dict[int, str] = {
+            int(j): "direct" for j in cust[direct_safe]
+        }
+        # Jump to recharge / skip logic below.
+        remaining_mask = (~served_mask[cust]) & (~reserved_mask[cust])
+        skip_recharge = (
+            force_direct_only
+            or (not remaining_mask.any())
+            or bool(np.all(direct_safe | ~remaining_mask))
+        )
+        if skip_recharge:
+            timing["recharge_search_ms"] = 0.0
+            timing["label_customer_vectorized_ms"] = 0.0
+            ok_dep_now, _ = safe_depot_return_from(
+                instance, ev.current_node, ev.current_time, ev.remaining_battery,
+                use_horizon_check=use_horizon_check,
             )
-            idx = int(np.where(cust == j)[0][0])
-            direct_safe[idx] = ok
-            if not ok:
-                direct_reasons[int(j)] = reason
-            else:
-                direct_reasons.pop(int(j), None)
-    # Also mark basic survivors that passed depot_ok as feasible.
-    for j in cust[direct_depot_ok]:
-        direct_reasons.pop(int(j), None)
-    timing["safe_continuation_ms"] = (time.perf_counter() - t_safe) * 1000.0
+            timing["total_ms"] = (time.perf_counter() - t0) * 1000.0
+            return EVDecisionAnalysis(
+                ev_id=int(ev.ev_id),
+                state_version=int(state_version),
+                direct_basic_customer_mask=direct_basic,
+                direct_safe_customer_mask=direct_safe,
+                direct_customer_reasons=direct_reasons,
+                recharge_labels=[],
+                recharge_node_results={},
+                serviceable_customer_mask=direct_safe.copy(),
+                serviceability_mode_by_customer=mode_by_cust,
+                safe_depot_return_direct=bool(ok_dep_now),
+                safe_depot_return_after_recharge=False,
+                feasible_station_mask=np.zeros(len(stations), dtype=bool),
+                useful_station_mask=np.zeros(len(stations), dtype=bool),
+                feasible_depot_recharge=False,
+                useful_depot_recharge=False,
+                feasible_depot_finish=False,
+                timing=timing,
+                hop_limit_hits=0,
+            )
+        # Fall through to recharge phase with seeded direct masks.
+        seeded = True
+    else:
+        seeded = False
 
-    mode_by_cust: dict[int, str] = {
-        int(j): "direct" for j in cust[direct_safe]
-    }
+    if not seeded:
+        t_dir = time.perf_counter()
+        direct_basic, cust, reject = vectorized_basic_from_state(
+            instance,
+            node=ev.current_node,
+            current_time=ev.current_time,
+            battery=ev.remaining_battery,
+            capacity=ev.remaining_capacity,
+            served_mask=served_mask,
+            reserved_mask=reserved_mask,
+        )
+        timing["direct_customer_vectorized_ms"] = (time.perf_counter() - t_dir) * 1000.0
 
-    # Fast path: if this EV can already serve every remaining customer directly,
-    # skip recharge search (exact — recharge cannot disable a direct path).
-    remaining_mask = (~served_mask[cust]) & (~reserved_mask[cust])
-    skip_recharge = (
-        force_direct_only
-        or (not remaining_mask.any())
-        or bool(np.all(direct_safe | ~remaining_mask))
-    )
-
-    if skip_recharge:
-        timing["recharge_search_ms"] = 0.0
-        timing["label_customer_vectorized_ms"] = 0.0
-        ok_dep_now, _ = safe_depot_return_from(
-            instance, ev.current_node, ev.current_time, ev.remaining_battery,
+        t_safe = time.perf_counter()
+        direct_depot_ok = vectorized_safe_direct_depot_after_service(
+            instance,
+            node=ev.current_node,
+            current_time=ev.current_time,
+            battery=ev.remaining_battery,
+            capacity=ev.remaining_capacity,
+            basic_ok=direct_basic,
+            cust=cust,
             use_horizon_check=use_horizon_check,
         )
-        # Station/depot physical checks belong to the hard-mask layer for the
-        # active EV; skip them here so GS across many EVs stays cheap.
-        timing["total_ms"] = (time.perf_counter() - t0) * 1000.0
-        return EVDecisionAnalysis(
-            ev_id=int(ev.ev_id),
-            state_version=int(state_version),
-            direct_basic_customer_mask=direct_basic,
-            direct_safe_customer_mask=direct_safe,
-            direct_customer_reasons=direct_reasons,
-            recharge_labels=[],
-            recharge_node_results={},
-            serviceable_customer_mask=direct_safe.copy(),
-            serviceability_mode_by_customer=mode_by_cust,
-            safe_depot_return_direct=bool(ok_dep_now),
-            safe_depot_return_after_recharge=False,
-            feasible_station_mask=np.zeros(len(stations), dtype=bool),
-            useful_station_mask=np.zeros(len(stations), dtype=bool),
-            feasible_depot_recharge=False,
-            useful_depot_recharge=False,
-            feasible_depot_finish=False,
-            timing=timing,
-            hop_limit_hits=0,
+        direct_safe = direct_depot_ok.copy()
+        direct_reasons = dict(reject)
+        need_exact = cust[direct_basic & ~direct_depot_ok]
+        if need_exact.size:
+            for j in need_exact:
+                ok, reason = customer_feasible(
+                    instance, ev, int(j), served_mask, reserved_mask,
+                    use_horizon_check, use_depot_charging, portions,
+                )
+                idx = cust_index[int(j)]
+                direct_safe[idx] = ok
+                if not ok:
+                    direct_reasons[int(j)] = reason
+                else:
+                    direct_reasons.pop(int(j), None)
+        # Also mark basic survivors that passed depot_ok as feasible.
+        for j in cust[direct_depot_ok]:
+            direct_reasons.pop(int(j), None)
+        timing["safe_continuation_ms"] = (time.perf_counter() - t_safe) * 1000.0
+
+        mode_by_cust = {
+            int(j): "direct" for j in cust[direct_safe]
+        }
+
+        # Fast path: if this EV can already serve every remaining customer directly,
+        # skip recharge search (exact — recharge cannot disable a direct path).
+        remaining_mask = (~served_mask[cust]) & (~reserved_mask[cust])
+        skip_recharge = (
+            force_direct_only
+            or (not remaining_mask.any())
+            or bool(np.all(direct_safe | ~remaining_mask))
         )
+
+        if skip_recharge:
+            timing["recharge_search_ms"] = 0.0
+            timing["label_customer_vectorized_ms"] = 0.0
+            ok_dep_now, _ = safe_depot_return_from(
+                instance, ev.current_node, ev.current_time, ev.remaining_battery,
+                use_horizon_check=use_horizon_check,
+            )
+            # Station/depot physical checks belong to the hard-mask layer for the
+            # active EV; skip them here so GS across many EVs stays cheap.
+            timing["total_ms"] = (time.perf_counter() - t0) * 1000.0
+            return EVDecisionAnalysis(
+                ev_id=int(ev.ev_id),
+                state_version=int(state_version),
+                direct_basic_customer_mask=direct_basic,
+                direct_safe_customer_mask=direct_safe,
+                direct_customer_reasons=direct_reasons,
+                recharge_labels=[],
+                recharge_node_results={},
+                serviceable_customer_mask=direct_safe.copy(),
+                serviceability_mode_by_customer=mode_by_cust,
+                safe_depot_return_direct=bool(ok_dep_now),
+                safe_depot_return_after_recharge=False,
+                feasible_station_mask=np.zeros(len(stations), dtype=bool),
+                useful_station_mask=np.zeros(len(stations), dtype=bool),
+                feasible_depot_recharge=False,
+                useful_depot_recharge=False,
+                feasible_depot_finish=False,
+                timing=timing,
+                hop_limit_hits=0,
+            )
 
     # --- One recharge-chain search per EV ---
     t_rech = time.perf_counter()
@@ -460,7 +525,7 @@ def compute_ev_decision_analysis(
                     use_horizon_check, use_depot_charging, portions,
                 )
                 if ok:
-                    jj = int(np.where(cust == j)[0][0])
+                    jj = cust_index[int(j)]
                     safe_extra[jj] = True
                     serviceable[jj] = True
                     via_recharge[jj] = True
@@ -596,16 +661,15 @@ def get_or_compute_ev_analysis(
     charging_portions: list[float] | None = None,
     include_station_masks: bool | None = None,
     force_direct_only: bool = False,
+    seed_from: EVDecisionAnalysis | None = None,
 ) -> EVDecisionAnalysis:
     """Cached EVDecisionAnalysis keyed by (instance_id, state_version, ev_id, flags)."""
     instance = env.instance
     state_version = int(getattr(env, "state_version", 0))
     instance_id = str(getattr(instance, "instance_name", id(instance)))
-    active_id = getattr(env, "_analysis_active_ev_id", None)
+    # Station masks are unused by hard/pruning layers — always skip (exact OR unchanged).
     if include_station_masks is None:
-        include_station_masks = (
-            active_id is None or int(ev.ev_id) == int(active_id)
-        )
+        include_station_masks = False
     key = (
         instance_id,
         state_version,
@@ -634,6 +698,17 @@ def get_or_compute_ev_analysis(
         metrics["ev_analysis_misses"] = int(metrics.get("ev_analysis_misses", 0)) + 1
         metrics["misses"] = int(metrics.get("misses", 0)) + 1
 
+    # When upgrading direct-only → full, reuse the cached direct analysis as seed.
+    if seed_from is None and not force_direct_only and use_cache:
+        seed_key = (
+            instance_id,
+            state_version,
+            int(ev.ev_id),
+            False,  # include_station_masks
+            True,   # force_direct_only
+        )
+        seed_from = cache.get(seed_key)
+
     uh = env.use_horizon_check if use_horizon_check is None else use_horizon_check
     ud = env.use_depot_charging if use_depot_charging is None else use_depot_charging
     portions = charging_portions if charging_portions is not None else list(env.charging_portions)
@@ -647,6 +722,7 @@ def get_or_compute_ev_analysis(
         recharge_config=cfg,
         include_station_masks=bool(include_station_masks),
         force_direct_only=bool(force_direct_only),
+        seed_from=seed_from,
     )
     if use_cache:
         cache[key] = analysis
@@ -669,14 +745,14 @@ def compute_all_ev_analyses(env) -> dict[int, EVDecisionAnalysis]:
     remaining = (~env.served_mask[cust]) & (~env.reserved_mask[cust])
     out: dict[int, EVDecisionAnalysis] = {}
 
-    # Active EV: always full analysis for exact decision masks.
+    # Active EV: full analysis (station masks skipped — hard layer recomputes them).
     active_ev = None
     if active_id is not None:
         active_ev = next((e for e in unfinished if int(e.ev_id) == int(active_id)), None)
     if active_ev is not None:
         out[int(active_id)] = get_or_compute_ev_analysis(
             env, active_ev,
-            include_station_masks=True,
+            include_station_masks=False,
             force_direct_only=False,
         )
 
@@ -697,13 +773,20 @@ def compute_all_ev_analyses(env) -> dict[int, EVDecisionAnalysis]:
         return out
 
     # Peer pass 2: upgrade with recharge until coverage complete.
-    covered = np.asarray(out[int(active_id)].serviceable_customer_mask, dtype=bool) if active_id in out else np.zeros(cust.size, dtype=bool)
-    for ev in peers:
+    # Prefer high-battery / early-time peers so coverage completes sooner (exact OR).
+    peers_upgrade = sorted(
+        peers,
+        key=lambda e: (-float(e.remaining_battery), float(e.current_time), int(e.ev_id)),
+    )
+    for ev in peers_upgrade:
+        if bool(np.all(covered | ~remaining)):
+            break
         ea = get_or_compute_ev_analysis(
-            env, ev, include_station_masks=False, force_direct_only=False,
+            env, ev,
+            include_station_masks=False,
+            force_direct_only=False,
+            seed_from=out.get(int(ev.ev_id)),
         )
         out[int(ev.ev_id)] = ea
         covered |= np.asarray(ea.serviceable_customer_mask, dtype=bool)
-        if remaining.any() and bool(np.all(covered | ~remaining)):
-            break
     return out
