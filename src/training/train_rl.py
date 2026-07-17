@@ -556,15 +556,28 @@ def train(config: dict) -> dict:
         if epoch % int(tcfg.get("log_every", 1)) == 0:
             inst = record.get("instance_name", "?")
             cyc_tag = f" cycle {cycle_num}" if cycle_num is not None else ""
-            LOGGER.info(
-                f"epoch {epoch:4d}{cyc_tag} | {inst} | "
-                f"macro_J {record.get('macro_objective', record.get('cost', 0)):.0f} | "
-                f"served C/R/RC "
-                f"{record.get('served_rate_C', 0):.2f}/"
-                f"{record.get('served_rate_R', 0):.2f}/"
-                f"{record.get('served_rate_RC', 0):.2f} | "
-                f"mm {rel_mm:.4f} | ev {record.get('critic_explained_variance', 0):.3f}"
+            is_macro = (
+                phase == "all_classes"
+                and float(record.get("macro_update", 0.0)) >= 1.0
             )
+            if is_macro:
+                LOGGER.info(
+                    f"epoch {epoch:4d}{cyc_tag} | {inst} | "
+                    f"macro_J {record.get('macro_objective', record.get('cost', 0)):.0f} | "
+                    f"served C/R/RC "
+                    f"{record.get('served_rate_C', 0):.2f}/"
+                    f"{record.get('served_rate_R', 0):.2f}/"
+                    f"{record.get('served_rate_RC', 0):.2f} | "
+                    f"mm {rel_mm:.4f} | ev {record.get('critic_explained_variance', 0):.3f}"
+                )
+            else:
+                LOGGER.info(
+                    f"epoch {epoch:4d}{cyc_tag} | {inst} | "
+                    f"J {record.get('cost', 0):.0f} | "
+                    f"served {record.get('served_rate', 0):.2f} | "
+                    f"feas {record.get('feasibility_rate', 0):.2f} | "
+                    f"mm {rel_mm:.4f} | ev {record.get('critic_explained_variance', 0):.3f}"
+                )
 
         if improved:
             _save_checkpoint(
@@ -638,14 +651,20 @@ def train(config: dict) -> dict:
                     )
                 dup = snapshot_for_log(get_cycle_counters())
                 dup_warn = expected_per_decision_ok(dup)
-                LOGGER.info(
-                    "cycle %d summary | macro_J %.0f | served %.2f | feas %.2f | "
-                    "C/R/RC served %.2f/%.2f/%.2f",
-                    cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
-                    summary.get("mean_served_rate_C", 0),
-                    summary.get("mean_served_rate_R", 0),
-                    summary.get("mean_served_rate_RC", 0),
-                )
+                if phase == "all_classes":
+                    LOGGER.info(
+                        "cycle %d summary | macro_J %.0f | served %.2f | feas %.2f | "
+                        "C/R/RC served %.2f/%.2f/%.2f",
+                        cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
+                        summary.get("mean_served_rate_C", 0),
+                        summary.get("mean_served_rate_R", 0),
+                        summary.get("mean_served_rate_RC", 0),
+                    )
+                else:
+                    LOGGER.info(
+                        "cycle %d summary | J %.0f | served %.2f | feas %.2f",
+                        cycle_num, c_obj, summary.get("mean_served_ratio", 0), c_feas,
+                    )
                 if probe_instances:
                     probe = _run_class_probes(
                         probe_instances, policy, weights,
@@ -663,18 +682,30 @@ def train(config: dict) -> dict:
                         if k.startswith("probe_")
                     }
                     summary.update(probe)
-                    LOGGER.info(
-                        "cycle %d probes | served C/R/RC %.2f/%.2f/%.2f | "
-                        "obj C/R/RC %.0f/%.0f/%.0f%s",
-                        cycle_num,
-                        probe.get("probe_served_rate_C", 0),
-                        probe.get("probe_served_rate_R", 0),
-                        probe.get("probe_served_rate_RC", 0),
-                        probe.get("probe_objective_C", 0),
-                        probe.get("probe_objective_R", 0),
-                        probe.get("probe_objective_RC", 0),
-                        " | INTERFERENCE" if probe.get("cross_class_interference") else "",
-                    )
+                    if phase == "all_classes":
+                        LOGGER.info(
+                            "cycle %d probes | served C/R/RC %.2f/%.2f/%.2f | "
+                            "obj C/R/RC %.0f/%.0f/%.0f%s",
+                            cycle_num,
+                            probe.get("probe_served_rate_C", 0),
+                            probe.get("probe_served_rate_R", 0),
+                            probe.get("probe_served_rate_RC", 0),
+                            probe.get("probe_objective_C", 0),
+                            probe.get("probe_objective_R", 0),
+                            probe.get("probe_objective_RC", 0),
+                            " | INTERFERENCE" if probe.get("cross_class_interference") else "",
+                        )
+                    else:
+                        # Log only classes that actually have probes (RC-only runs).
+                        parts = []
+                        for cls, _name in probe_instances:
+                            parts.append(
+                                f"{cls} served={probe.get(f'probe_served_rate_{cls}', 0):.2f} "
+                                f"obj={probe.get(f'probe_objective_{cls}', 0):.0f}"
+                            )
+                        if parts:
+                            LOGGER.info("cycle %d probes | %s", cycle_num, " | ".join(parts))
+
                 if timing_enabled:
                     timing_keys = [
                         "timing_decision_analysis_ms", "timing_controlled_closure_ms",
@@ -809,6 +840,43 @@ def train(config: dict) -> dict:
     if summary.get("training_dashboard", {}).get("html"):
         LOGGER.info(f"Training dashboard: {summary['training_dashboard']['html']}")
     LOGGER.info(f"Run archived at: {run_dir}")
+
+    ecfg = config.get("evaluation") or {}
+    if bool(ecfg.get("run_after_training", False)):
+        try:
+            from src.evaluation.evaluate import evaluate as evaluate_fn
+
+            ckpt_path = Path(out_cfg["checkpoints"]) / "best.pt"
+            if not ckpt_path.is_file():
+                ckpt_path = Path(out_cfg["checkpoints"]) / "last.pt"
+            LOGGER.info("Running post-training holdout evaluation | checkpoint=%s", ckpt_path)
+            eval_summary = evaluate_fn(config, checkpoint=str(ckpt_path) if ckpt_path.is_file() else None)
+            # Attach last-cycle training reconstruction mismatch (greedy holdout eval has no step deltas).
+            if rows:
+                last_cycle = max(int(r.get("cycle", 0) or 0) for r in rows)
+                cycle_rows = [r for r in rows if int(r.get("cycle", 0) or 0) == last_cycle] or rows[-max(1, len(train_ds)):]
+                train_mm = sum(float(r.get("relative_objective_mismatch", 0.0) or 0.0) for r in cycle_rows) / max(len(cycle_rows), 1)
+                holdout = dict(eval_summary.get("holdout_report") or {})
+                holdout["training_last_cycle_relative_objective_mismatch"] = round(train_mm, 6)
+                eval_summary["holdout_report"] = holdout
+                LOGGER.info(
+                    "  Training last-cycle objective reconstruction mismatch (rel): %.6f",
+                    train_mm,
+                )
+            summary["holdout_evaluation"] = eval_summary
+            (run_dir / "holdout_eval_summary.json").write_text(
+                json.dumps(eval_summary, indent=2), encoding="utf-8",
+            )
+            # Refresh written summary with holdout block.
+            (results_dir / "training_summary.json").write_text(
+                json.dumps(summary, indent=2), encoding="utf-8",
+            )
+            (run_dir / "final_summary.json").write_text(
+                json.dumps(summary, indent=2), encoding="utf-8",
+            )
+        except Exception as exc:
+            LOGGER.warning("Post-training holdout evaluation failed: %s", exc)
+
     return summary
 
 

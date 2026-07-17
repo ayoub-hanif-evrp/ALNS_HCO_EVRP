@@ -17,7 +17,17 @@ class ConstraintConfig:
 
     @classmethod
     def from_config(cls, config: dict) -> "ConstraintConfig":
-        raw = config.get("constraints") or {}
+        raw = dict(config.get("constraints") or {})
+        # Allow the same keys under environment (RC-only / experiment configs).
+        env = config.get("environment") or {}
+        for key in (
+            "time_windows_mode",
+            "allow_late_service",
+            "relax_time_windows",
+            "modify_instance_time_windows",
+        ):
+            if key in env and key not in raw:
+                raw[key] = env[key]
         return cls(
             time_windows_mode=str(raw.get("time_windows_mode", "hard_original")),
             allow_late_service=bool(raw.get("allow_late_service", False)),

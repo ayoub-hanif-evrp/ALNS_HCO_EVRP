@@ -324,7 +324,64 @@ def evaluate(
             rows, Path(out["results"]) / "class_macro_average.json",
         )
         out_summary["class_macro_report"] = report
+    holdout_report = _log_holdout_eval_report(rows, method_filter="model_greedy")
+    if holdout_report:
+        out_summary["holdout_report"] = holdout_report
+        (Path(out["results"]) / "holdout_eval_summary.json").write_text(
+            json.dumps(holdout_report, indent=2), encoding="utf-8",
+        )
     return out_summary
+
+
+def _mean_rows(rows: list[dict], key: str) -> float:
+    vals = [float(r.get(key, 0.0) or 0.0) for r in rows]
+    return sum(vals) / max(len(vals), 1)
+
+
+def _log_holdout_eval_report(rows: list[dict], *, method_filter: str | None = "model_greedy") -> dict:
+    """Log RC holdout metrics requested for the RC-only experiment."""
+    if not rows:
+        return {}
+    selected = rows
+    if method_filter:
+        filtered = [r for r in rows if r.get("method") == method_filter]
+        if filtered:
+            selected = filtered
+        else:
+            # Fall back to first method present.
+            methods = sorted({str(r.get("method")) for r in rows})
+            selected = [r for r in rows if r.get("method") == methods[0]]
+    n = len(selected)
+    report = {
+        "num_instances": n,
+        "instances": [r.get("instance_name") for r in selected],
+        "served_ratio": round(_mean_rows(selected, "served_ratio"), 6),
+        "feasibility_rate": round(sum(1 for r in selected if r.get("feasible")) / max(n, 1), 6),
+        "original_objective": round(_mean_rows(selected, "original_objective"), 4),
+        "station_action_fraction": round(_mean_rows(selected, "fraction_station_actions"), 6),
+        "depot_lateness": round(_mean_rows(selected, "depot_lateness"), 4),
+        "battery_violations": round(_mean_rows(selected, "battery_violations"), 4),
+        "max_step_terminations": round(_mean_rows(selected, "max_step_terminations"), 4),
+        "objective_reconstruction_mismatch": round(
+            _mean_rows(selected, "relative_objective_mismatch"), 6
+        ),
+    }
+    LOGGER.info("=" * 60)
+    LOGGER.info("Holdout evaluation (RC _21 reserved instances)")
+    LOGGER.info("  Instances (%d): %s", n, ", ".join(str(x) for x in report["instances"]))
+    LOGGER.info("  Served ratio: %.4f", report["served_ratio"])
+    LOGGER.info("  Feasibility rate: %.4f", report["feasibility_rate"])
+    LOGGER.info("  Original objective: %.2f", report["original_objective"])
+    LOGGER.info("  Station-action fraction: %.4f", report["station_action_fraction"])
+    LOGGER.info("  Depot lateness: %.4f", report["depot_lateness"])
+    LOGGER.info("  Battery violations: %.4f", report["battery_violations"])
+    LOGGER.info("  Max-step terminations: %.4f", report["max_step_terminations"])
+    LOGGER.info(
+        "  Objective reconstruction mismatch (rel): %.6f",
+        report["objective_reconstruction_mismatch"],
+    )
+    LOGGER.info("=" * 60)
+    return report
 
 
 def evaluate_from_config_path(config_path: str, checkpoint: str | None = None) -> dict:

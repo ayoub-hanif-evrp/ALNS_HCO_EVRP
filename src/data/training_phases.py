@@ -28,6 +28,7 @@ _PHASE_ALIASES = {
     "single_rc": "single_rc",
     "single_rc_overfit": "single_rc",
     "full_rc": "full_rc",
+    "rc_only": "full_rc",
     "rc_stabilization": "full_rc",
     "all_classes": "all_classes",
     "mixed_c_r_rc": "all_classes",
@@ -38,6 +39,8 @@ def normalize_training_phase(config: dict) -> str:
     """Return canonical phase name from ``dataset.training_phase`` or legacy keys."""
     ds = config.get("dataset") or {}
     raw = ds.get("training_phase")
+    if raw is None:
+        raw = ds.get("phase")
     if raw is None:
         raw = ds.get("curriculum_stage", "full_rc")
     key = str(raw).lower().strip()
@@ -158,7 +161,13 @@ def resolve_training_phase_split(config: dict) -> tuple[list[str], list[str], di
 def log_training_phase_startup(meta: dict, *, updates: int | None = None, cycles: int | None = None) -> None:
     phase = meta.get("training_phase") or meta.get("curriculum_stage", "?")
     LOGGER.info("=" * 60)
-    LOGGER.info("Training phase: %s", phase)
+    if phase == "full_rc":
+        LOGGER.info("Training phase: RC only")
+        LOGGER.info("Train instances: RC _21 only")
+        LOGGER.info("C/R instances: excluded")
+        LOGGER.info("Mixed macro updates: disabled")
+    else:
+        LOGGER.info("Training phase: %s", phase)
     LOGGER.info("  Train instances (%d): %s", meta.get("num_train", 0), ", ".join(meta.get("train_instances") or []))
     LOGGER.info(
         "  Holdout / eval (%d): %s",
@@ -182,6 +191,7 @@ def log_training_phase_startup(meta: dict, *, updates: int | None = None, cycles
             )
         else:
             n = int(meta.get("num_train") or 0)
+            LOGGER.info("Cycles: %d", int(cycles))
             LOGGER.info("  Planned cycles: %d (= %d updates if sequential)", int(cycles), int(cycles) * max(n, 1))
     LOGGER.info("=" * 60)
 

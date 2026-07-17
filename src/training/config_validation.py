@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from src.data.instance_class import instance_class
+from src.data.training_phases import normalize_training_phase
 from src.env.constraints import ConstraintConfig
 from src.utils.logging_utils import get_logger
 
@@ -36,8 +37,6 @@ def validate_training_config(config: dict) -> list[str]:
         raise ValueError(
             "environment.action_pruning.enabled must stay true — hard feasibility and pruning layers are required."
         )
-
-    from src.data.training_phases import normalize_training_phase
 
     phase = normalize_training_phase(config)
     train_names = list(ds.get("train_instances") or [])
@@ -190,7 +189,21 @@ def apply_safe_training_defaults(config: dict) -> dict:
     config["training"].setdefault("generate_static_dashboard", False)
     config["training"].setdefault("live_checkpoint_every", 0)  # superseded by checkpointing.save_last_every_updates
     config["training"].setdefault("maps_checkpoint_every", 0)
-    config["training"].setdefault("macro_class_updates", True)
+    # Alias: mixed_macro_updates → macro_class_updates
+    tcfg = config["training"]
+    if "mixed_macro_updates" in tcfg and "macro_class_updates" not in tcfg:
+        tcfg["macro_class_updates"] = bool(tcfg["mixed_macro_updates"])
+    phase = normalize_training_phase(config)
+    # Macro C+R+RC updates only make sense for all_classes; default off otherwise.
+    if phase == "all_classes":
+        tcfg.setdefault("macro_class_updates", True)
+    else:
+        tcfg.setdefault("macro_class_updates", False)
+    # Prefer model.torch_compile when gpu.torch_compile is unset (RC experiment configs).
+    gpu_cfg = config.setdefault("gpu", {})
+    model_cfg = config.setdefault("model", {})
+    if "torch_compile" not in gpu_cfg:
+        gpu_cfg["torch_compile"] = bool(model_cfg.get("torch_compile", False))
     dcfg = config.setdefault("dashboard", {})
     dcfg.setdefault("class_ma_window", 20)
     dcfg.setdefault("save_representative_traces", True)

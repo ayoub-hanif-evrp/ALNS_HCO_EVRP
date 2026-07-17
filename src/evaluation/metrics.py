@@ -23,6 +23,14 @@ def build_result_row(
         if instance.nodes[node].is_charging_station
     )
     feasible = env.feasible_solution()
+    n_cust = max(int(instance.num_customers), 1)
+    cust_a = float(getattr(env, "customer_actions", 0))
+    st_a = float(getattr(env, "station_actions", 0))
+    dep_a = float(getattr(env, "depot_finish_count", 0)) + float(getattr(env, "depot_recharge_count", 0))
+    n_actions = max(cust_a + st_a + dep_a, 1.0)
+    max_steps = bool(getattr(env, "max_steps_reached", False)) or env.get_done_reason() == "max_steps"
+    # Greedy/closed-form eval scores the final solution once (no step-delta reconstruction).
+    rel_mismatch = float(getattr(env, "relative_objective_mismatch", 0.0) or 0.0)
     return {
         "method": method,
         "instance_name": instance.instance_name,
@@ -34,12 +42,15 @@ def build_result_row(
         "used_EVs": summary.used_evs,
         "feasible": feasible,
         "served_customer_count": env.num_served_customers,
+        "served_ratio": round(env.num_served_customers / n_cust, 6),
         "total_distance": round(summary.total_distance, 4),
         "total_duration": round(summary.total_duration, 4),
         "total_waiting_time": round(summary.total_waiting_time, 4),
         "total_charging_time": round(summary.total_charging_time, 4),
         "total_charging_price": round(summary.total_charging_price, 4),
         "number_of_station_visits": station_visits,
+        "station_actions": int(st_a),
+        "fraction_station_actions": round(st_a / n_actions, 6),
         "number_of_unserved_customers": summary.unserved_customers,
         "number_of_reserved_unfinished_customers": summary.unresolved_reserved_customers,
         "duplicate_customer_visits": summary.duplicate_customer_visits,
@@ -49,8 +60,13 @@ def build_result_row(
         "battery_violations": env.battery_violation_count,
         "capacity_violations": env.capacity_violation_count,
         "depot_return_violations": summary.depot_return_violation,
+        "max_steps_reached": int(max_steps),
+        "max_step_terminations": int(max_steps),
         "objective_value": round(objective, 4),
         "true_evrptw_objective": round(objective, 4),
+        "original_objective": round(objective, 4),
+        "relative_objective_mismatch": rel_mismatch,
+        "objective_reconstruction_mismatch": rel_mismatch,
         "evaluation_uses_shaped_reward": False,
         "runtime_seconds": round(runtime_seconds, 4),
     }
