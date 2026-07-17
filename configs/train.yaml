@@ -1,6 +1,6 @@
 # Full training — 100-customer C + R + RC with deterministic interleaving.
 #   Order each cycle: C1 -> R1 -> RC1 -> C2 -> R2 -> RC2 -> ... (filename-sorted, no shuffle).
-#   Smaller class lists wrap so C/R/RC contribute equally; repeat for 20 cycles.
+#   Smaller class lists wrap so C/R/RC contribute equally; repeat for 10 cycles.
 #   python main_train.py --config configs/train.yaml --device cuda
 
 seed: 42
@@ -84,7 +84,7 @@ training:
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  cycles: 20
+  cycles: 10
   shuffle_within_pass: false
   reward_scale: 10000.0
   log_every: 1
