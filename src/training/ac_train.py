@@ -90,6 +90,9 @@ def actor_critic_train_step(
     critic_updates_per_step: int = 2,
     environment_config: dict | None = None,
     parameter_delta_every_updates: int = 20,
+    bc_episodes: list | None = None,
+    bc_instance_by_name: dict | None = None,
+    bc_regularization_cfg: dict | None = None,
 ) -> dict:
     """One actor-critic update: separate critic passes then actor pass."""
     policy.train()
@@ -269,6 +272,8 @@ def actor_critic_train_step(
     class_actor_loss_log: dict[str, float] = {}
     class_critic_loss_log: dict[str, float] = {}
     class_entropy_log: dict[str, float] = {}
+    bc_coef = 0.0
+    bc_loss_val = 0.0
 
     for _pass in range(critic_passes):
         t_c0 = time.perf_counter()
@@ -341,6 +346,21 @@ def actor_critic_train_step(
             scaled = (macro_actor - entropy_coef * macro_entropy) / accum
             if class_q_terms:
                 scaled = scaled + (rl_cfg.q_critic_coef * _class_equal_mean(class_q_terms)) / accum
+            # Optional decaying BC regularization (warm-start fine-tune).
+            if bc_episodes and bc_instance_by_name and bc_regularization_cfg:
+                from src.training.behavior_cloning import bc_coef_at_update, bc_loss_on_demo_batch
+                bc_coef = bc_coef_at_update(
+                    {"bc_regularization": bc_regularization_cfg}, global_epoch,
+                )
+                if bc_coef > 0.0:
+                    bc_loss, _bc_m = bc_loss_on_demo_batch(
+                        policy, bc_episodes, bc_instance_by_name,
+                        device=device_t,
+                        batch_episodes=int(bc_regularization_cfg.get("batch_episodes", 1)),
+                        rng=rng,
+                    )
+                    scaled = scaled + (bc_coef * bc_loss) / accum
+                    bc_loss_val = float(bc_loss.detach())
             if use_amp and device_t.type == "cuda" and scaler is not None:
                 scaler.scale(scaled).backward()
             else:
@@ -445,6 +465,8 @@ def actor_critic_train_step(
         "algorithm": "actor_critic",
         "macro_update": float(len(present_classes) >= 2),
         "n_classes_in_update": float(len(present_classes)),
+        "bc_regularization_coef": float(bc_coef),
+        "bc_regularization_loss": float(bc_loss_val),
         **{f"timing_{k}": float(v) for k, v in timing.items()},
         **{f"dup_{k}": int(v) for k, v in counter_snap.items()},
         **class_metric_out,

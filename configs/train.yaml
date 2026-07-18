@@ -1,12 +1,53 @@
-# Full training — 100-customer C + R + RC with deterministic interleaving.
-#   Order each cycle: C1 -> R1 -> RC1 -> C2 -> R2 -> RC2 -> ... (filename-sorted, no shuffle).
-#   Smaller class lists wrap so C/R/RC contribute equally; repeat for 20 cycles.
-#   Each optimizer step uses one C + one R + one RC rollout (class-balanced macro-update).
+# Full warm-start pipeline (Expert → BC → RL fine-tune → Eval).
+# Only user command needed:
 #   python main_train.py --config configs/train.yaml --device cuda
+# Then:
+#   python main_dashboard.py
 
 seed: 42
 device: cuda
 deterministic: false
+
+pipeline:
+  run_internal_checks: true
+  run_expert: true
+  generate_demonstrations: true
+  run_behavior_cloning: true
+  run_rl_finetuning: true
+  run_final_evaluation: true
+  reuse_cached_stages: true
+
+expert:
+  enabled: true
+  lookahead_depth: 0
+  max_customer_candidates: 15
+  max_recharge_candidates: 5
+  debug_dump_dir: outputs/expert_diagnostics
+
+behavior_cloning:
+  enabled: true
+  epochs: 20
+  batch_episodes: 2
+  batch_size: 64
+  learning_rate: 0.0001
+  grad_clip: 1.0
+  log_every: 1
+  validation_split: 0.1
+  early_stopping: false
+  output_dir: outputs/bc
+
+initialization:
+  # Overwritten by the pipeline to the current run's bc/bc_best_policy.pt
+  actor_checkpoint: outputs/bc/bc_best_policy.pt
+  load_actor: true
+  load_critic: false
+  reset_optimizer: true
+
+demonstrations:
+  # Overwritten by the pipeline to the current run directory
+  input: outputs/demonstrations/demonstrations.pt
+  output: outputs/demonstrations/demonstrations.pt
+  eval_report: outputs/demonstrations/expert_eval_report.json
 
 constraints:
   time_windows_mode: hard_original
@@ -16,6 +57,10 @@ constraints:
 
 environment:
   mask_semantics: exact_original_evrptw
+  time_windows_mode: hard_original
+  allow_late_service: false
+  relax_time_windows: false
+  modify_instance_time_windows: false
   implementation: optimized
   assert_mask_parity_during_debug: true
   performance:
@@ -42,37 +87,34 @@ gpu:
 
 dataset:
   path: dataset/Schneider/evrptw_instances
-  training_phase: all_classes
+  training_phase: full_rc
+  phase: rc_only
   classes:
-    - C
-    - R
     - RC
-  # Schneider full-size 100-customer instances
   instance_suffix: "_21"
   customers: 100
-  sampling: interleaved_deterministic
-  class_order: ["C", "R", "RC"]
-  shuffle_instances: false
-  class_filter: ["C", "R", "RC"]
+  use_holdout: true
+  class_filter: ["RC"]
   train_size_filter: ["_21"]
   eval_size_filter: ["_21"]
-  auto_discover_rc21: false
+  shuffle_instances: false
+  auto_discover_rc21: true
+  use_all_training_instances: true
+  expected_train_count: 13
+  expected_eval_count: 3
+  fail_if_train_count_mismatch: true
+  eval_instances:
+    - rc101_21
+    - rc104_21
+    - rc208_21
   holdout_by_class:
-    C:
-      - c101_21
-      - c104_21
-      - c208_21
-    R:
-      - r101_21
-      - r104_21
-      - r211_21
     RC:
       - rc101_21
       - rc104_21
       - rc208_21
 
 optimizer:
-  actor_lr: 0.0001
+  actor_lr: 0.00005
   critic_lr: 0.0003
   actor_grad_clip: 1.0
   critic_grad_clip: 1.0
@@ -81,13 +123,14 @@ optimizer:
 
 training:
   method: actor_critic
-  learning_rate: 0.0001
+  learning_rate: 0.00005
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  cycles: 20
+  cycles: 10
   shuffle_within_pass: false
-  macro_class_updates: true
+  mixed_macro_updates: false
+  macro_class_updates: false
   reward_scale: 10000.0
   log_every: 1
   checkpoint_every: 0
@@ -112,6 +155,8 @@ critic:
   auxiliary_coef: 0.1
 
 rl:
+  enabled: true
+  finetune_from_bc: true
   formulation: semi_markov_decision_epochs
   use_step_rewards: true
   use_gae: true
@@ -129,7 +174,7 @@ rl:
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent
   served_bonus_coef: 0.5
-  use_urgency_bonus: false
+  use_urgency_bonus: true
   urgency_bonus_coef: 0.5
   use_newly_expired_customer_penalty: true
   newly_expired_customer_penalty: 1.0
@@ -142,9 +187,15 @@ rl:
   early_depot_penalty_coef: 2.0
   use_step_penalty: false
   step_penalty: 0.01
-  use_urgent_customer_rank_penalty: false
+  use_urgent_customer_rank_penalty: true
   urgent_rank_penalty_coef: 0.2
   urgent_rank_k: 10
+  bc_regularization:
+    enabled: true
+    coefficient_initial: 0.1
+    coefficient_final: 0.0
+    decay_updates: 200
+    batch_episodes: 1
   use_customer_priority_logit_bias: true
   customer_logit_bonus: 1.0
   unnecessary_station_logit_penalty: 1.5
@@ -224,6 +275,7 @@ outputs:
   traces: outputs/traces
 
 dashboard:
+  auto_latest_run: true
   refresh_every_cycles: 1
   generate_full_artifacts_during_training: false
   generate_full_solution_maps_every_cycles: 5
@@ -236,9 +288,10 @@ dashboard:
   live_random_diagnostics: false
 
 diagnostics:
-  parameter_delta_every_updates: 20
-  full_mask_reason_dump_every_updates: 20
+  parameter_delta_every_updates: 0
+  full_mask_reason_dump_every_updates: 0
   timing_enabled: true
+  run_cycle_probes: false
 
 checkpointing:
   save_last_every_updates: 20
@@ -254,6 +307,7 @@ maps_dashboard:
 evaluation:
   decoding: greedy
   multi_sample_n: 16
+  run_after_training: false
   local_search:
     enabled: false
     max_iterations: 50

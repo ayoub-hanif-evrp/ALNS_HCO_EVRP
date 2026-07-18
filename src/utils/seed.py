@@ -34,7 +34,7 @@ def resolve_device(device: str = "auto") -> torch.device:
             "You likely have the CPU-only PyTorch wheel installed.\n"
             "Fix (pick your CUDA version from https://pytorch.org/get-started/locally/):\n"
             "  pip install torch --index-url https://download.pytorch.org/whl/cu124\n"
-            "Then verify: python scripts/check_gpu.py"
+            "Then verify CUDA with: python -c \"import torch; print(torch.cuda.is_available())\""
         )
     return torch.device(device)
 

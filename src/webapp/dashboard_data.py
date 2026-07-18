@@ -257,17 +257,33 @@ def cycle_aggregate_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_metrics_df(log_path: Path) -> pd.DataFrame:
-    """Primary source: live JSONL; fall back to results CSV if JSONL is empty."""
+    """Primary source: live JSONL; fall back to run/results CSVs if JSONL is empty."""
     rows = read_log(log_path)
     if rows:
         return pd.DataFrame(rows)
 
-    csv_path = Path(log_path).parent.parent / "results" / "training_metrics.csv"
-    if csv_path.exists() and csv_path.stat().st_size > 0:
-        try:
-            return pd.read_csv(csv_path)
-        except Exception:
-            pass
+    log_path = Path(log_path)
+    candidates = [
+        log_path.parent.parent / "results" / "training_metrics.csv",
+        log_path.parent.parent / "metrics" / "rl_metrics.csv",
+        log_path.parent.parent / "rl" / "rl_metrics.csv",
+        log_path.parent / "rl_metrics.csv",
+        log_path.with_name("metrics.csv"),
+    ]
+    # If log lives under outputs/runs/run_*/logs/, also try sibling metrics.
+    run_dir = log_path.parent.parent if log_path.parent.name == "logs" else None
+    if run_dir is not None:
+        candidates.extend([
+            run_dir / "metrics" / "rl_metrics.csv",
+            run_dir / "rl" / "rl_metrics.csv",
+            run_dir / "metrics.csv",
+        ])
+    for csv_path in candidates:
+        if csv_path.exists() and csv_path.stat().st_size > 0:
+            try:
+                return pd.read_csv(csv_path)
+            except Exception:
+                continue
     return pd.DataFrame()
 
 

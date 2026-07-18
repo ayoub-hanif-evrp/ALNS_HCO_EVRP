@@ -10,13 +10,13 @@ The raw ``dataset/vrptw_instances/`` folder is never read here.
 """
 from __future__ import annotations
 
+import csv
 import json
 import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 
 # Order of per-node features fed to the encoder.
@@ -289,13 +289,13 @@ def _load_station_arrays(
     stations_path = instance_dir / "stations.csv"
     if not stations_path.exists():
         return None, None
-    st_df = pd.read_csv(stations_path)
     rates = np.full(num_nodes, np.nan, dtype=np.float32)
     prices = np.full(num_nodes, np.nan, dtype=np.float32)
-    for _, row in st_df.iterrows():
-        nid = int(row["node_id"])
-        rates[nid] = float(row["charging_rate"])
-        prices[nid] = expected_lognormal_mean(float(row["price_mu"]), float(row["price_sigma"]))
+    with stations_path.open(newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            nid = int(row["node_id"])
+            rates[nid] = float(row["charging_rate"])
+            prices[nid] = expected_lognormal_mean(float(row["price_mu"]), float(row["price_sigma"]))
     if depot_has_charging:
         if np.isnan(rates[depot_index]):
             median_rate = float(np.nanmedian(rates))
@@ -343,11 +343,14 @@ def load_instance(instance_dir: str | Path, *, load_capacity: float | None = Non
         _validate_summary_vehicle_params(summary, vp, str(meta["instance_name"]))
 
     # Prefer nodes.csv for normalized features; fall back to JSON nodes.
+    # Use the stdlib csv module (not pandas) so loaders work on Python builds
+    # where pandas/pyarrow crashes at import or string-dtype construction.
     nodes: list[Node] = []
     if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        df = df.sort_values("id").reset_index(drop=True)
-        for _, row in df.iterrows():
+        with csv_path.open(newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        rows.sort(key=lambda r: int(r["id"]))
+        for row in rows:
             nodes.append(_node_from_row(row, vp, meta))
     else:
         planning_horizon = float(meta["planning_horizon"])
@@ -397,7 +400,7 @@ def load_instance(instance_dir: str | Path, *, load_capacity: float | None = Non
     return instance
 
 
-def _node_from_row(row: pd.Series, vp: dict, meta: dict) -> Node:
+def _node_from_row(row: dict, vp: dict, meta: dict) -> Node:
     return Node(
         id=int(row["id"]),
         string_id=str(row["string_id"]),

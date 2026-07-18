@@ -19,6 +19,7 @@ from src.webapp.dashboard_data import (
     prepare_metrics_df,
     progress_from_metrics,
     training_plan_from_config,
+    _latest_run_dir,
 )
 from src.webapp.plot_style import STAGE_COLORS
 
@@ -168,6 +169,73 @@ def _client_connected(*containers) -> bool:
     return all(not c.is_deleted for c in containers)
 
 
+def _load_pipeline_comparison(outputs_root: Path) -> dict | None:
+    run_dir = _latest_run_dir(outputs_root)
+    if run_dir is None:
+        return None
+    for rel in (
+        "dashboard/warmstart_comparison.json",
+        "pipeline_summary.json",
+    ):
+        path = run_dir / rel
+        if path.is_file():
+            try:
+                import json
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return data.get("comparison") or data
+            except Exception:
+                continue
+    return None
+
+
+def _render_pipeline_comparison(comparison: dict) -> None:
+    methods = comparison.get("methods") or {}
+    if not methods:
+        return
+    rows = [
+        ("Served ratio", "served_ratio"),
+        ("Feasibility", "feasibility"),
+        ("Objective", "objective"),
+        ("Unserved", "unserved"),
+        ("Station-action fraction", "station_action_fraction"),
+        ("Depot finishes", "depot_finishes"),
+        ("Battery violations", "battery_violations"),
+        ("TW violations", "tw_violations"),
+        ("Capacity violations", "capacity_violations"),
+        ("Depot lateness", "depot_lateness"),
+        ("Max-step terminations", "max_step_terminations"),
+        ("Obj. recon. mismatch", "objective_reconstruction_mismatch"),
+    ]
+    cols = list(methods.keys())
+    with ui.card().classes(_SECTION):
+        with ui.element("div").classes(_SECTION_HEAD):
+            ui.label("Pipeline stage comparison").classes("text-sm font-semibold text-slate-800")
+            ui.label("Expert → BC → RL fine-tune → final holdout").classes("text-xs text-slate-500")
+        with ui.element("div").classes(_SECTION_BODY):
+            # Simple HTML table
+            header = "".join(f"<th style='padding:6px 10px;text-align:right'>{c}</th>" for c in cols)
+            body = []
+            for label, key in rows:
+                cells = []
+                for c in cols:
+                    v = (methods.get(c) or {}).get(key)
+                    if v is None:
+                        txt = "—"
+                    elif isinstance(v, float):
+                        txt = f"{v:.4g}"
+                    else:
+                        txt = str(v)
+                    cells.append(f"<td style='padding:6px 10px;text-align:right'>{txt}</td>")
+                body.append(
+                    f"<tr><th style='padding:6px 10px;text-align:left'>{label}</th>{''.join(cells)}</tr>"
+                )
+            ui.html(
+                "<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+                f"<thead><tr><th></th>{header}</tr></thead>"
+                f"<tbody>{''.join(body)}</tbody></table>"
+            )
+
+
 def create_dashboard(
     log_path: str | Path,
     *,
@@ -283,12 +351,16 @@ def create_dashboard(
             # ---- Charts ----
             charts_panel.clear()
             with charts_panel:
+                comparison = _load_pipeline_comparison(outputs_root)
+                if comparison:
+                    _render_pipeline_comparison(comparison)
+
                 if df.empty:
                     with ui.card().classes(_SECTION + " p-10 text-center"):
                         ui.label("Waiting for training metrics…").classes("text-slate-600")
-                        ui.label("python main_train.py").classes("text-xs font-mono text-slate-400 mt-2")
-                        ui.label("Then open this page in a second terminal:").classes("text-xs text-slate-400 mt-3")
-                        ui.label("python main_dashboard.py").classes("text-xs font-mono text-slate-400")
+                        ui.label("python main_train.py --config configs/train.yaml --device cuda").classes(
+                            "text-xs font-mono text-slate-400 mt-2"
+                        )
                     return
 
                 chart_sections = get_training_chart_sections(df, plan)
@@ -322,8 +394,8 @@ def create_dashboard(
                 "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
-                    ui.label("MARL EVRP · Live training diagnostics").classes("text-lg font-bold")
-                    ui.label(f"{log_path} · Schneider RC _21 training only").classes("text-xs text-slate-400")
+                    ui.label("MARL EVRP · Pipeline dashboard").classes("text-lg font-bold")
+                    ui.label(f"{log_path} · auto-loads latest outputs/runs/run_*").classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
                     ui.link("Maps dashboard", f"http://127.0.0.1:{maps_dashboard_port}").props(
                         "target=_blank outline"

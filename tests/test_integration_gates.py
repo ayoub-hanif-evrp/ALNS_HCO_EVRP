@@ -77,7 +77,7 @@ def test_policy_reuses_analysis_features():
     from src.models.policy import TransformerEVRPTWPolicy
     from src.utils.config import load_config
 
-    cfg = load_config(str(ROOT / "configs" / "train_schneider_RC21_exact_optimized.yaml"))
+    cfg = load_config(str(ROOT / "configs" / "train.yaml"))
     inst = load_instance(SMALL)
     env = EVRPTWEnv(inst, m=2, charging_portions=cfg["problem"]["charging_portions"])
     env.environment_config = cfg["environment"]

@@ -265,6 +265,20 @@ def train(config: dict) -> dict:
     charging_portions = config["problem"]["charging_portions"]
     weights = CostWeights.from_config(config["cost"])
     policy = build_policy(config, charging_portions).to(device)
+    init_cfg = config.get("initialization") or {}
+    if bool(init_cfg.get("load_actor", False)):
+        ckpt_path = Path(str(init_cfg.get("actor_checkpoint") or ""))
+        if not ckpt_path.is_file():
+            raise FileNotFoundError(
+                f"initialization.actor_checkpoint not found: {ckpt_path}. "
+                "Run the full pipeline first: python main_train.py --config configs/train.yaml"
+            )
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        missing, unexpected = policy.load_state_dict(ckpt["model_state"], strict=False)
+        LOGGER.info(
+            "Initialized actor from BC checkpoint %s (missing=%d unexpected=%d)",
+            ckpt_path, len(missing), len(unexpected),
+        )
     rl_cfg = RLConfig.from_config(config)
     use_amp = bool(tcfg.get("use_amp", False)) and device.type == "cuda"
     grad_accum = int(tcfg.get("gradient_accumulation_steps", 1))
@@ -286,6 +300,11 @@ def train(config: dict) -> dict:
     actor_lr, critic_lr = _resolve_learning_rates(config)
     optimizer = torch.optim.Adam(policy.parameters(), lr=actor_lr)
     critic_optimizer = torch.optim.Adam(critic_parameters(value_critic, q_critic), lr=critic_lr)
+    # Fresh optimizer after BC warm-start (default).
+    if bool(init_cfg.get("load_actor", False)) and bool(init_cfg.get("reset_optimizer", True)):
+        optimizer = torch.optim.Adam(policy.parameters(), lr=actor_lr)
+        critic_optimizer = torch.optim.Adam(critic_parameters(value_critic, q_critic), lr=critic_lr)
+        LOGGER.info("Optimizers reset after BC actor load (actor_lr=%.6f critic_lr=%.6f)", actor_lr, critic_lr)
     entropy_coef = float(tcfg.get("entropy_coef", 0.01))
     actor_grad_clip = float(rl_cfg.actor_grad_clip)
     critic_grad_clip = float(rl_cfg.critic_grad_clip)
@@ -298,19 +317,27 @@ def train(config: dict) -> dict:
 
     out_cfg = config["outputs"]
     resume_path = tcfg.get("resume_from")
-    if not resume_path:
+    pipeline_run = config.get("pipeline_run_dir")
+    if not resume_path and not pipeline_run:
         clear_training_outputs(out_cfg)
     Path(out_cfg["checkpoints"]).mkdir(parents=True, exist_ok=True)
+    Path(out_cfg["logs"]).mkdir(parents=True, exist_ok=True)
     log_path = Path(out_cfg["logs"]) / "train_log.jsonl"
     jsonl = JsonlLogger(log_path)
     results_dir = Path(out_cfg["results"])
     results_dir.mkdir(parents=True, exist_ok=True)
     train_csv = CsvLogger(results_dir / "training_metrics.csv")
 
-    run_id = time.strftime("run_%Y%m%d_%H%M%S")
-    run_dir = Path(out_cfg["root"]) / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    if pipeline_run:
+        run_dir = Path(pipeline_run)
+        run_id = run_dir.name
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "rl").mkdir(parents=True, exist_ok=True)
+    else:
+        run_id = time.strftime("run_%Y%m%d_%H%M%S")
+        run_dir = Path(out_cfg["root"]) / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "config.json").write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
     holdout_meta = {
         "training_phase": phase,
         "train_instances": list(train_ds.names),
@@ -445,6 +472,20 @@ def train(config: dict) -> dict:
     diag_cfg = config.get("diagnostics") or {}
     param_delta_every = int(diag_cfg.get("parameter_delta_every_updates", 20))
     timing_enabled = bool(diag_cfg.get("timing_enabled", True))
+
+    # Optional BC regularization demos (early RL fine-tune).
+    bc_episodes = None
+    bc_instance_by_name = None
+    bc_reg = (config.get("rl") or {}).get("bc_regularization") or {}
+    if bool(bc_reg.get("enabled", False)):
+        demo_path = Path((config.get("demonstrations") or {}).get("input", "outputs/demonstrations/rc21_expert.pt"))
+        if demo_path.is_file():
+            demo_payload = torch.load(demo_path, map_location="cpu", weights_only=False)
+            bc_episodes = list(demo_payload.get("episodes") or [])
+            bc_instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names if n in train_ds.names}
+            LOGGER.info("BC regularization enabled | demos=%d from %s", len(bc_episodes), demo_path)
+        else:
+            LOGGER.warning("BC regularization enabled but demo file missing: %s", demo_path)
     from src.env.analysis_counters import (
         expected_per_decision_ok,
         reset_cycle_counters,
@@ -497,6 +538,9 @@ def train(config: dict) -> dict:
             critic_updates_per_step=critic_updates,
             environment_config=config.get("environment"),
             parameter_delta_every_updates=param_delta_every,
+            bc_episodes=bc_episodes,
+            bc_instance_by_name=bc_instance_by_name,
+            bc_regularization_cfg=(config.get("rl") or {}).get("bc_regularization"),
         )
         record["epoch"] = epoch
         record["learning_rate"] = actor_lr
