@@ -243,88 +243,162 @@ def bc_loss_on_demo_batch(
     return total, metrics
 
 
+def _cache_decisions_for_one_episode(
+    ep: dict,
+    instance,
+    *,
+    charging_portions: list[float],
+    environment_config: dict | None = None,
+) -> list[CachedBCDecision]:
+    """Replay one demo episode into frozen exact-mask BC decisions."""
+    env_cfg = environment_config or {}
+    name = ep["instance_name"]
+    env = EVRPTWEnv(
+        instance,
+        m=int(ep["m"]),
+        charging_portions=list(charging_portions),
+        use_horizon_check=True,
+        use_depot_charging=True,
+        hard_time_windows=True,
+    )
+    env.environment_config = env_cfg
+    cache: list[CachedBCDecision] = []
+    action_i = 0
+    while not env.is_done() and action_i < len(ep["actions"]):
+        ev = env.select_acting_ev()
+        if ev is None:
+            break
+        analysis = env.analyze_decision(ev)
+        if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
+            continue
+        if env.try_auto_close_from_analysis(ev, analysis) is not None:
+            continue
+        a = ep["actions"][action_i]
+        action_i += 1
+        if analysis.mask_result is None:
+            continue
+        if analysis.global_features is None or analysis.mask_summary_features is None:
+            continue
+        if analysis.dynamic_candidate_features is None:
+            continue
+        cache.append(
+            CachedBCDecision(
+                instance_name=name,
+                expert_node=int(a["node"]),
+                expert_charge_portion=(
+                    None if a.get("charge_portion") is None else float(a["charge_portion"])
+                ),
+                expert_depot_finish=bool(a.get("depot_finish", False)),
+                mask_result=analysis.mask_result,
+                acting_ev_feats=np.asarray(acting_ev_features(env, ev), dtype=np.float32),
+                token_scalars=np.stack(
+                    [ev_token_scalars(env, e) for e in env.evs]
+                ).astype(np.float32),
+                fleet_balance=np.asarray(fleet_balance_features(env), dtype=np.float32),
+                finished=np.array([e.finished for e in env.evs], dtype=bool),
+                current_nodes=np.array([e.current_node for e in env.evs], dtype=np.int64),
+                acting_idx=[e.ev_id for e in env.evs].index(ev.ev_id),
+                global_features=np.asarray(analysis.global_features, dtype=np.float32),
+                mask_summary_features=np.asarray(
+                    analysis.mask_summary_features, dtype=np.float32,
+                ),
+                dynamic_candidate_features=np.asarray(
+                    analysis.dynamic_candidate_features, dtype=np.float32,
+                ),
+                battery_feats=np.asarray(battery_state_features(env, ev), dtype=np.float32),
+            )
+        )
+        expert_action = PolicyAction(
+            node=int(a["node"]),
+            charge_portion=a.get("charge_portion"),
+            depot_finish=bool(a.get("depot_finish", False)),
+        )
+        apply_policy_action(env, ev, expert_action, mask_result=analysis.mask_result)
+    return cache
+
+
+def _parallel_bc_cache_job(job: dict) -> tuple[str, list[CachedBCDecision]]:
+    """Process-pool worker for one demo episode → BC cache entries."""
+    ep = job["episode"]
+    name = str(ep["instance_name"])
+    entries = _cache_decisions_for_one_episode(
+        ep,
+        job["instance"],
+        charging_portions=list(job["charging_portions"]),
+        environment_config=job.get("environment_config") or {},
+    )
+    return name, entries
+
+
 def build_bc_decision_cache(
     episodes: list,
     instance_by_name: dict,
     *,
     charging_portions: list[float],
     environment_config: dict | None = None,
+    num_workers: int = 1,
 ) -> list[CachedBCDecision]:
-    """Replay expert demos once and freeze exact-mask features for BC-reg.
+    """Replay expert demos once and freeze exact-mask features for BC.
 
     Exact legality is identical to live ``analyze_decision`` at demo time;
-    later BC-reg only re-forwards the policy (GPU), not CPU feasibility.
+    later BC only re-forwards the policy (GPU), not CPU feasibility.
     """
-    cache: list[CachedBCDecision] = []
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+
     env_cfg = environment_config or {}
+    jobs = []
     for ep in episodes:
         name = ep["instance_name"]
         if name not in instance_by_name:
             continue
-        instance = instance_by_name[name]
-        env = EVRPTWEnv(
-            instance,
-            m=int(ep["m"]),
-            charging_portions=list(charging_portions),
-            use_horizon_check=True,
-            use_depot_charging=True,
-            hard_time_windows=True,
-        )
-        env.environment_config = env_cfg
-        action_i = 0
-        while not env.is_done() and action_i < len(ep["actions"]):
-            ev = env.select_acting_ev()
-            if ev is None:
-                break
-            analysis = env.analyze_decision(ev)
-            if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
-                continue
-            if env.try_auto_close_from_analysis(ev, analysis) is not None:
-                continue
-            a = ep["actions"][action_i]
-            action_i += 1
-            if analysis.mask_result is None:
-                continue
-            if analysis.global_features is None or analysis.mask_summary_features is None:
-                continue
-            if analysis.dynamic_candidate_features is None:
-                continue
-            cache.append(
-                CachedBCDecision(
-                    instance_name=name,
-                    expert_node=int(a["node"]),
-                    expert_charge_portion=(
-                        None if a.get("charge_portion") is None else float(a["charge_portion"])
-                    ),
-                    expert_depot_finish=bool(a.get("depot_finish", False)),
-                    mask_result=analysis.mask_result,
-                    acting_ev_feats=np.asarray(acting_ev_features(env, ev), dtype=np.float32),
-                    token_scalars=np.stack(
-                        [ev_token_scalars(env, e) for e in env.evs]
-                    ).astype(np.float32),
-                    fleet_balance=np.asarray(fleet_balance_features(env), dtype=np.float32),
-                    finished=np.array([e.finished for e in env.evs], dtype=bool),
-                    current_nodes=np.array([e.current_node for e in env.evs], dtype=np.int64),
-                    acting_idx=[e.ev_id for e in env.evs].index(ev.ev_id),
-                    global_features=np.asarray(analysis.global_features, dtype=np.float32),
-                    mask_summary_features=np.asarray(
-                        analysis.mask_summary_features, dtype=np.float32,
-                    ),
-                    dynamic_candidate_features=np.asarray(
-                        analysis.dynamic_candidate_features, dtype=np.float32,
-                    ),
-                    battery_feats=np.asarray(battery_state_features(env, ev), dtype=np.float32),
+        jobs.append({
+            "episode": ep,
+            "instance": instance_by_name[name],
+            "charging_portions": list(charging_portions),
+            "environment_config": env_cfg,
+        })
+
+    n_workers = int(num_workers or 1)
+    if n_workers <= 0:
+        n_workers = min(8, max(1, (os.cpu_count() or 2) - 1))
+    n_workers = max(1, min(n_workers, len(jobs) or 1))
+
+    LOGGER.info(
+        "BC decision cache | episodes=%d workers=%d "
+        "(one-time exact-mask replay; progress logs below)",
+        len(jobs), n_workers,
+    )
+
+    cache: list[CachedBCDecision] = []
+    if n_workers <= 1 or len(jobs) <= 1:
+        for i, job in enumerate(jobs):
+            name = job["episode"]["instance_name"]
+            LOGGER.info("BC cache episode %d/%d: %s …", i + 1, len(jobs), name)
+            t0 = time.perf_counter()
+            entries = _cache_decisions_for_one_episode(
+                job["episode"],
+                job["instance"],
+                charging_portions=list(charging_portions),
+                environment_config=env_cfg,
+            )
+            cache.extend(entries)
+            LOGGER.info(
+                "BC cache episode %d/%d: %s done | decisions=%d in %.1fs",
+                i + 1, len(jobs), name, len(entries), time.perf_counter() - t0,
+            )
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            for i, (name, entries) in enumerate(pool.map(_parallel_bc_cache_job, jobs)):
+                cache.extend(entries)
+                LOGGER.info(
+                    "BC cache episode %d/%d: %s done | decisions=%d",
+                    i + 1, len(jobs), name, len(entries),
                 )
-            )
-            expert_action = PolicyAction(
-                node=int(a["node"]),
-                charge_portion=a.get("charge_portion"),
-                depot_finish=bool(a.get("depot_finish", False)),
-            )
-            apply_policy_action(env, ev, expert_action, mask_result=analysis.mask_result)
+
     LOGGER.info(
         "BC decision cache built | decisions=%d from %d demo episodes",
-        len(cache), len(episodes),
+        len(cache), len(jobs),
     )
     return cache
 
@@ -604,18 +678,17 @@ def train_behavior_cloning(config: dict) -> dict:
     portions = list(config["problem"]["charging_portions"])
     policy = build_policy(config, portions).to(device)
     bcfg = config.get("behavior_cloning") or config.get("bc") or {}
-    # Hard rule: never early-stop BC. Always train the configured epoch count.
     if bool(bcfg.get("early_stopping", False)):
         LOGGER.warning(
             "behavior_cloning.early_stopping=true ignored — BC always runs all configured epochs"
         )
     lr = float(bcfg.get("learning_rate", 1e-4))
     epochs = int(bcfg.get("epochs", 20))
-    batch_episodes = int(bcfg.get("batch_episodes", bcfg.get("batch_size", 2)))
-    # batch_size in config may mean transitions; episode batch remains the training unit.
-    if "batch_episodes" not in bcfg and int(bcfg.get("batch_size", 0) or 0) > 8:
-        batch_episodes = 2
+    # Decisions per optimizer step (GPU only after the one-time exact-mask cache).
+    batch_decisions = int(bcfg.get("batch_decisions", bcfg.get("batch_size", 64)))
+    updates_per_epoch = max(int(bcfg.get("updates_per_epoch", 8)), 1)
     log_every = int(bcfg.get("log_every", 1))
+    run_greedy_eval = bool(bcfg.get("run_greedy_eval", False))
     out_dir = Path(bcfg.get("output_dir", "outputs/bc"))
     out_dir.mkdir(parents=True, exist_ok=True)
     best_name = str(bcfg.get("best_checkpoint_name", "bc_best_policy.pt"))
@@ -624,33 +697,72 @@ def train_behavior_cloning(config: dict) -> dict:
     eval_json_name = str(bcfg.get("eval_json_name", "bc_eval_metrics.json"))
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
     rng = random.Random(int(config.get("seed", 42)))
+    env_cfg = config.get("environment") or {}
+
+    # One exact-mask replay of demos; all epochs train on frozen decisions (GPU).
+    demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 8) or 8)
+    LOGGER.info("Building BC decision cache (one-time exact-mask replay)…")
+    decision_cache = build_bc_decision_cache(
+        episodes,
+        instance_by_name,
+        charging_portions=portions,
+        environment_config=env_cfg,
+        num_workers=demo_workers,
+    )
+    if not decision_cache:
+        raise RuntimeError("BC decision cache is empty — demos produced no usable decisions")
+
+    policy.eval()
+    instance_embeddings: dict[str, torch.Tensor] = {}
+    with torch.no_grad():
+        for name, inst in instance_by_name.items():
+            instance_embeddings[name] = policy.encode(inst, device=device)
+    policy.train()
 
     best_val = float("inf")
     best_path = out_dir / best_name
     history = []
-    LOGGER.info("BC training for exactly %d epochs (no early stopping)", epochs)
+    LOGGER.info(
+        "BC training for %d epochs × %d updates (batch_decisions=%d, cache=%d) — no early stopping",
+        epochs, updates_per_epoch, batch_decisions, len(decision_cache),
+    )
 
     for epoch in range(epochs):
         policy.train()
-        loss, metrics = bc_loss_on_demo_batch(
-            policy, episodes, instance_by_name,
-            device=device, batch_episodes=batch_episodes, rng=rng,
-        )
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy.parameters(), float(bcfg.get("grad_clip", 1.0)))
-        optimizer.step()
-        row = {"epoch": epoch, **metrics}
+        epoch_metrics = {
+            "bc_loss": 0.0, "node_accuracy": 0.0, "charge_accuracy": 0.0,
+            "depot_accuracy": 0.0, "n_decisions": 0.0,
+        }
+        for _ in range(updates_per_epoch):
+            loss, metrics = bc_loss_on_cached_batch(
+                policy,
+                decision_cache,
+                instance_by_name,
+                instance_embeddings,
+                device=device,
+                batch_decisions=batch_decisions,
+                rng=rng,
+            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), float(bcfg.get("grad_clip", 1.0)))
+            optimizer.step()
+            for k in epoch_metrics:
+                epoch_metrics[k] += float(metrics.get(k, 0.0))
+        for k in epoch_metrics:
+            epoch_metrics[k] /= float(updates_per_epoch)
+        row = {"epoch": epoch, **epoch_metrics}
         history.append(row)
         if epoch % log_every == 0:
             LOGGER.info(
                 "BC epoch %d/%d | loss=%.4f node_acc=%.3f charge_acc=%.3f depot_acc=%.3f",
-                epoch + 1, epochs, metrics.get("bc_loss", 0), metrics.get("node_accuracy", 0),
-                metrics.get("charge_accuracy", 0), metrics.get("depot_accuracy", 0),
+                epoch + 1, epochs, epoch_metrics.get("bc_loss", 0),
+                epoch_metrics.get("node_accuracy", 0),
+                epoch_metrics.get("charge_accuracy", 0),
+                epoch_metrics.get("depot_accuracy", 0),
             )
-        # Track best checkpoint for RL init; never stop the loop early.
-        if metrics.get("bc_loss", 1e9) < best_val:
-            best_val = float(metrics["bc_loss"])
+        if epoch_metrics.get("bc_loss", 1e9) < best_val:
+            best_val = float(epoch_metrics["bc_loss"])
             torch.save({
                 "architecture_version": getattr(
                     __import__("src.models.feature_specs", fromlist=["ARCHITECTURE_VERSION"]),
@@ -661,11 +773,10 @@ def train_behavior_cloning(config: dict) -> dict:
                 "model_config": config["model"],
                 "charging_portions": portions,
                 "bc_epoch": epoch,
-                "bc_metrics": metrics,
+                "bc_metrics": epoch_metrics,
             }, best_path)
             LOGGER.info("Saved best BC policy → %s (epoch %d)", best_path, epoch + 1)
 
-    # Always write last checkpoint after the full epoch budget.
     last_path = out_dir / last_name
     torch.save({
         "architecture_version": "exact_smdp_dynamic_v1",
@@ -678,7 +789,6 @@ def train_behavior_cloning(config: dict) -> dict:
         shutil_copy = __import__("shutil").copy2
         shutil_copy(last_path, best_path)
 
-    # Metrics CSV for all epochs.
     import csv as _csv
     metrics_csv = out_dir / metrics_csv_name
     if history:
@@ -689,8 +799,10 @@ def train_behavior_cloning(config: dict) -> dict:
             for r in history:
                 w.writerow(r)
 
-    policy = load_policy(best_path, device=device)
-    eval_report = evaluate_bc_policy(config, policy, device)
+    eval_report: dict = {"skipped": True, "reason": "run_greedy_eval=false"}
+    if run_greedy_eval:
+        policy = load_policy(best_path, device=device)
+        eval_report = evaluate_bc_policy(config, policy, device)
     summary = {
         "best_bc_loss": best_val,
         "best_checkpoint": str(best_path),
@@ -699,6 +811,9 @@ def train_behavior_cloning(config: dict) -> dict:
         "early_stopping": False,
         "history": history,
         "greedy_eval": eval_report,
+        "cached_decisions": len(decision_cache),
+        "updates_per_epoch": updates_per_epoch,
+        "batch_decisions": batch_decisions,
     }
     eval_path = out_dir / eval_json_name
     eval_path.write_text(json.dumps(eval_report, indent=2, default=str), encoding="utf-8")

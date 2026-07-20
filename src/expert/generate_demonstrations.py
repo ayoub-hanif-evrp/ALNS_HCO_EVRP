@@ -27,6 +27,49 @@ from src.utils.logging_utils import get_logger
 LOGGER = get_logger()
 
 
+def _episode_to_demo_dict(ep: EpisodeResult) -> dict:
+    return {
+        "instance_name": ep.instance_name,
+        "m": ep.m,
+        "actions": ep.actions,
+        "metrics": ep.metrics,
+        "transitions": [
+            {
+                **{k: v for k, v in asdict(t).items() if k not in {
+                    "node_mask", "charge_mask_for_selected_node", "depot_mode_mask",
+                }},
+                "node_mask": t.node_mask,
+                "charge_mask_for_selected_node": t.charge_mask_for_selected_node,
+                "depot_mode_mask": t.depot_mode_mask,
+            }
+            for t in ep.transitions
+        ],
+    }
+
+
+def _parallel_demo_job(job: dict) -> dict:
+    """Process-pool worker: one exact-mask expert episode (Windows-safe top-level)."""
+    cfg = job["config"]
+    expert = FeasibilityFirstExpert(cfg)
+    weights = CostWeights.from_config(cfg["cost"])
+    problem = cfg.get("problem") or {}
+    env_cfg = cfg.get("environment") or {}
+    ep = run_expert_episode(
+        job["instance"],
+        int(job["m"]),
+        expert,
+        weights,
+        charging_portions=list(problem.get("charging_portions") or [0.25, 0.5, 0.75, 1.0]),
+        use_horizon_check=bool(problem.get("use_horizon_check", True)),
+        use_depot_charging=bool(problem.get("use_depot_charging", True)),
+        max_steps_factor=int((cfg.get("decoding") or {}).get("max_steps_factor", 6)),
+        environment_config=env_cfg,
+        reward_scale=float((cfg.get("rl") or {}).get("reward_scale", 10000.0)),
+        collect_transitions=True,
+    )
+    return _episode_to_demo_dict(ep)
+
+
 @dataclass
 class ExpertTransition:
     instance_name: str
@@ -382,42 +425,55 @@ def generate_demonstrations(config: dict) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     rng = __import__("random").Random(int(config.get("seed", 42)))
 
-    episodes = []
+    # Sample fleet sizes first so parallel runs stay seed-reproducible.
+    jobs = []
     for i in range(len(train_ds)):
         instance = train_ds[i]
         m = sample_fleet_size(instance, extra_margin, rng)
-        ep = run_expert_episode(
-            instance, m, expert, weights,
-            charging_portions=portions,
-            use_horizon_check=use_horizon,
-            use_depot_charging=use_depot,
-            max_steps_factor=max_steps_factor,
-            environment_config=env_cfg,
-            reward_scale=float((config.get("rl") or {}).get("reward_scale", 10000.0)),
-            collect_transitions=True,
-        )
-        episodes.append({
-            "instance_name": ep.instance_name,
-            "m": ep.m,
-            "actions": ep.actions,
-            "metrics": ep.metrics,
-            "transitions": [
-                {
-                    **{k: v for k, v in asdict(t).items() if k not in {
-                        "node_mask", "charge_mask_for_selected_node", "depot_mode_mask",
-                    }},
-                    "node_mask": t.node_mask,
-                    "charge_mask_for_selected_node": t.charge_mask_for_selected_node,
-                    "depot_mode_mask": t.depot_mode_mask,
-                }
-                for t in ep.transitions
-            ],
-        })
+        jobs.append({"instance": instance, "m": m, "config": config})
+
+    demo_cfg = config.get("demonstrations") or {}
+    import os
+    raw_workers = int(demo_cfg.get("num_workers", 0) or 0)
+    n_workers = raw_workers if raw_workers > 0 else min(8, max(1, (os.cpu_count() or 2) - 1))
+    n_workers = max(1, min(n_workers, len(jobs) or 1))
+
+    episodes: list[dict] = []
+    if n_workers <= 1 or len(jobs) <= 1:
+        for job in jobs:
+            ep = run_expert_episode(
+                job["instance"], job["m"], expert, weights,
+                charging_portions=portions,
+                use_horizon_check=use_horizon,
+                use_depot_charging=use_depot,
+                max_steps_factor=max_steps_factor,
+                environment_config=env_cfg,
+                reward_scale=float((config.get("rl") or {}).get("reward_scale", 10000.0)),
+                collect_transitions=True,
+            )
+            episodes.append(_episode_to_demo_dict(ep))
+            LOGGER.info(
+                "Demo %s | served=%.3f feas=%s decisions=%d",
+                ep.instance_name, ep.metrics["served_ratio"], ep.metrics["feasible"],
+                ep.metrics["num_decisions"],
+            )
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
         LOGGER.info(
-            "Demo %s | served=%.3f feas=%s decisions=%d",
-            ep.instance_name, ep.metrics["served_ratio"], ep.metrics["feasible"],
-            ep.metrics["num_decisions"],
+            "Demo generation parallel | workers=%d instances=%d (exact masks unchanged)",
+            n_workers, len(jobs),
         )
+        # Preserve instance order for reproducibility of the .pt file.
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            ordered = list(pool.map(_parallel_demo_job, jobs))
+        episodes = ordered
+        for ep in episodes:
+            LOGGER.info(
+                "Demo %s | served=%.3f feas=%s decisions=%d",
+                ep["instance_name"], ep["metrics"]["served_ratio"], ep["metrics"]["feasible"],
+                ep["metrics"]["num_decisions"],
+            )
 
     payload = {
         "meta": {
@@ -426,6 +482,7 @@ def generate_demonstrations(config: dict) -> Path:
             "train_instances": list(meta.get("train_instances") or train_ds.names),
             "config_expert": asdict(ExpertConfig.from_config(config)),
             "charging_portions": portions,
+            "num_workers": n_workers,
         },
         "episodes": episodes,
     }
@@ -438,6 +495,7 @@ def generate_demonstrations(config: dict) -> Path:
         "feasibility_rate": float(np.mean([1.0 if e["metrics"]["feasible"] else 0.0 for e in episodes])),
         "mean_objective": float(np.mean([e["metrics"]["objective"] for e in episodes])),
         "path": str(out_path),
+        "num_workers": n_workers,
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return out_path

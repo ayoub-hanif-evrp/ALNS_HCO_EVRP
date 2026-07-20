@@ -146,7 +146,7 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
 
 def run_internal_checks(config: dict) -> None:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 0 - internal sanity checks")
+    LOGGER.info("Stage — internal sanity checks")
     LOGGER.info("=" * 60)
 
     root = Path(__file__).resolve().parents[2]
@@ -227,7 +227,7 @@ def _write_expert_artifacts(run_dir: Path, report: dict) -> Path:
 
 def stage_expert(config: dict, run_dir: Path, *, reuse: bool) -> dict:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 1 - expert evaluation")
+    LOGGER.info("Stage 1 — expert evaluation")
     LOGGER.info("=" * 60)
     metrics_path = run_dir / "expert" / "expert_metrics.json"
     traj_path = run_dir / "expert" / "expert_trajectories_summary.csv"
@@ -262,7 +262,7 @@ def stage_expert_from_demonstrations(
 ) -> dict:
     """Write expert metrics from demo episodes (same rollouts — no second expert pass)."""
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 1 - expert metrics from demonstrations (single pass)")
+    LOGGER.info("Writing expert metrics from demos (no second rollout)")
     LOGGER.info("=" * 60)
     metrics_path = run_dir / "expert" / "expert_metrics.json"
     traj_path = run_dir / "expert" / "expert_trajectories_summary.csv"
@@ -299,7 +299,7 @@ def stage_expert_from_demonstrations(
 
 def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 2 - expert demonstration generation")
+    LOGGER.info("Stage 1 — expert demonstrations")
     LOGGER.info("=" * 60)
     out_path = Path(config["demonstrations"]["output"])
     summary_path = run_dir / "demonstrations" / "demonstration_summary.json"
@@ -331,7 +331,7 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
 
 def stage_behavior_cloning(config: dict, run_dir: Path, *, reuse: bool) -> dict:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 3 - behavior cloning (fixed epochs, no early stopping)")
+    LOGGER.info("Stage 2 — behavior cloning")
     LOGGER.info("=" * 60)
     bcfg = config.setdefault("behavior_cloning", {})
     bcfg["early_stopping"] = False
@@ -349,6 +349,15 @@ def stage_behavior_cloning(config: dict, run_dir: Path, *, reuse: bool) -> dict:
 
     # Resume path: checkpoints exist but greedy eval crashed / was never written.
     if reuse and best.is_file() and last.is_file() and not eval_json.is_file():
+        if not bool(bcfg.get("run_greedy_eval", False)):
+            LOGGER.info("Reusing BC checkpoints (greedy eval skipped): %s", best)
+            stub = {
+                "skipped": True,
+                "best_checkpoint": str(best),
+                "last_checkpoint": str(last),
+            }
+            eval_json.write_text(json.dumps(stub, indent=2), encoding="utf-8")
+            return stub
         LOGGER.info(
             "Reusing BC checkpoints; running greedy eval only (skipping BC train): %s",
             best,
@@ -384,7 +393,7 @@ def stage_behavior_cloning(config: dict, run_dir: Path, *, reuse: bool) -> dict:
 
 def stage_rl_finetune(config: dict, run_dir: Path) -> dict:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 4 - RL fine-tuning from BC")
+    LOGGER.info("Stage 3 — RL fine-tuning from BC")
     LOGGER.info("=" * 60)
     bc_ckpt = Path(config["initialization"]["actor_checkpoint"])
     if not bc_ckpt.is_file():
@@ -431,7 +440,7 @@ def stage_rl_finetune(config: dict, run_dir: Path) -> dict:
 
 def stage_final_evaluation(config: dict, run_dir: Path) -> dict:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 5 - final holdout evaluation")
+    LOGGER.info("Stage — final holdout evaluation")
     LOGGER.info("=" * 60)
     ckpt = run_dir / "rl" / "rl_last.pt"
     if not ckpt.is_file():
@@ -628,8 +637,7 @@ def run_training_pipeline(
     # One expert rollout pass when both stages are enabled (demos + metrics).
     if want_expert and want_demos:
         LOGGER.info(
-            "Merging expert evaluation into demonstration generation "
-            "(single rollout pass — same exact-mask logic)."
+            "Pipeline: Stage 1 demos (+ expert metrics) → Stage 2 BC → Stage 3 RL"
         )
         demo_path = stage_demonstrations(cfg, run_dir, reuse=reuse)
         stages["demonstrations"] = {"path": str(demo_path)}

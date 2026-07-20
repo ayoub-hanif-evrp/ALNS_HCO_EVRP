@@ -1,4 +1,4 @@
-# Full warm-start pipeline (Expert → BC → RL fine-tune).
+# Max-speed Expert → BC → RL pipeline (exact masks kept; non-critical work off).
 #   python main_train.py --config configs/train.yaml --device cuda
 # Then:
 #   python main_dashboard.py
@@ -8,7 +8,7 @@ device: cuda
 deterministic: false
 
 pipeline:
-  run_internal_checks: true
+  run_internal_checks: false
   run_expert: true
   generate_demonstrations: true
   run_behavior_cloning: true
@@ -25,14 +25,18 @@ expert:
 
 behavior_cloning:
   enabled: true
-  epochs: 20
-  batch_episodes: 2
+  epochs: 12
+  # After one-time exact-mask cache: GPU-only mini-batches.
+  batch_decisions: 64
+  updates_per_epoch: 10
+  batch_episodes: 1
   batch_size: 64
   learning_rate: 0.0001
   grad_clip: 1.0
   log_every: 1
   validation_split: 0.1
   early_stopping: false
+  run_greedy_eval: false
   output_dir: outputs/bc
 
 initialization:
@@ -47,6 +51,8 @@ demonstrations:
   input: outputs/demonstrations/demonstrations.pt
   output: outputs/demonstrations/demonstrations.pt
   eval_report: outputs/demonstrations/expert_eval_report.json
+  # Parallel exact-mask expert rollouts (same logic; uses more CPU cores).
+  num_workers: 8
 
 constraints:
   time_windows_mode: hard_original
@@ -126,13 +132,13 @@ training:
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  # 10 is too short for a useful RL policy; 80 is a solid quality/time tradeoff.
-  cycles: 80
+  # Biggest RL wall-clock lever (13 instances × cycles updates).
+  cycles: 30
   shuffle_within_pass: false
   mixed_macro_updates: false
   macro_class_updates: false
   reward_scale: 10000.0
-  log_every: 1
+  log_every: 5
   checkpoint_every: 0
   dashboard_ma_window: 20
   min_decisions_warn: 10
@@ -174,7 +180,8 @@ rl:
   use_served_customer_bonus: true
   served_bonus_mode: penalty_equivalent
   served_bonus_coef: 0.5
-  use_urgency_bonus: true
+  # Extra per-decision CPU loops — off for speed (masks unchanged).
+  use_urgency_bonus: false
   urgency_bonus_coef: 0.5
   use_newly_expired_customer_penalty: true
   newly_expired_customer_penalty: 1.0
@@ -187,11 +194,11 @@ rl:
   early_depot_penalty_coef: 2.0
   use_step_penalty: false
   step_penalty: 0.01
-  use_urgent_customer_rank_penalty: true
+  use_urgent_customer_rank_penalty: false
   urgent_rank_penalty_coef: 0.2
   urgent_rank_k: 10
   bc_regularization:
-    enabled: true
+    enabled: false
     coefficient_initial: 0.1
     coefficient_final: 0.0
     decay_updates: 50
@@ -259,7 +266,8 @@ cost:
 
 fleet_search:
   enabled: true
-  extra_margin: 4
+  # 0 = always m_min (same masks; fewer EVs → faster analysis every decision).
+  extra_margin: 0
   selection_mode: hierarchical
 
 debug:
@@ -278,11 +286,11 @@ outputs:
 
 dashboard:
   auto_latest_run: true
-  refresh_every_cycles: 1
+  refresh_every_cycles: 5
   generate_full_artifacts_during_training: false
-  generate_full_solution_maps_every_cycles: 10
-  save_representative_traces_every_cycles: 10
-  save_representative_traces: true
+  generate_full_solution_maps_every_cycles: 999
+  save_representative_traces_every_cycles: 999
+  save_representative_traces: false
   num_random_solution_maps: 1
   include_best_final_cycle: true
   include_worst_final_cycle: true
@@ -292,14 +300,14 @@ dashboard:
 diagnostics:
   parameter_delta_every_updates: 0
   full_mask_reason_dump_every_updates: 0
-  timing_enabled: true
+  timing_enabled: false
   run_cycle_probes: false
 
 checkpointing:
-  save_last_every_updates: 20
-  save_cycle_checkpoint: true
+  save_last_every_updates: 50
+  save_cycle_checkpoint: false
   save_best_cycle_objective: true
-  save_best_cycle_feasibility: true
+  save_best_cycle_feasibility: false
 
 maps_dashboard:
   port: 8081
@@ -313,5 +321,5 @@ evaluation:
   local_search:
     enabled: false
     max_iterations: 50
-  save_routes: true
-  save_figures: true
+  save_routes: false
+  save_figures: false
