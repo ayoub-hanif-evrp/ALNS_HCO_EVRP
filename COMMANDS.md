@@ -2,36 +2,73 @@
 
 Run from the project root.
 
-## 1. Train
+---
+
+## Full pipeline (all at once)
 
 ```powershell
 python main_train.py --config configs/train.yaml --device cuda
 ```
 
-This single command runs the full pipeline:
+Runs checks → demos (+ expert metrics) → BC → RL in one go.  
+Expert metrics come from the same demo rollouts (no double expert pass).  
+Saves everything under `outputs/runs/run_<timestamp>/`.
 
-1. internal sanity checks
-2. expert evaluation
-3. expert demonstration generation
-4. behavior cloning (fixed epoch count, no early stopping)
-5. BC policy evaluation
-6. RL fine-tuning from the BC checkpoint
-7. final holdout evaluation
-8. save logs, checkpoints, reports, and dashboard artifacts
+---
 
-Artifacts are written under:
+## One stage at a time
 
-```text
-outputs/runs/run_<timestamp>/
+Later stages automatically continue in the latest run folder.
+
+### 1. Sanity checks
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage checks
 ```
 
-## 2. Dashboard
+Quick internal compile/smoke checks before training.
+
+### 2. Expert (metrics only, no demos)
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage expert
+```
+
+Rolls out the expert once and records metrics (not needed if you run demos).
+
+### 3. Demonstrations
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage demos
+```
+
+Generates expert demos for BC and writes expert metrics from the same run.
+
+### 4. Behavior cloning
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage bc
+```
+
+Trains the policy to imitate the expert (warm-start checkpoint).
+
+### 5. RL fine-tuning
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage rl
+```
+
+Fine-tunes the BC policy with actor-critic RL.
+
+---
+
+## Dashboard
 
 ```powershell
 python main_dashboard.py
 ```
 
-Automatically opens the latest run under `outputs/runs/` at http://localhost:8080.
+Opens a live view of the latest run at http://localhost:8080.
 
 ---
 
@@ -39,7 +76,12 @@ Automatically opens the latest run under `outputs/runs/` at http://localhost:808
 
 ```powershell
 python -m compileall src
+```
+
+Compiles all `src` modules to catch syntax errors.
+
+```powershell
 pytest -q
 ```
 
-Archived optional tools live under `archive/` (see `archive/README.md`).
+Runs the unit test suite.

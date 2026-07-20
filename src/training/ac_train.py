@@ -93,6 +93,8 @@ def actor_critic_train_step(
     bc_episodes: list | None = None,
     bc_instance_by_name: dict | None = None,
     bc_regularization_cfg: dict | None = None,
+    bc_decision_cache: list | None = None,
+    bc_instance_embeddings: dict | None = None,
 ) -> dict:
     """One actor-critic update: separate critic passes then actor pass."""
     policy.train()
@@ -347,20 +349,41 @@ def actor_critic_train_step(
             if class_q_terms:
                 scaled = scaled + (rl_cfg.q_critic_coef * _class_equal_mean(class_q_terms)) / accum
             # Optional decaying BC regularization (warm-start fine-tune).
-            if bc_episodes and bc_instance_by_name and bc_regularization_cfg:
-                from src.training.behavior_cloning import bc_coef_at_update, bc_loss_on_demo_batch
+            # Prefer cached exact-mask decisions (no CPU re-analysis).
+            if bc_regularization_cfg:
+                from src.training.behavior_cloning import (
+                    bc_coef_at_update,
+                    bc_loss_on_cached_batch,
+                    bc_loss_on_demo_batch,
+                )
                 bc_coef = bc_coef_at_update(
                     {"bc_regularization": bc_regularization_cfg}, global_epoch,
                 )
                 if bc_coef > 0.0:
-                    bc_loss, _bc_m = bc_loss_on_demo_batch(
-                        policy, bc_episodes, bc_instance_by_name,
-                        device=device_t,
-                        batch_episodes=int(bc_regularization_cfg.get("batch_episodes", 1)),
-                        rng=rng,
-                    )
-                    scaled = scaled + (bc_coef * bc_loss) / accum
-                    bc_loss_val = float(bc_loss.detach())
+                    if bc_decision_cache and bc_instance_by_name and bc_instance_embeddings:
+                        bc_loss, _bc_m = bc_loss_on_cached_batch(
+                            policy,
+                            bc_decision_cache,
+                            bc_instance_by_name,
+                            bc_instance_embeddings,
+                            device=device_t,
+                            batch_decisions=int(
+                                bc_regularization_cfg.get("batch_decisions", 32)
+                            ),
+                            rng=rng,
+                        )
+                    elif bc_episodes and bc_instance_by_name:
+                        bc_loss, _bc_m = bc_loss_on_demo_batch(
+                            policy, bc_episodes, bc_instance_by_name,
+                            device=device_t,
+                            batch_episodes=int(bc_regularization_cfg.get("batch_episodes", 1)),
+                            rng=rng,
+                        )
+                    else:
+                        bc_loss = None
+                    if bc_loss is not None:
+                        scaled = scaled + (bc_coef * bc_loss) / accum
+                        bc_loss_val = float(bc_loss.detach())
             if use_amp and device_t.type == "cuda" and scaler is not None:
                 scaler.scale(scaled).backward()
             else:

@@ -1,5 +1,4 @@
-# Full warm-start pipeline (Expert → BC → RL fine-tune → Eval).
-# Only user command needed:
+# Full warm-start pipeline (Expert → BC → RL fine-tune).
 #   python main_train.py --config configs/train.yaml --device cuda
 # Then:
 #   python main_dashboard.py
@@ -14,7 +13,7 @@ pipeline:
   generate_demonstrations: true
   run_behavior_cloning: true
   run_rl_finetuning: true
-  run_final_evaluation: true
+  run_final_evaluation: false
   reuse_cached_stages: true
 
 expert:
@@ -62,7 +61,7 @@ environment:
   relax_time_windows: false
   modify_instance_time_windows: false
   implementation: optimized
-  assert_mask_parity_during_debug: true
+  assert_mask_parity_during_debug: false
   performance:
     cache_action_masks: true
     use_optimized_mask_path: true
@@ -127,7 +126,8 @@ training:
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  cycles: 10
+  # 10 is too short for a useful RL policy; 80 is a solid quality/time tradeoff.
+  cycles: 80
   shuffle_within_pass: false
   mixed_macro_updates: false
   macro_class_updates: false
@@ -194,8 +194,10 @@ rl:
     enabled: true
     coefficient_initial: 0.1
     coefficient_final: 0.0
-    decay_updates: 200
+    decay_updates: 50
+    every_n_updates: 5
     batch_episodes: 1
+    batch_decisions: 32
   use_customer_priority_logit_bias: true
   customer_logit_bonus: 1.0
   unnecessary_station_logit_penalty: 1.5
@@ -278,8 +280,8 @@ dashboard:
   auto_latest_run: true
   refresh_every_cycles: 1
   generate_full_artifacts_during_training: false
-  generate_full_solution_maps_every_cycles: 5
-  save_representative_traces_every_cycles: 5
+  generate_full_solution_maps_every_cycles: 10
+  save_representative_traces_every_cycles: 10
   save_representative_traces: true
   num_random_solution_maps: 1
   include_best_final_cycle: true

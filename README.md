@@ -18,27 +18,21 @@ The policy uses a **Transformer encoder–decoder** with **asynchronous multi-ag
 
 ```
 Transformer_MARL_EVRP/
-├── configs/                  # YAML training / evaluation configs
-├── dataset/
-│   ├── Hanif/                # Hanif benchmark (variant B relaxed TW) — source .txt
-│   ├── Schneider/            # Legacy Solomon/Schneider VRPTW instances
-│   └── converted_hanif_data/ # Generated fast loader (not in git — run convert script)
-├── scripts/
-│   ├── convert_hanif_dataset.py
-│   └── check_gpu.py
+├── configs/                  # YAML training config (train.yaml)
+├── dataset/                  # Schneider / Hanif E-VRPTW instances
 ├── src/
-│   ├── data/                 # Loaders, Hanif parser/converter, dataset splits
+│   ├── data/                 # Loaders, dataset splits, schedules
 │   ├── env/                  # EVRPTW environment, masks, cost function
-│   ├── models/               # Transformer policy
-│   ├── training/             # Actor-critic, schedules, validation
-│   ├── evaluation/           # Fleet search, baselines, metrics
-│   └── webapp/               # Live dashboard
+│   ├── models/               # Transformer policy + critic
+│   ├── expert/               # Feasibility-first expert + demos
+│   ├── training/             # Pipeline, BC, actor-critic RL
+│   ├── evaluation/           # Holdout eval, metrics, fleet search
+│   └── webapp/               # Live NiceGUI dashboard
 ├── tests/
-├── main_train.py
-├── main_evaluate.py
-├── main_dashboard.py
-├── COMMANDS.md               # Command reference (quick test / train / dashboard)
-└── outputs/                  # Logs, checkpoints, figures (generated)
+├── main_train.py             # Full Expert → BC → RL pipeline
+├── main_dashboard.py         # Training dashboard
+├── COMMANDS.md               # Command reference
+└── outputs/                  # Run artifacts under outputs/runs/
 ```
 
 ## Requirements
@@ -51,34 +45,17 @@ Transformer_MARL_EVRP/
 pip install -r requirements.txt
 ```
 
-### GPU setup
-
-Training defaults to **`device: cuda`** in all configs. Verify PyTorch sees your GPU **before** a long run:
-
-```powershell
-python scripts/check_gpu.py
-```
-
-If it fails, you likely have the **CPU-only** PyTorch wheel. Install a CUDA build matching your driver (example for CUDA 12.4):
-
-```powershell
-pip install torch --index-url https://download.pytorch.org/whl/cu124
-```
-
-Pick the correct wheel at [pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/).
-
-When training starts you should see a CUDA device line in the log.
+Set `device: cuda` in `configs/train.yaml` (default). When training starts you should see a CUDA device line in the log.
 
 Set `deterministic: true` in the config for fully reproducible runs (slightly slower on GPU).
 
 ## Quick start
 
-Run from the **project root**. See **[COMMANDS.md](COMMANDS.md)** for the three commands:
+Run from the **project root**. See **[COMMANDS.md](COMMANDS.md)**:
 
 ```powershell
 python -m compileall src
 pytest -q
-python main_train.py --phase0-only
 
 python main_train.py --config configs/train.yaml --device cuda
 
@@ -87,33 +64,20 @@ python main_dashboard.py
 
 Dashboard: **http://localhost:8080**. Edit **`configs/train.yaml`** for learning rate, cycles, model size, etc.
 
-### Evaluate
-
-```powershell
-python main_evaluate.py --checkpoint outputs/checkpoints/last.pt --macro-average
-```
-
-See **[COMMANDS.md](COMMANDS.md)** for details on what one run does and which params to tune.
-
 ## Config files
 
 | Config | Purpose |
 |--------|---------|
-| `configs/train.yaml` | **Primary** — 100-customer C/R/RC interleaved training |
-| `configs/train_schneider_RC21_safe.yaml` | Explicit copy of safe RC-only baseline |
-| `configs/default.yaml` | Flat actor-critic (legacy small tests) |
+| `configs/train.yaml` | **Primary** — Expert → BC → RL pipeline on Schneider RC `_21` |
 
 ### Training algorithm
 
-All training uses **centralized actor-critic**:
+The default command runs the **full warm-start pipeline**:
 
-- Step-wise decomposed rewards aligned with EVRPTW objective
-- GAE advantage estimation
-- Counterfactual Q critic for multi-EV credit assignment
-- Multi-sample rollout baseline (K=4 by default; mean terminal reward across K sampled rollouts)
-- Potential-based reward shaping
-- Edge-aware Transformer encoder (distance / travel time / energy biases)
-- Local search at evaluation is **diagnostic-only** (disabled by default; distance-only 2-opt does not change reported objective)
+- Feasibility-first expert evaluation + demonstration generation
+- Behavior cloning warm-start
+- Centralized actor-critic RL fine-tuning (GAE, hard exact masks)
+- Dashboard artifacts
 
 Tune hyperparameters under `rl:` and `model:` in `configs/train.yaml`.
 
@@ -143,29 +107,19 @@ Use the **Sections** jump bar to scroll to each block.
 
 | Path | Content |
 |------|---------|
-| `outputs/checkpoints/` | `best.pt`, `best_C.pt`, `best_R.pt`, `best_RC.pt`, `last.pt`, … |
-| `outputs/logs/train_log.jsonl` | Live training log (dashboard) |
-| `outputs/logs/val_log.jsonl` | Per-class validation |
-| `outputs/results/training_metrics.csv` | Flat metrics table |
-| `outputs/results/phase0_report.txt` | Environment & mask checks |
-| `outputs/runs/<run_id>/` | Archived run config + metrics |
+| `outputs/runs/run_<timestamp>/` | Full pipeline run (expert, demos, BC, RL, dashboard) |
+| `…/bc/bc_best_policy.pt` | Behavior-cloning warm-start checkpoint |
+| `…/checkpoints/` | RL checkpoints (`best.pt`, `last.pt`, …) |
+| `…/logs/train_log.jsonl` | Live RL metrics (dashboard) |
+| `…/metrics/` | Training metrics CSV / cycle summaries |
 
 ## Performance notes
 
-- Hanif instances have **~1000 customers + ~333 stations** (~1334 nodes).
-- **GPU (`device: cuda`)** is the default — run `python scripts/check_gpu.py` first.
-- On **CPU** (CPU-only PyTorch), expect **~45–90 s per training iteration**.
-- On **GPU**, expect **much faster** steps (often 5–20× vs CPU, depending on VRAM/GPU).
-- Multi-sample rollout baseline uses K=4 sampled rollouts by default (`rl.multi_sample_K`); increase only if VRAM allows.
+- Current default training uses Schneider **100-customer RC `_21`** instances.
+- **GPU (`device: cuda`)** is the default.
+- On **CPU** (CPU-only PyTorch), expect much slower steps.
+- On **GPU**, expect substantially faster training (depends on VRAM/GPU).
 - `deterministic: false` (default) enables cuDNN autotune for faster GPU training.
-
-## Sanity checks
-
-Optional environment/mask checks before training:
-
-```powershell
-python main_train.py --phase0-only
-```
 
 ## License & citation
 

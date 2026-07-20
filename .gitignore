@@ -12,5 +12,20 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Local debug / assertion dumps
+logs/
+
+# Training run artifacts (keep locally; do not push)
+outputs/runs/
+outputs/checkpoints/
+outputs/figures/
+outputs/results/
+outputs/routes/
+outputs/traces/
+outputs/bc/
+outputs/demonstrations/
+outputs/expert_diagnostics/
+
 # Optional: skip intermediate per-epoch checkpoints only
 outputs/checkpoints/epoch_*.pt
+outputs/runs/*/checkpoints/epoch_*.pt

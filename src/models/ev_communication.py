@@ -63,12 +63,14 @@ class EVCommunication(nn.Module):
 
         attn_mask = None
         if finished_mask is not None and finished_mask.any():
-            # Finished EVs remain visible but cannot be attended to as keys.
+            # Finished EVs remain in the sequence but must not be used as keys.
+            # Mask columns only — do NOT symmetrize. Symmetrizing fully masks
+            # finished rows (no valid keys), which yields NaN softmax outputs and
+            # poisons finished_pool → decoder_context (decoder_finite assertion).
             attn_mask = torch.zeros((m, m), dtype=torch.bool, device=device)
             for idx in range(m):
                 if finished_mask[idx]:
                     attn_mask[:, idx] = True
-            attn_mask = attn_mask | attn_mask.transpose(0, 1)
 
         encoded = self.encoder(tokens, mask=attn_mask).squeeze(0)
         acting_token = encoded[acting_idx]
@@ -82,13 +84,18 @@ class EVCommunication(nn.Module):
         active_pool = (
             encoded[active_mask].mean(dim=0)
             if active_mask.any()
-            else torch.zeros(self.embedding_dim, device=device)
+            else torch.zeros(self.embedding_dim, device=device, dtype=encoded.dtype)
         )
         finished_pool = (
             encoded[finished_only].mean(dim=0)
             if finished_only.any()
-            else torch.zeros(self.embedding_dim, device=device)
+            else torch.zeros(self.embedding_dim, device=device, dtype=encoded.dtype)
         )
+        # Defense in depth: never let a non-finite pool poison decoder fusion.
+        if not torch.isfinite(active_pool).all():
+            active_pool = torch.zeros_like(active_pool)
+        if not torch.isfinite(finished_pool).all():
+            finished_pool = torch.zeros_like(finished_pool)
         if fleet_balance is None:
             fleet_balance = torch.zeros(FLEET_BALANCE_FEATURE_DIM, device=device)
         fleet_balance_context = self.fleet_balance_proj(fleet_balance)

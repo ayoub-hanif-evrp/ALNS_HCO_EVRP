@@ -99,46 +99,50 @@ class TransformerEVRPTWPolicy(nn.Module):
             return self.node_encoder.encode_instance(instance, feats, device=device)
         return self.node_encoder(feats)
 
-    def build_decision_state(
+    def build_decision_state_from_arrays(
         self,
-        env,
-        ev,
         node_embeddings: torch.Tensor,
         mask_result,
         *,
-        analysis=None,
+        acting_ev_feats: np.ndarray,
+        token_scalars_np: np.ndarray,
+        fleet_balance_np: np.ndarray,
+        finished_np: np.ndarray,
+        current_nodes: np.ndarray,
+        acting_idx: int,
+        global_features: np.ndarray,
+        mask_summary_features: np.ndarray,
+        dynamic_candidate_features: np.ndarray,
+        instance_name: str = "?",
     ) -> DecisionState:
-        from src.env.action_masks import ActionMaskResult
-        from src.env.decision_analysis import DecisionStateAnalysis
+        """Build DecisionState from cached exact-mask features (no env re-analysis).
 
-        if analysis is not None and not isinstance(analysis, DecisionStateAnalysis):
-            raise TypeError("analysis must be DecisionStateAnalysis when provided")
-        if analysis is not None:
-            analysis.assert_fresh(env, ev)
-            mask_result = analysis.mask_result
+        Used by BC regularization so exact legality stays frozen from demo time
+        while the live policy still forward-passes for CE.
+        """
+        from src.env.action_masks import ActionMaskResult
+
         if not isinstance(mask_result, ActionMaskResult):
-            raise TypeError("build_decision_state requires ActionMaskResult")
+            raise TypeError("build_decision_state_from_arrays requires ActionMaskResult")
 
         device = node_embeddings.device
         dtype = node_embeddings.dtype
+        acting_node = int(current_nodes[acting_idx])
 
         ev_feats = self.acting_ev_normalizer(
-            torch.tensor(acting_ev_features(env, ev), device=device, dtype=dtype),
+            torch.tensor(acting_ev_feats, device=device, dtype=dtype),
         )
-        h_current = node_embeddings[ev.current_node]
+        h_current = node_embeddings[acting_node]
         acting_ev_context = self.ev_state_encoder(ev_feats, h_current)
 
-        token_scalars = torch.tensor(
-            np.stack([ev_token_scalars(env, e) for e in env.evs]), device=device, dtype=dtype,
-        )
-        ev_node_embs = node_embeddings[[e.current_node for e in env.evs]]
-        finished = torch.tensor([e.finished for e in env.evs], dtype=torch.bool, device=device)
-        acting_idx = [e.ev_id for e in env.evs].index(ev.ev_id)
-        fleet_balance_raw = torch.tensor(fleet_balance_features(env), device=device, dtype=dtype)
+        token_scalars = torch.tensor(token_scalars_np, device=device, dtype=dtype)
+        ev_node_embs = node_embeddings[torch.as_tensor(current_nodes, device=device, dtype=torch.long)]
+        finished = torch.tensor(finished_np, dtype=torch.bool, device=device)
+        fleet_balance_raw = torch.tensor(fleet_balance_np, device=device, dtype=dtype)
 
-        if self.use_ev_communication and len(env.evs) > 1:
+        if self.use_ev_communication and int(token_scalars.shape[0]) > 1:
             comm = self.ev_communication(
-                token_scalars, ev_node_embs, acting_idx, finished, fleet_balance_raw,
+                token_scalars, ev_node_embs, int(acting_idx), finished, fleet_balance_raw,
             )
         else:
             from src.models.ev_communication import EVCommunicationOutput
@@ -151,19 +155,11 @@ class TransformerEVRPTWPolicy(nn.Module):
                 fleet_balance_context=self.ev_communication.fleet_balance_proj(fleet_balance_raw),
             )
 
-        if analysis is not None and analysis.global_features is not None:
-            global_raw = self.global_normalizer(
-                torch.tensor(analysis.global_features, device=device, dtype=dtype),
-            )
-        else:
-            global_raw = self.global_normalizer(
-                torch.tensor(global_state_features(env, mask_result), device=device, dtype=dtype),
-            )
+        global_raw = self.global_normalizer(
+            torch.tensor(global_features, device=device, dtype=dtype),
+        )
         global_context = self.global_state_encoder(global_raw)
-        if analysis is not None and analysis.mask_summary_features is not None:
-            mask_raw = torch.tensor(analysis.mask_summary_features, device=device, dtype=dtype)
-        else:
-            mask_raw = torch.tensor(mask_summary_features(env, mask_result), device=device, dtype=dtype)
+        mask_raw = torch.tensor(mask_summary_features, device=device, dtype=dtype)
         mask_context = self.mask_summary_encoder(mask_raw)
 
         decoder_context = self.pointer.fuse_decoder_context(
@@ -176,13 +172,7 @@ class TransformerEVRPTWPolicy(nn.Module):
             comm.fleet_balance_context,
         )
 
-        # Prefer canonical dynamic features — do not recompute when analysis is given.
-        if analysis is not None and analysis.dynamic_candidate_features is not None:
-            dyn_feats_np = analysis.dynamic_candidate_features
-        else:
-            from src.env.analysis_counters import bump_outside_analyze
-            bump_outside_analyze("dynamic_feature_recompute_calls")
-            dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
+        dyn_feats_np = dynamic_candidate_features
         dyn_cont = self.dynamic_continuous_normalizer(
             torch.tensor(dyn_feats_np[:, : DYNAMIC_CANDIDATE_FEAT_DIM - 4], device=device, dtype=dtype),
         )
@@ -216,9 +206,58 @@ class TransformerEVRPTWPolicy(nn.Module):
             feasible_mask=mask_result.node_mask.copy(),
             mask_result=mask_result,
         )
-        assert_decision_state(state, instance_name=getattr(env.instance, "instance_name", "?"))
+        assert_decision_state(state, instance_name=instance_name)
         return state
 
+    def build_decision_state(
+        self,
+        env,
+        ev,
+        node_embeddings: torch.Tensor,
+        mask_result,
+        *,
+        analysis=None,
+    ) -> DecisionState:
+        from src.env.action_masks import ActionMaskResult
+        from src.env.decision_analysis import DecisionStateAnalysis
+
+        if analysis is not None and not isinstance(analysis, DecisionStateAnalysis):
+            raise TypeError("analysis must be DecisionStateAnalysis when provided")
+        if analysis is not None:
+            analysis.assert_fresh(env, ev)
+            mask_result = analysis.mask_result
+        if not isinstance(mask_result, ActionMaskResult):
+            raise TypeError("build_decision_state requires ActionMaskResult")
+
+        if analysis is not None and analysis.global_features is not None:
+            global_features = analysis.global_features
+        else:
+            global_features = global_state_features(env, mask_result)
+        if analysis is not None and analysis.mask_summary_features is not None:
+            mask_summary = analysis.mask_summary_features
+        else:
+            mask_summary = mask_summary_features(env, mask_result)
+        if analysis is not None and analysis.dynamic_candidate_features is not None:
+            dyn_feats_np = analysis.dynamic_candidate_features
+        else:
+            from src.env.analysis_counters import bump_outside_analyze
+            bump_outside_analyze("dynamic_feature_recompute_calls")
+            dyn_feats_np = compute_dynamic_candidate_features(env, ev, mask_result)
+
+        return self.build_decision_state_from_arrays(
+            node_embeddings,
+            mask_result,
+            acting_ev_feats=acting_ev_features(env, ev),
+            token_scalars_np=np.stack([ev_token_scalars(env, e) for e in env.evs]),
+            fleet_balance_np=fleet_balance_features(env),
+            finished_np=np.array([e.finished for e in env.evs], dtype=bool),
+            current_nodes=np.array([e.current_node for e in env.evs], dtype=np.int64),
+            acting_idx=[e.ev_id for e in env.evs].index(ev.ev_id),
+            global_features=np.asarray(global_features, dtype=np.float32),
+            mask_summary_features=np.asarray(mask_summary, dtype=np.float32),
+            dynamic_candidate_features=np.asarray(dyn_feats_np, dtype=np.float32),
+            instance_name=getattr(env.instance, "instance_name", "?"),
+        )
     def decoder_context(self, env, ev, node_embeddings: torch.Tensor, mask_result=None) -> torch.Tensor:
         if mask_result is None:
             mask_result = env.compute_action_masks(ev)

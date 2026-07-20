@@ -242,6 +242,84 @@ def _load_train_eval(config: dict):
     return train_ds, eval_ds, meta
 
 
+def aggregate_expert_report(
+    rows: list[dict],
+    *,
+    split: str = "train",
+    meta: dict | None = None,
+) -> dict:
+    """Build the standard expert metrics report from per-instance rows."""
+    meta = meta or {}
+
+    def _mean(key: str) -> float:
+        vals = [float(r.get(key, 0.0) or 0.0) for r in rows]
+        return float(sum(vals) / max(len(vals), 1))
+
+    return {
+        "split": split,
+        "num_instances": len(rows),
+        "mean_served_ratio": _mean("served_ratio"),
+        "feasibility_rate": float(sum(1 for r in rows if r.get("feasible")) / max(len(rows), 1)),
+        "mean_objective": _mean("objective"),
+        "mean_unserved_customers": _mean("unserved_customers"),
+        "mean_station_action_fraction": _mean("station_action_fraction"),
+        "mean_depot_finish_count": _mean("depot_finish_count"),
+        "mean_battery_violations": _mean("battery_violations"),
+        "mean_time_window_violations": _mean("time_window_violations"),
+        "mean_depot_lateness": _mean("depot_lateness"),
+        "mean_capacity_violations": _mean("capacity_violations"),
+        "mean_max_step_terminations": _mean("max_step_terminations"),
+        "mean_relative_objective_mismatch": _mean("relative_objective_mismatch"),
+        "hard_violation_free": all(
+            float(r.get("battery_violations", 0)) == 0
+            and float(r.get("time_window_violations", 0)) == 0
+            and float(r.get("capacity_violations", 0)) == 0
+            for r in rows
+        ),
+        "per_instance": rows,
+        "meta": {
+            k: meta.get(k)
+            for k in ("training_phase", "train_instances", "eval_instances")
+            if k in meta
+        },
+    }
+
+
+def expert_report_from_demo_episodes(
+    episodes: list[dict],
+    *,
+    split: str = "train",
+    meta: dict | None = None,
+) -> dict:
+    """Derive expert evaluation metrics from demonstration episodes (no re-rollout)."""
+    rows = []
+    for ep in episodes:
+        row = dict(ep.get("metrics") or {})
+        row["instance_name"] = ep.get("instance_name")
+        row["m"] = ep.get("m")
+        rows.append(row)
+    return aggregate_expert_report(rows, split=split, meta=meta)
+
+
+def log_expert_report(report: dict) -> None:
+    LOGGER.info("=" * 60)
+    LOGGER.info("Expert evaluation (%s)", report["split"])
+    LOGGER.info("  Served ratio: %.4f", report["mean_served_ratio"])
+    LOGGER.info("  Feasibility rate: %.4f", report["feasibility_rate"])
+    LOGGER.info("  Original objective: %.2f", report["mean_objective"])
+    LOGGER.info("  Unserved customers: %.2f", report["mean_unserved_customers"])
+    LOGGER.info("  Station-action fraction: %.4f", report["mean_station_action_fraction"])
+    LOGGER.info("  Depot finish count: %.2f", report["mean_depot_finish_count"])
+    LOGGER.info("  Battery violations: %.4f", report["mean_battery_violations"])
+    LOGGER.info("  TW violations: %.4f", report["mean_time_window_violations"])
+    LOGGER.info("  Depot lateness: %.4f", report["mean_depot_lateness"])
+    LOGGER.info("  Capacity violations: %.4f", report["mean_capacity_violations"])
+    LOGGER.info("  Max-step terminations: %.4f", report["mean_max_step_terminations"])
+    LOGGER.info("  Obj reconstruction mismatch (rel): %.6f", report["mean_relative_objective_mismatch"])
+    LOGGER.info("  Hard-violation-free: %s", report["hard_violation_free"])
+    LOGGER.info("=" * 60)
+
+
 def evaluate_expert(config: dict, *, on_holdout: bool = False) -> dict:
     train_ds, eval_ds, meta = _load_train_eval(config)
     ds = eval_ds if on_holdout else train_ds
@@ -281,50 +359,12 @@ def evaluate_expert(config: dict, *, on_holdout: bool = False) -> dict:
             row["objective"], row["unserved_customers"], row["num_decisions"],
         )
 
-    def _mean(key: str) -> float:
-        vals = [float(r.get(key, 0.0) or 0.0) for r in rows]
-        return float(sum(vals) / max(len(vals), 1))
-
-    report = {
-        "split": "holdout" if on_holdout else "train",
-        "num_instances": len(rows),
-        "mean_served_ratio": _mean("served_ratio"),
-        "feasibility_rate": float(sum(1 for r in rows if r.get("feasible")) / max(len(rows), 1)),
-        "mean_objective": _mean("objective"),
-        "mean_unserved_customers": _mean("unserved_customers"),
-        "mean_station_action_fraction": _mean("station_action_fraction"),
-        "mean_depot_finish_count": _mean("depot_finish_count"),
-        "mean_battery_violations": _mean("battery_violations"),
-        "mean_time_window_violations": _mean("time_window_violations"),
-        "mean_depot_lateness": _mean("depot_lateness"),
-        "mean_capacity_violations": _mean("capacity_violations"),
-        "mean_max_step_terminations": _mean("max_step_terminations"),
-        "mean_relative_objective_mismatch": _mean("relative_objective_mismatch"),
-        "hard_violation_free": all(
-            float(r.get("battery_violations", 0)) == 0
-            and float(r.get("time_window_violations", 0)) == 0
-            and float(r.get("capacity_violations", 0)) == 0
-            for r in rows
-        ),
-        "per_instance": rows,
-        "meta": {k: meta.get(k) for k in ("training_phase", "train_instances", "eval_instances") if k in meta},
-    }
-    LOGGER.info("=" * 60)
-    LOGGER.info("Expert evaluation (%s)", report["split"])
-    LOGGER.info("  Served ratio: %.4f", report["mean_served_ratio"])
-    LOGGER.info("  Feasibility rate: %.4f", report["feasibility_rate"])
-    LOGGER.info("  Original objective: %.2f", report["mean_objective"])
-    LOGGER.info("  Unserved customers: %.2f", report["mean_unserved_customers"])
-    LOGGER.info("  Station-action fraction: %.4f", report["mean_station_action_fraction"])
-    LOGGER.info("  Depot finish count: %.2f", report["mean_depot_finish_count"])
-    LOGGER.info("  Battery violations: %.4f", report["mean_battery_violations"])
-    LOGGER.info("  TW violations: %.4f", report["mean_time_window_violations"])
-    LOGGER.info("  Depot lateness: %.4f", report["mean_depot_lateness"])
-    LOGGER.info("  Capacity violations: %.4f", report["mean_capacity_violations"])
-    LOGGER.info("  Max-step terminations: %.4f", report["mean_max_step_terminations"])
-    LOGGER.info("  Obj reconstruction mismatch (rel): %.6f", report["mean_relative_objective_mismatch"])
-    LOGGER.info("  Hard-violation-free: %s", report["hard_violation_free"])
-    LOGGER.info("=" * 60)
+    report = aggregate_expert_report(
+        rows,
+        split="holdout" if on_holdout else "train",
+        meta=meta,
+    )
+    log_expert_report(report)
     return report
 
 

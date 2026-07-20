@@ -207,6 +207,24 @@ def run_internal_checks(config: dict) -> None:
     LOGGER.info("Exact-mask + expert legality smoke OK (%s)", inst.instance_name)
 
 
+def _write_expert_artifacts(run_dir: Path, report: dict) -> Path:
+    metrics_path = run_dir / "expert" / "expert_metrics.json"
+    traj_path = run_dir / "expert" / "expert_trajectories_summary.csv"
+    metrics_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+
+    rows = report.get("per_instance") or []
+    if rows:
+        keys = sorted({k for r in rows for k in r.keys() if k != "breakdown"})
+        with traj_path.open("w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
+            w.writeheader()
+            for r in rows:
+                w.writerow({k: r.get(k) for k in keys})
+    else:
+        traj_path.write_text("instance_name\n", encoding="utf-8")
+    return metrics_path
+
+
 def stage_expert(config: dict, run_dir: Path, *, reuse: bool) -> dict:
     LOGGER.info("=" * 60)
     LOGGER.info("Stage 1 - expert evaluation")
@@ -227,20 +245,53 @@ def stage_expert(config: dict, run_dir: Path, *, reuse: bool) -> dict:
             f"tw={report.get('mean_time_window_violations')}, "
             f"cap={report.get('mean_capacity_violations')})"
         )
-    metrics_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-
-    rows = report.get("per_instance") or []
-    if rows:
-        keys = sorted({k for r in rows for k in r.keys() if k != "breakdown"})
-        with traj_path.open("w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
-            w.writeheader()
-            for r in rows:
-                w.writerow({k: r.get(k) for k in keys})
-    else:
-        traj_path.write_text("instance_name\n", encoding="utf-8")
+    metrics_path = _write_expert_artifacts(run_dir, report)
     LOGGER.info(
         "Expert done | served=%.3f feas=%.3f -> %s",
+        report["mean_served_ratio"], report["feasibility_rate"], metrics_path,
+    )
+    return report
+
+
+def stage_expert_from_demonstrations(
+    config: dict,
+    run_dir: Path,
+    demo_path: Path,
+    *,
+    reuse: bool,
+) -> dict:
+    """Write expert metrics from demo episodes (same rollouts — no second expert pass)."""
+    LOGGER.info("=" * 60)
+    LOGGER.info("Stage 1 - expert metrics from demonstrations (single pass)")
+    LOGGER.info("=" * 60)
+    metrics_path = run_dir / "expert" / "expert_metrics.json"
+    traj_path = run_dir / "expert" / "expert_trajectories_summary.csv"
+    if reuse and metrics_path.is_file() and traj_path.is_file():
+        LOGGER.info("Reusing cached expert metrics: %s", metrics_path)
+        return json.loads(metrics_path.read_text(encoding="utf-8"))
+
+    import torch
+
+    from src.expert.generate_demonstrations import (
+        expert_report_from_demo_episodes,
+        log_expert_report,
+    )
+
+    payload = torch.load(demo_path, map_location="cpu", weights_only=False)
+    episodes = payload.get("episodes") or []
+    meta = dict(payload.get("meta") or {})
+    report = expert_report_from_demo_episodes(episodes, split="train", meta=meta)
+    log_expert_report(report)
+    if not report.get("hard_violation_free", False):
+        raise PipelineError(
+            "Expert/demos produced hard EVRPTW violations "
+            f"(battery={report.get('mean_battery_violations')}, "
+            f"tw={report.get('mean_time_window_violations')}, "
+            f"cap={report.get('mean_capacity_violations')})"
+        )
+    metrics_path = _write_expert_artifacts(run_dir, report)
+    LOGGER.info(
+        "Expert metrics from demos | served=%.3f feas=%.3f -> %s",
         report["mean_served_ratio"], report["feasibility_rate"], metrics_path,
     )
     return report
@@ -292,7 +343,33 @@ def stage_behavior_cloning(config: dict, run_dir: Path, *, reuse: bool) -> dict:
         LOGGER.info("Reusing cached BC checkpoints: %s", best)
         return json.loads(eval_json.read_text(encoding="utf-8"))
 
-    from src.training.behavior_cloning import train_behavior_cloning
+    from src.training.behavior_cloning import evaluate_bc_policy, train_behavior_cloning
+    from src.training.train_rl import load_policy
+    from src.utils.seed import resolve_device
+
+    # Resume path: checkpoints exist but greedy eval crashed / was never written.
+    if reuse and best.is_file() and last.is_file() and not eval_json.is_file():
+        LOGGER.info(
+            "Reusing BC checkpoints; running greedy eval only (skipping BC train): %s",
+            best,
+        )
+        device = resolve_device(config.get("device", "auto"))
+        policy = load_policy(best, device=device)
+        eval_report = evaluate_bc_policy(config, policy, device)
+        eval_json.write_text(json.dumps(eval_report, indent=2, default=str), encoding="utf-8")
+        summary = {
+            "best_checkpoint": str(best),
+            "last_checkpoint": str(last),
+            "epochs_completed": "reused",
+            "early_stopping": False,
+            "greedy_eval": eval_report,
+            "resumed_eval_only": True,
+        }
+        (out_dir / "bc_summary.json").write_text(
+            json.dumps(summary, indent=2, default=str), encoding="utf-8",
+        )
+        LOGGER.info("BC eval-only resume done | best=%s", best)
+        return summary
 
     bcfg["best_checkpoint_name"] = "bc_best_policy.pt"
     bcfg["last_checkpoint_name"] = "bc_last_policy.pt"
@@ -516,12 +593,27 @@ def write_dashboard_bundle(run_dir: Path, stages: dict[str, Any]) -> None:
     LOGGER.info("Dashboard bundle -> %s", dash)
 
 
-def run_training_pipeline(config: dict, *, config_path: str | None = None) -> Path:
+def run_training_pipeline(
+    config: dict,
+    *,
+    config_path: str | None = None,
+    resume_run: str | Path | None = None,
+) -> Path:
     flags = _pipeline_flags(config)
-    run_dir = create_run_directory(config)
+    if resume_run:
+        run_dir = Path(resume_run)
+        if not run_dir.is_dir():
+            raise PipelineError(f"resume-run directory not found: {run_dir}")
+        LOGGER.info("Resuming pipeline in existing run directory: %s", run_dir)
+        for name in STAGE_DIRS:
+            (run_dir / name).mkdir(parents=True, exist_ok=True)
+        reuse = bool(flags.get("reuse_cached_stages", True))
+    else:
+        run_dir = create_run_directory(config)
+        # Fresh run directory - nothing to reuse yet.
+        reuse = False
+
     cfg = _wire_run_outputs(config, run_dir)
-    # Fresh run directory - nothing to reuse yet.
-    reuse = False
 
     stages: dict[str, Any] = {}
     t0 = time.time()
@@ -530,12 +622,29 @@ def run_training_pipeline(config: dict, *, config_path: str | None = None) -> Pa
         run_internal_checks(cfg)
         stages["checks"] = {"ok": True}
 
-    if flags.get("run_expert", True):
-        stages["expert"] = stage_expert(cfg, run_dir, reuse=reuse)
+    want_expert = bool(flags.get("run_expert", True))
+    want_demos = bool(flags.get("generate_demonstrations", True))
 
-    if flags.get("generate_demonstrations", True):
+    # One expert rollout pass when both stages are enabled (demos + metrics).
+    if want_expert and want_demos:
+        LOGGER.info(
+            "Merging expert evaluation into demonstration generation "
+            "(single rollout pass — same exact-mask logic)."
+        )
         demo_path = stage_demonstrations(cfg, run_dir, reuse=reuse)
         stages["demonstrations"] = {"path": str(demo_path)}
+        stages["expert"] = stage_expert_from_demonstrations(
+            cfg, run_dir, demo_path, reuse=reuse,
+        )
+    elif want_expert:
+        stages["expert"] = stage_expert(cfg, run_dir, reuse=reuse)
+    elif want_demos:
+        demo_path = stage_demonstrations(cfg, run_dir, reuse=reuse)
+        stages["demonstrations"] = {"path": str(demo_path)}
+        # Still write expert metrics from the same demos (no second rollout).
+        stages["expert"] = stage_expert_from_demonstrations(
+            cfg, run_dir, demo_path, reuse=reuse,
+        )
 
     if flags.get("run_behavior_cloning", True):
         stages["bc"] = stage_behavior_cloning(cfg, run_dir, reuse=reuse)

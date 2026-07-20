@@ -476,6 +476,8 @@ def train(config: dict) -> dict:
     # Optional BC regularization demos (early RL fine-tune).
     bc_episodes = None
     bc_instance_by_name = None
+    bc_decision_cache = None
+    bc_instance_embeddings = None
     bc_reg = (config.get("rl") or {}).get("bc_regularization") or {}
     if bool(bc_reg.get("enabled", False)):
         demo_path = Path((config.get("demonstrations") or {}).get("input", "outputs/demonstrations/rc21_expert.pt"))
@@ -484,6 +486,30 @@ def train(config: dict) -> dict:
             bc_episodes = list(demo_payload.get("episodes") or [])
             bc_instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names if n in train_ds.names}
             LOGGER.info("BC regularization enabled | demos=%d from %s", len(bc_episodes), demo_path)
+            # One-time exact-mask cache: avoids re-running analyze_decision every update.
+            from src.training.behavior_cloning import build_bc_decision_cache
+            t_cache0 = time.perf_counter()
+            bc_decision_cache = build_bc_decision_cache(
+                bc_episodes,
+                bc_instance_by_name,
+                charging_portions=charging_portions,
+                environment_config=config.get("environment"),
+            )
+            bc_instance_embeddings = {
+                name: policy.encode(inst, device=device).detach()
+                for name, inst in bc_instance_by_name.items()
+                if any(s.instance_name == name for s in bc_decision_cache)
+            }
+            LOGGER.info(
+                "BC-reg cache ready | decisions=%d embeddings=%d in %.1fs "
+                "(exact masks frozen; every_n=%s decay=%s batch_decisions=%s)",
+                len(bc_decision_cache),
+                len(bc_instance_embeddings),
+                time.perf_counter() - t_cache0,
+                bc_reg.get("every_n_updates", 1),
+                bc_reg.get("decay_updates", 200),
+                bc_reg.get("batch_decisions", 32),
+            )
         else:
             LOGGER.warning("BC regularization enabled but demo file missing: %s", demo_path)
     from src.env.analysis_counters import (
@@ -541,6 +567,8 @@ def train(config: dict) -> dict:
             bc_episodes=bc_episodes,
             bc_instance_by_name=bc_instance_by_name,
             bc_regularization_cfg=(config.get("rl") or {}).get("bc_regularization"),
+            bc_decision_cache=bc_decision_cache,
+            bc_instance_embeddings=bc_instance_embeddings,
         )
         record["epoch"] = epoch
         record["learning_rate"] = actor_lr
