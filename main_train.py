@@ -93,6 +93,14 @@ def main() -> None:
 
     _apply_stage_flags(config, args.stage)
 
+    from src.utils.gpu_runtime import configure_cuda_runtime
+
+    gpu_cfg = config.get("gpu") or {}
+    configure_cuda_runtime(
+        cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
+        allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),
+    )
+
     # Later stages continue in the latest run folder automatically.
     resume_run = args.resume_run
     if resume_run is None and args.stage in STAGES_CONTINUE_LATEST:

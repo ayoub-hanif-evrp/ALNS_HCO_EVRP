@@ -287,7 +287,10 @@ def train(config: dict) -> dict:
     from src.utils.gpu_runtime import configure_cuda_runtime, maybe_compile_module
     perf = (config.get("environment") or {}).get("performance") or {}
     gpu_cfg = config.get("gpu") or {}
-    configure_cuda_runtime(cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)))
+    configure_cuda_runtime(
+        cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
+        allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),
+    )
     compile_models = bool(gpu_cfg.get("torch_compile", False)) and device.type == "cuda"
     if compile_models:
         policy = maybe_compile_module(policy, enabled=True)

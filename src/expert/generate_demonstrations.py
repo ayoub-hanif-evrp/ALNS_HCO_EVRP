@@ -49,6 +49,10 @@ def _episode_to_demo_dict(ep: EpisodeResult) -> dict:
 
 def _parallel_demo_job(job: dict) -> dict:
     """Process-pool worker: one exact-mask expert episode (Windows-safe top-level)."""
+    from src.utils.gpu_runtime import limit_cpu_threads_for_worker
+
+    # Avoid 13 workers × 24 BLAS threads thrashing the CPU.
+    limit_cpu_threads_for_worker(1)
     cfg = job["config"]
     expert = FeasibilityFirstExpert(cfg)
     weights = CostWeights.from_config(cfg["cost"])

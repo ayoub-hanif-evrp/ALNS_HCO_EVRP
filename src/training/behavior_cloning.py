@@ -319,6 +319,9 @@ def _cache_decisions_for_one_episode(
 
 def _parallel_bc_cache_job(job: dict) -> tuple[str, list[CachedBCDecision]]:
     """Process-pool worker for one demo episode → BC cache entries."""
+    from src.utils.gpu_runtime import limit_cpu_threads_for_worker
+
+    limit_cpu_threads_for_worker(1)
     ep = job["episode"]
     name = str(ep["instance_name"])
     entries = _cache_decisions_for_one_episode(
@@ -648,6 +651,13 @@ def evaluate_bc_policy(config: dict, policy: TransformerEVRPTWPolicy, device: to
 def train_behavior_cloning(config: dict) -> dict:
     set_seed(int(config.get("seed", 42)), deterministic=bool(config.get("deterministic", False)))
     device = resolve_device(config.get("device", "auto"))
+    from src.utils.gpu_runtime import configure_cuda_runtime
+
+    gpu_cfg = config.get("gpu") or {}
+    configure_cuda_runtime(
+        cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
+        allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),
+    )
     LOGGER.info("BC training on %s", describe_device(device))
 
     demo_path = Path((config.get("demonstrations") or {}).get("input", "outputs/demonstrations/rc21_expert.pt"))
