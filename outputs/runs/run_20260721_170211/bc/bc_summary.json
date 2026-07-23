@@ -1,0 +1,162 @@
+{
+  "best_bc_loss": 1.4487141594290733,
+  "best_checkpoint": "outputs\\runs\\run_20260721_170211\\bc\\bc_best_policy.pt",
+  "last_checkpoint": "outputs\\runs\\run_20260721_170211\\bc\\bc_last_policy.pt",
+  "epochs_completed": 12,
+  "early_stopping": false,
+  "history": [
+    {
+      "epoch": 0,
+      "bc_loss": 2.3945498168468475,
+      "node_accuracy": 0.37646484375,
+      "charge_accuracy": 0.6881553205566363,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 1,
+      "bc_loss": 1.892315335571766,
+      "node_accuracy": 0.501953125,
+      "charge_accuracy": 0.7531834280915162,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 2,
+      "bc_loss": 1.8043068945407867,
+      "node_accuracy": 0.51513671875,
+      "charge_accuracy": 0.6920934514079831,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 3,
+      "bc_loss": 1.7284950762987137,
+      "node_accuracy": 0.54150390625,
+      "charge_accuracy": 0.6970891955266955,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 4,
+      "bc_loss": 1.6493290588259697,
+      "node_accuracy": 0.5556640625,
+      "charge_accuracy": 0.7253207273355301,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 5,
+      "bc_loss": 1.6395167484879494,
+      "node_accuracy": 0.5517578125,
+      "charge_accuracy": 0.7313605359101683,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 6,
+      "bc_loss": 1.695380538702011,
+      "node_accuracy": 0.53857421875,
+      "charge_accuracy": 0.7508100100471424,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 7,
+      "bc_loss": 1.6106750294566154,
+      "node_accuracy": 0.56591796875,
+      "charge_accuracy": 0.7864608022696259,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 8,
+      "bc_loss": 1.6234703809022903,
+      "node_accuracy": 0.537109375,
+      "charge_accuracy": 0.7856684638031388,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 9,
+      "bc_loss": 1.4769146889448166,
+      "node_accuracy": 0.58349609375,
+      "charge_accuracy": 0.803613075628362,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 10,
+      "bc_loss": 1.4487141594290733,
+      "node_accuracy": 0.59716796875,
+      "charge_accuracy": 0.7995659722222224,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    },
+    {
+      "epoch": 11,
+      "bc_loss": 1.4593479707837105,
+      "node_accuracy": 0.58251953125,
+      "charge_accuracy": 0.7841373240729859,
+      "depot_accuracy": 0.0,
+      "n_decisions": 128.0
+    }
+  ],
+  "greedy_eval": {
+    "num_instances": 3,
+    "mean_served_ratio": 0.8433333333333334,
+    "feasibility_rate": 0.3333333333333333,
+    "mean_objective": 245086.6791325919,
+    "mean_unserved": 15.666666666666666,
+    "mean_battery_violations": 0.0,
+    "mean_tw_violations": 0.0,
+    "mean_max_steps": 0.0,
+    "mean_depot_finish_count": 18.333333333333332,
+    "mean_station_action_fraction": 0.11761160976125379,
+    "mean_depot_lateness": 0.0,
+    "per_instance": [
+      {
+        "instance_name": "rc101_21",
+        "served_ratio": 0.81,
+        "feasible": false,
+        "objective": 310611.5743975737,
+        "unserved_customers": 19,
+        "battery_violations": 0,
+        "time_window_violations": 0,
+        "max_step_terminations": 0,
+        "depot_finish_count": 18.0,
+        "station_action_fraction": 0.16806722689075632,
+        "depot_lateness": 0.0
+      },
+      {
+        "instance_name": "rc104_21",
+        "served_ratio": 0.72,
+        "feasible": false,
+        "objective": 400445.58975765156,
+        "unserved_customers": 28,
+        "battery_violations": 0,
+        "time_window_violations": 0,
+        "max_step_terminations": 0,
+        "depot_finish_count": 17.0,
+        "station_action_fraction": 0.16037735849056603,
+        "depot_lateness": 0.0
+      },
+      {
+        "instance_name": "rc208_21",
+        "served_ratio": 1.0,
+        "feasible": true,
+        "objective": 24202.873242550373,
+        "unserved_customers": 0,
+        "battery_violations": 0,
+        "time_window_violations": 0,
+        "max_step_terminations": 0,
+        "depot_finish_count": 20.0,
+        "station_action_fraction": 0.024390243902439025,
+        "depot_lateness": 0.0
+      }
+    ]
+  },
+  "cached_decisions": 1510,
+  "updates_per_epoch": 16,
+  "batch_decisions": 128
+}
