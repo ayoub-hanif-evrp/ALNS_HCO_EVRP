@@ -22,7 +22,8 @@ MASK_SUMMARY_FEATURE_DIM = 10
 FLEET_BALANCE_FEATURE_DIM = 4
 
 # Per-candidate dynamic features (Section 7).
-DYNAMIC_CANDIDATE_FEAT_DIM = 21
+# Dim 21 historical + wait_mu_norm + density_score for Hanif stations.
+DYNAMIC_CANDIDATE_FEAT_DIM = 23
 
 # Battery scalars for the charging head (Section 13).
 BATTERY_STATE_FEATURE_DIM = 4

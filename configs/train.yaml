@@ -1,16 +1,15 @@
-# Fast paper recipe: Expert→BC→short RL with BC-reg (exact masks + Transformer MARL).
-# Stop any old collapsing RL run first, then:
-#   python main_train.py --config configs/train.yaml --device cuda --stage bc
-#   python main_train.py --config configs/train.yaml --device cuda --stage rl
-# Or full from scratch:
+# Hanif-only study (A1 original TW + B3 pilot subset).
+# User commands:
 #   python main_train.py --config configs/train.yaml --device cuda
+#   python main_dashboard.py
 
 seed: 42
 device: cuda
 deterministic: false
 
 pipeline:
-  run_internal_checks: false
+  run_internal_sanity_checks: true
+  run_internal_checks: true
   run_expert: true
   generate_demonstrations: true
   run_behavior_cloning: true
@@ -18,47 +17,27 @@ pipeline:
   run_final_evaluation: true
   reuse_cached_stages: true
 
-expert:
-  enabled: true
-  lookahead_depth: 0
-  max_customer_candidates: 15
-  max_recharge_candidates: 5
-  debug_dump_dir: outputs/expert_diagnostics
-
-behavior_cloning:
-  enabled: true
-  epochs: 12
-  # Feed the A5000 harder during GPU-only BC (after parallel cache build).
-  batch_decisions: 128
-  updates_per_epoch: 16
-  batch_episodes: 1
-  batch_size: 128
-  learning_rate: 0.0001
-  grad_clip: 1.0
-  log_every: 1
-  validation_split: 0.1
-  early_stopping: false
-  run_greedy_eval: true
-  output_dir: outputs/bc
-
-initialization:
-  actor_checkpoint: outputs/bc/bc_best_policy.pt
-  load_actor: true
-  load_critic: false
-  reset_optimizer: true
-
-demonstrations:
-  input: outputs/demonstrations/demonstrations.pt
-  output: outputs/demonstrations/demonstrations.pt
-  eval_report: outputs/demonstrations/expert_eval_report.json
-  # 24-core PC: one worker per RC instance for max demo / BC-cache speed.
-  num_workers: 13
-
-constraints:
-  time_windows_mode: hard_original
-  allow_late_service: false
-  relax_time_windows: false
-  modify_instance_time_windows: false
+dataset:
+  name: hanif
+  root: dataset/Hanif/converted_hanif_original_tw
+  path: dataset/Hanif/converted_hanif_original_tw
+  source_txt: dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_A_original_TW
+  format: solomon_txt
+  classes: [C, R, RC]
+  split_mode: deterministic_by_class
+  use_only_this_dataset: true
+  customers: 1000
+  training_phase: hanif
+  shuffle_instances: false
+  auto_discover_rc21: false
+  train_size_filter: []
+  eval_size_filter: []
+  instance_suffix: ""
+  pilot:
+    enabled: true
+    train_per_class: 2
+    val_per_class: 1
+    test_per_class: 1
 
 environment:
   mask_semantics: exact_original_evrptw
@@ -85,45 +64,49 @@ environment:
     enabled: true
     cache_by_state_version: true
 
-gpu:
-  use_amp: true
-  torch_compile: false
-  cudnn_benchmark: true
-  # Prefer TF32 on Ampere (A5000) for faster matmuls; exact masks stay on CPU.
-  allow_tf32: true
+constraints:
+  time_windows_mode: hard_original
+  allow_late_service: false
+  relax_time_windows: false
+  modify_instance_time_windows: false
 
-dataset:
-  path: dataset/Schneider/evrptw_instances
-  training_phase: full_rc
-  phase: rc_only
-  classes:
-    - RC
-  instance_suffix: "_21"
-  customers: 100
-  use_holdout: true
-  class_filter: ["RC"]
-  train_size_filter: ["_21"]
-  eval_size_filter: ["_21"]
-  shuffle_instances: false
-  auto_discover_rc21: true
-  use_all_training_instances: true
-  expected_train_count: 13
-  expected_eval_count: 3
-  fail_if_train_count_mismatch: true
-  eval_instances:
-    - rc101_21
-    - rc104_21
-    - rc208_21
-  holdout_by_class:
-    RC:
-      - rc101_21
-      - rc104_21
-      - rc208_21
+expert:
+  enabled: true
+  lookahead_depth: 1
+  max_customer_candidates: 15
+  max_recharge_candidates: 5
+  debug_dump_dir: outputs/expert_diagnostics
+
+behavior_cloning:
+  enabled: true
+  epochs: 20
+  batch_decisions: 64
+  updates_per_epoch: 16
+  batch_episodes: 1
+  batch_size: 64
+  learning_rate: 0.0001
+  grad_clip: 1.0
+  log_every: 1
+  validation_split: 0.1
+  early_stopping: false
+  run_greedy_eval: true
+  output_dir: outputs/bc
+
+initialization:
+  actor_checkpoint: outputs/bc/bc_best_policy.pt
+  load_actor: true
+  load_critic: false
+  reset_optimizer: true
+
+demonstrations:
+  input: outputs/demonstrations/hanif_expert_train.pt
+  output: outputs/demonstrations/hanif_expert_train.pt
+  eval_report: outputs/demonstrations/expert_eval_report.json
+  num_workers: 6
 
 optimizer:
-  # Lower LRs: stable BC→RL fine-tune (prevents collapse).
-  actor_lr: 0.00001
-  critic_lr: 0.0001
+  actor_lr: 0.00002
+  critic_lr: 0.0003
   actor_grad_clip: 1.0
   critic_grad_clip: 1.0
   critic_updates_per_actor_update: 1
@@ -131,12 +114,11 @@ optimizer:
 
 training:
   method: actor_critic
-  learning_rate: 0.00001
+  learning_rate: 0.00002
   entropy_coef: 0.01
   grad_clip: 1.0
   batch_size: 1
-  # Short fine-tune; BC-reg keeps policy near expert.
-  cycles: 15
+  cycles: 10
   shuffle_within_pass: false
   mixed_macro_updates: false
   macro_class_updates: false
@@ -157,7 +139,7 @@ training:
 critic:
   detach_actor_embeddings: true
   critic_loss: huber
-  critic_lr: 0.0001
+  critic_lr: 0.0003
   critic_updates_per_actor_update: 1
   critic_grad_clip: 1.0
   normalize_returns_for_critic: true
@@ -201,9 +183,9 @@ rl:
   urgent_rank_k: 10
   bc_regularization:
     enabled: true
-    coefficient_initial: 0.1
-    coefficient_final: 0.0
-    decay_updates: 100
+    coefficient_initial: 0.2
+    coefficient_final: 0.05
+    decay_updates: 500
     every_n_updates: 5
     batch_episodes: 1
     batch_decisions: 64
@@ -243,7 +225,8 @@ decoding:
   max_steps_factor: 6
 
 problem:
-  load_capacity: 100.0
+  # null = use per-instance Hanif load capacity (200 / 700 / 1000)
+  load_capacity: null
   allow_partial_charging: true
   charging_portions: [0.25, 0.50, 0.75, 1.00]
   station_reusable: true
@@ -299,14 +282,14 @@ dashboard:
   live_random_diagnostics: false
 
 diagnostics:
-  parameter_delta_every_updates: 0
-  full_mask_reason_dump_every_updates: 0
-  timing_enabled: false
+  parameter_delta_every_updates: 20
+  full_mask_reason_dump_every_updates: 20
+  timing_enabled: true
   run_cycle_probes: false
 
 checkpointing:
   save_last_every_updates: 20
-  save_cycle_checkpoint: false
+  save_cycle_checkpoint: true
   save_best_cycle_objective: true
   save_best_cycle_feasibility: true
 
@@ -324,3 +307,9 @@ evaluation:
     max_iterations: 50
   save_routes: true
   save_figures: false
+
+gpu:
+  use_amp: true
+  torch_compile: false
+  cudnn_benchmark: true
+  allow_tf32: true

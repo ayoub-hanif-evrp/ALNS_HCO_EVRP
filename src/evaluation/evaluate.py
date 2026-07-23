@@ -54,17 +54,26 @@ def _load_eval_dataset(config: dict) -> EVRPTWDataset:
     load_cap = load_capacity_from_config(config)
 
     train_names, eval_names, meta = resolve_training_phase_split(config)
-    phase = normalize_training_phase(config)
-    if phase == "all_classes":
-        ds_cfg["class_filter"] = ["C", "R", "RC"]
+    from src.data.hanif_dataset import is_hanif_config
+
+    if is_hanif_config(config):
+        phase = "hanif"
+        ds_cfg["class_filter"] = list(ds_cfg.get("classes") or ["C", "R", "RC"])
+        ds_cfg["train_size_filter"] = []
+        ds_cfg["eval_size_filter"] = []
         ds_cfg["auto_discover_rc21"] = False
+    else:
+        phase = normalize_training_phase(config)
+        if phase == "all_classes":
+            ds_cfg["class_filter"] = ["C", "R", "RC"]
+            ds_cfg["auto_discover_rc21"] = False
 
     _train_ds, eval_ds = split_dataset(
         ds_cfg["path"],
         train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
         seed=seed,
-        train_filter=ds_cfg.get("train_size_filter") or ["_21"],
-        eval_filter=ds_cfg.get("eval_size_filter") or ["_21"],
+        train_filter=ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else ["_21"],
+        eval_filter=ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else ["_21"],
         train_instances=train_names,
         eval_instances=eval_names,
         class_filter=ds_cfg.get("class_filter"),

@@ -225,7 +225,9 @@ def train(config: dict) -> dict:
     seed = int(config.get("seed", 42))
     set_seed(seed, deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
-    phase = normalize_training_phase(config)
+    from src.data.hanif_dataset import is_hanif_config
+
+    phase = "hanif" if is_hanif_config(config) else normalize_training_phase(config)
     LOGGER.info(f"Training on device: {describe_device(device)}")
     LOGGER.info("Mode: exact-mask semi-MDP actor-critic | phase=%s", phase)
 
@@ -238,16 +240,23 @@ def train(config: dict) -> dict:
     ds_cfg["train_instances"] = train_names
     ds_cfg["eval_instances"] = eval_names
     # Phase 3 includes C/R; do not force RC-only filter when evaluating the union.
-    if phase == "all_classes":
-        ds_cfg["class_filter"] = ["C", "R", "RC"]
+    if phase in {"all_classes", "hanif"}:
+        ds_cfg["class_filter"] = list(ds_cfg.get("classes") or ["C", "R", "RC"])
         ds_cfg["auto_discover_rc21"] = False
+
+    if phase == "hanif":
+        train_filter = ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else []
+        eval_filter = ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else []
+    else:
+        train_filter = ds_cfg.get("train_size_filter") or ["_21"]
+        eval_filter = ds_cfg.get("eval_size_filter") or ["_21"]
 
     train_ds, eval_ds = split_dataset(
         ds_cfg["path"],
         train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
         seed=seed,
-        train_filter=ds_cfg.get("train_size_filter") or ["_21"],
-        eval_filter=ds_cfg.get("eval_size_filter") or ["_21"],
+        train_filter=train_filter,
+        eval_filter=eval_filter,
         train_instances=train_names,
         eval_instances=eval_names,
         class_filter=ds_cfg.get("class_filter"),

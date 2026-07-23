@@ -188,9 +188,9 @@ class CentralFleetValueCritic(nn.Module):
 
         cand = state.candidate_embeddings
         feas = torch.tensor(state.feasible_mask, device=device, dtype=torch.bool)
-        is_customer = state.dynamic_candidate_feats[:, 17] > 0.5
-        is_station = state.dynamic_candidate_feats[:, 18] > 0.5
-        is_depot = state.dynamic_candidate_feats[:, 19] > 0.5
+        is_customer = state.dynamic_candidate_feats[:, 19] > 0.5
+        is_station = state.dynamic_candidate_feats[:, 20] > 0.5
+        is_depot = state.dynamic_candidate_feats[:, 21] > 0.5
 
         def _pool(attn, query, type_mask):
             sel = type_mask & feas

@@ -21,7 +21,7 @@ from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
 
-TRAINING_PHASES = ("single_rc", "full_rc", "all_classes")
+TRAINING_PHASES = ("single_rc", "full_rc", "all_classes", "hanif")
 
 # Backward-compatible aliases from older curriculum_stage keys.
 _PHASE_ALIASES = {
@@ -32,6 +32,9 @@ _PHASE_ALIASES = {
     "rc_stabilization": "full_rc",
     "all_classes": "all_classes",
     "mixed_c_r_rc": "all_classes",
+    "hanif": "hanif",
+    "hanif_pilot": "hanif",
+    "hanif_full": "hanif",
 }
 
 
@@ -150,6 +153,17 @@ def resolve_all_classes_split(config: dict) -> tuple[list[str], list[str], dict]
 
 def resolve_training_phase_split(config: dict) -> tuple[list[str], list[str], dict]:
     """Dispatch on ``dataset.training_phase`` (preferred) or legacy curriculum_stage."""
+    from src.data.hanif_dataset import is_hanif_config, resolve_hanif_split, save_split_into_config
+
+    if is_hanif_config(config) or normalize_training_phase(config) == "hanif":
+        train, validation, test, meta = resolve_hanif_split(config)
+        save_split_into_config(config, train, validation, test, meta)
+        # Eval/holdout for legacy callers = test set (final evaluation only).
+        out_meta = dict(meta)
+        out_meta["training_phase"] = "hanif"
+        out_meta["curriculum_stage"] = "hanif"
+        return train, test, out_meta
+
     phase = normalize_training_phase(config)
     if phase == "single_rc":
         return resolve_single_rc_split(config)

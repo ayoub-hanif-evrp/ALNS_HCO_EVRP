@@ -765,9 +765,16 @@ class EVRPTWEnv:
             ev.total_waiting_time += waiting
             charge_start = max(arrival, inst.nodes[node].ready_time)
         else:
-            waiting = 0.0
+            wait_mu = 0.0
+            if inst.station_wait_mu is not None:
+                w = float(inst.station_wait_mu[node])
+                if w > 0.0 and not (w != w):  # not NaN
+                    wait_mu = w
+            waiting = wait_mu
             lateness = 0.0
-            charge_start = arrival
+            self.total_waiting_time += waiting
+            ev.total_waiting_time += waiting
+            charge_start = arrival + wait_mu
 
         charge_price = 0.0 if free else self._price_per_energy_at(node) * charged_energy
 

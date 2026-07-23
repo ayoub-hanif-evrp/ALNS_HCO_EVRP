@@ -275,12 +275,20 @@ def _load_train_eval(config: dict):
     seed = int(config.get("seed", 42))
     ds_cfg = dict(config["dataset"])
     train_names, eval_names, meta = resolve_training_phase_split(config)
+    from src.data.hanif_dataset import is_hanif_config
+
+    if is_hanif_config(config):
+        train_filter = ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else []
+        eval_filter = ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else []
+    else:
+        train_filter = ds_cfg.get("train_size_filter") or ["_21"]
+        eval_filter = ds_cfg.get("eval_size_filter") or ["_21"]
     train_ds, eval_ds = split_dataset(
         ds_cfg["path"],
         train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
         seed=seed,
-        train_filter=ds_cfg.get("train_size_filter") or ["_21"],
-        eval_filter=ds_cfg.get("eval_size_filter") or ["_21"],
+        train_filter=train_filter,
+        eval_filter=eval_filter,
         train_instances=train_names,
         eval_instances=eval_names,
         class_filter=ds_cfg.get("class_filter"),

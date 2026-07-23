@@ -667,17 +667,26 @@ def train_behavior_cloning(config: dict) -> dict:
             "Run the full pipeline first: python main_train.py --config configs/train.yaml"
         )
     payload = torch.load(demo_path, map_location="cpu", weights_only=False)
-    episodes = list(payload["episodes"])
-    LOGGER.info("Loaded %d demo episodes from %s", len(episodes), demo_path)
 
     train_names, eval_names, _ = resolve_training_phase_split(config)
     ds_cfg = dict(config["dataset"])
+    from src.data.hanif_dataset import is_hanif_config
+
+    train_filter = ds_cfg.get("train_size_filter")
+    eval_filter = ds_cfg.get("eval_size_filter")
+    if is_hanif_config(config):
+        train_filter = train_filter if train_filter is not None else []
+        eval_filter = eval_filter if eval_filter is not None else []
+    else:
+        train_filter = train_filter or ["_21"]
+        eval_filter = eval_filter or ["_21"]
+
     train_ds, _eval_ds = split_dataset(
         ds_cfg["path"],
         train_ratio=float(ds_cfg.get("train_ratio", 0.8)),
         seed=int(config.get("seed", 42)),
-        train_filter=ds_cfg.get("train_size_filter") or ["_21"],
-        eval_filter=ds_cfg.get("eval_size_filter") or ["_21"],
+        train_filter=train_filter,
+        eval_filter=eval_filter,
         train_instances=train_names,
         eval_instances=eval_names,
         class_filter=ds_cfg.get("class_filter"),
@@ -709,16 +718,25 @@ def train_behavior_cloning(config: dict) -> dict:
     rng = random.Random(int(config.get("seed", 42)))
     env_cfg = config.get("environment") or {}
 
-    # One exact-mask replay of demos; all epochs train on frozen decisions (GPU).
-    demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 8) or 8)
-    LOGGER.info("Building BC decision cache (one-time exact-mask replay)…")
-    decision_cache = build_bc_decision_cache(
-        episodes,
-        instance_by_name,
-        charging_portions=portions,
-        environment_config=env_cfg,
-        num_workers=demo_workers,
-    )
+    # Prefer cached decision-level dataset (no episode replay during BC).
+    if payload.get("decisions") is not None:
+        decision_cache = list(payload["decisions"])
+        LOGGER.info(
+            "Loaded %d cached BC decisions from %s (no episode replay)",
+            len(decision_cache), demo_path,
+        )
+    else:
+        episodes = list(payload.get("episodes") or [])
+        LOGGER.info("Loaded %d demo episodes from %s", len(episodes), demo_path)
+        demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 8) or 8)
+        LOGGER.info("Building BC decision cache (one-time exact-mask replay)…")
+        decision_cache = build_bc_decision_cache(
+            episodes,
+            instance_by_name,
+            charging_portions=portions,
+            environment_config=env_cfg,
+            num_workers=demo_workers,
+        )
     if not decision_cache:
         raise RuntimeError("BC decision cache is empty — demos produced no usable decisions")
 

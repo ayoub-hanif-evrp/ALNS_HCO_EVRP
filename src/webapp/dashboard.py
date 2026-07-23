@@ -174,6 +174,8 @@ def _load_pipeline_comparison(outputs_root: Path) -> dict | None:
     if run_dir is None:
         return None
     for rel in (
+        "evaluation/checkpoint_comparison.json",
+        "final_report.json",
         "dashboard/warmstart_comparison.json",
         "pipeline_summary.json",
     ):
@@ -182,10 +184,38 @@ def _load_pipeline_comparison(outputs_root: Path) -> dict | None:
             try:
                 import json
                 data = json.loads(path.read_text(encoding="utf-8"))
+                if "methods" in data:
+                    return data
+                if "checkpoint_comparison" in data:
+                    return data.get("checkpoint_comparison") or data
                 return data.get("comparison") or data
             except Exception:
                 continue
     return None
+
+
+def _load_hanif_run_extras(outputs_root: Path) -> dict:
+    """Load Hanif dataset report / final report for the latest run (read-only)."""
+    run_dir = _latest_run_dir(outputs_root)
+    if run_dir is None:
+        return {}
+    out: dict = {"run_dir": str(run_dir)}
+    for key, rel in (
+        ("dataset_report", "dataset/hanif_dataset_report.json"),
+        ("split_all", "dataset/split_all.json"),
+        ("final_report", "final_report.json"),
+        ("runtime", "metrics/runtime_profile.json"),
+        ("expert", "expert/expert_metrics.json"),
+        ("bc_eval", "bc/bc_eval_metrics.json"),
+    ):
+        path = run_dir / rel
+        if path.is_file():
+            try:
+                import json
+                out[key] = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return out
 
 
 def _render_pipeline_comparison(comparison: dict) -> None:
@@ -234,6 +264,39 @@ def _render_pipeline_comparison(comparison: dict) -> None:
                 f"<thead><tr><th></th>{header}</tr></thead>"
                 f"<tbody>{''.join(body)}</tbody></table>"
             )
+
+
+def _render_hanif_extras(extras: dict) -> None:
+    if not extras:
+        return
+    ds = extras.get("dataset_report") or {}
+    split = extras.get("split_all") or {}
+    final = extras.get("final_report") or {}
+    with ui.card().classes(_SECTION):
+        with ui.element("div").classes(_SECTION_HEAD):
+            ui.label("Hanif study").classes("text-sm font-semibold text-slate-800")
+            ui.label(str(extras.get("run_dir") or "")).classes("text-xs text-slate-500")
+        with ui.element("div").classes(_SECTION_BODY + " gap-2"):
+            if ds:
+                ui.label(
+                    f"Files={ds.get('number_of_files')} | "
+                    f"C={ds.get('number_of_C_instances')} "
+                    f"R={ds.get('number_of_R_instances')} "
+                    f"RC={ds.get('number_of_RC_instances')} | "
+                    f"customers={ds.get('customers_per_instance')} | "
+                    f"TW modified={ds.get('time_windows_modified')}"
+                ).classes("text-sm text-slate-700")
+            if split:
+                ui.label(f"Train: {split.get('train')}").classes("text-xs text-slate-600")
+                ui.label(f"Val: {split.get('validation')}").classes("text-xs text-slate-600")
+                ui.label(f"Test: {split.get('test')}").classes("text-xs text-slate-600")
+            if final:
+                ui.label(
+                    f"Chosen checkpoint: {final.get('chosen_final_checkpoint')}"
+                ).classes("text-sm font-medium text-slate-800")
+            runtime = extras.get("runtime") or {}
+            if runtime:
+                ui.label(f"Runtime profile: {runtime}").classes("text-xs text-slate-500")
 
 
 def create_dashboard(
@@ -354,6 +417,9 @@ def create_dashboard(
                 comparison = _load_pipeline_comparison(outputs_root)
                 if comparison:
                     _render_pipeline_comparison(comparison)
+                hanif_extras = _load_hanif_run_extras(outputs_root)
+                if hanif_extras:
+                    _render_hanif_extras(hanif_extras)
 
                 if df.empty:
                     with ui.card().classes(_SECTION + " p-10 text-center"):

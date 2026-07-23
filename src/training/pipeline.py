@@ -32,6 +32,7 @@ from src.utils.logging_utils import get_logger
 LOGGER = get_logger()
 
 STAGE_DIRS = (
+    "dataset",
     "expert",
     "demonstrations",
     "bc",
@@ -52,6 +53,7 @@ def _pipeline_flags(config: dict) -> dict:
     raw = dict(config.get("pipeline") or {})
     defaults = {
         "run_internal_checks": True,
+        "run_internal_sanity_checks": True,
         "run_expert": True,
         "generate_demonstrations": True,
         "run_behavior_cloning": True,
@@ -60,6 +62,8 @@ def _pipeline_flags(config: dict) -> dict:
         "reuse_cached_stages": True,
     }
     out = {**defaults, **raw}
+    if out.get("run_internal_sanity_checks") and not raw.get("run_internal_checks"):
+        out["run_internal_checks"] = True
     if config.get("expert") and config["expert"].get("enabled") is False:
         out["run_expert"] = False
         out["generate_demonstrations"] = False
@@ -128,9 +132,10 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
         "rl_dir": str(run_dir / "rl"),
     }
     cfg.setdefault("demonstrations", {})
-    cfg["demonstrations"]["output"] = str(run_dir / "demonstrations" / "demonstrations.pt")
+    cfg["demonstrations"]["output"] = str(run_dir / "demonstrations" / "hanif_expert_train.pt")
+    cfg["demonstrations"]["episodes_output"] = str(run_dir / "demonstrations" / "expert_episodes.pt")
     cfg["demonstrations"]["eval_report"] = str(run_dir / "expert" / "expert_metrics.json")
-    cfg["demonstrations"]["input"] = str(run_dir / "demonstrations" / "demonstrations.pt")
+    cfg["demonstrations"]["input"] = str(run_dir / "demonstrations" / "hanif_expert_train.pt")
     cfg.setdefault("behavior_cloning", {})
     cfg["behavior_cloning"]["output_dir"] = str(run_dir / "bc")
     cfg["behavior_cloning"]["early_stopping"] = False
@@ -142,6 +147,31 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
     cfg.setdefault("evaluation", {})
     cfg["evaluation"]["run_after_training"] = False
     return cfg
+
+
+def stage_hanif_dataset(config: dict, run_dir: Path) -> tuple[dict, dict]:
+    """Parse/convert Hanif, write compatibility report + deterministic splits."""
+    LOGGER.info("=" * 60)
+    LOGGER.info("Stage — Hanif dataset report + deterministic split")
+    LOGGER.info("=" * 60)
+    from src.data.hanif_dataset import (
+        HanifDatasetError,
+        build_hanif_dataset_report,
+        resolve_hanif_split,
+        save_split_into_config,
+    )
+
+    try:
+        train, validation, test, meta = resolve_hanif_split(config)
+        save_split_into_config(config, train, validation, test, meta)
+        report = build_hanif_dataset_report(config, run_dir=run_dir, split_meta=meta)
+    except HanifDatasetError as exc:
+        raise PipelineError(str(exc)) from exc
+    LOGGER.info(
+        "Hanif split | train=%d val=%d test=%d | pilot=%s",
+        len(train), len(validation), len(test), meta.get("pilot_enabled"),
+    )
+    return report, meta
 
 
 def run_internal_checks(config: dict) -> None:
@@ -176,15 +206,40 @@ def run_internal_checks(config: dict) -> None:
     )
 
     from src.data.instance_loader import load_instance
+    from src.data.hanif_dataset import is_hanif_config
+
+    ds_path = Path(config["dataset"]["path"])
+    train_names = list((config.get("dataset") or {}).get("train_instances") or [])
+    small = ds_path / (train_names[0] if train_names else "C1_10_1")
+    if not small.exists():
+        from src.data.instance_loader import list_instance_dirs
+        dirs = list_instance_dirs(ds_path)
+        if not dirs:
+            raise PipelineError(f"No instances under {ds_path}")
+        small = dirs[0]
+    inst = load_instance(small)
+
+    if is_hanif_config(config) and inst.num_customers >= 500:
+        # Full exact-mask analysis on 1000-customer Hanif is too heavy for sanity checks.
+        # Validate loader + station attrs + policy import only; expert legality runs in demos.
+        if inst.station_wait_mu is None or inst.station_density_score is None:
+            raise PipelineError(
+                f"Hanif smoke: station wait/density missing on {inst.instance_name}"
+            )
+        from src.training.train_rl import build_policy
+
+        _ = build_policy(config, list(config["problem"]["charging_portions"]))
+        LOGGER.info(
+            "Hanif smoke OK (load+attrs+policy) | %s N=%d customers=%d "
+            "(skipped full exact-mask analyze in checks)",
+            inst.instance_name, inst.num_nodes, inst.num_customers,
+        )
+        return
+
     from src.env.evrptw_env import EVRPTWEnv
     from src.env.policy_action import apply_policy_action
     from src.expert.feasibility_first_expert import ExpertConfig, FeasibilityFirstExpert
 
-    ds_path = Path(config["dataset"]["path"])
-    small = ds_path / "c101C5"
-    if not small.exists():
-        small = ds_path / train_names[0]
-    inst = load_instance(small)
     env = EVRPTWEnv(
         inst, m=2,
         charging_portions=list(config["problem"]["charging_portions"]),
@@ -279,6 +334,12 @@ def stage_expert_from_demonstrations(
 
     payload = torch.load(demo_path, map_location="cpu", weights_only=False)
     episodes = payload.get("episodes") or []
+    if not episodes and payload.get("decisions") is not None:
+        # Decision-only cache: rebuild lightweight metrics from embedded episode copies if present.
+        raise PipelineError(
+            "Expert metrics require episode rollouts in the demonstration file; "
+            "episodes missing from decision-level cache."
+        )
     meta = dict(payload.get("meta") or {})
     report = expert_report_from_demo_episodes(episodes, split="train", meta=meta)
     log_expert_report(report)
@@ -299,24 +360,33 @@ def stage_expert_from_demonstrations(
 
 def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage 1 — expert demonstrations")
+    LOGGER.info("Stage 1 — expert demonstrations (decision-level cache)")
     LOGGER.info("=" * 60)
     out_path = Path(config["demonstrations"]["output"])
+    episodes_path = Path(
+        (config.get("demonstrations") or {}).get(
+            "episodes_output", run_dir / "demonstrations" / "expert_episodes.pt",
+        )
+    )
     summary_path = run_dir / "demonstrations" / "demonstration_summary.json"
     if reuse and out_path.is_file() and summary_path.is_file():
-        LOGGER.info("Reusing cached demonstrations: %s", out_path)
+        LOGGER.info("Reusing cached decision-level demonstrations: %s", out_path)
         return out_path
 
+    from src.data.evrptw_dataset import split_dataset
+    from src.data.instance_loader import load_capacity_from_config
+    from src.data.training_phases import resolve_training_phase_split
     from src.expert.generate_demonstrations import generate_demonstrations
-
-    path = generate_demonstrations(config)
-    src_summary = path.with_suffix(".summary.json")
-    if src_summary.is_file():
-        shutil.copy2(src_summary, summary_path)
-    else:
-        summary_path.write_text(json.dumps({"path": str(path)}, indent=2), encoding="utf-8")
-
+    from src.training.behavior_cloning import build_bc_decision_cache
     import torch
+
+    # Generate episode rollouts first (internal artifact).
+    cfg = json.loads(json.dumps(config, default=str))
+    cfg.setdefault("demonstrations", {})
+    cfg["demonstrations"]["output"] = str(episodes_path)
+    t0 = time.time()
+    path = generate_demonstrations(cfg)
+    expert_generation_time = time.time() - t0
 
     payload = torch.load(path, map_location="cpu", weights_only=False)
     episodes = payload.get("episodes") or []
@@ -325,8 +395,62 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     n_actions = sum(len(ep.get("actions") or []) for ep in episodes)
     if n_actions == 0:
         raise PipelineError("Demonstrations contain zero actions - cannot continue to BC")
-    LOGGER.info("Demonstrations OK | episodes=%d actions=%d -> %s", len(episodes), n_actions, path)
-    return path
+
+    train_names, eval_names, _ = resolve_training_phase_split(config)
+    ds_cfg = dict(config["dataset"])
+    train_ds, _ = split_dataset(
+        ds_cfg["path"],
+        train_ratio=0.8,
+        seed=int(config.get("seed", 42)),
+        train_filter=ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else [],
+        eval_filter=ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else [],
+        train_instances=train_names,
+        eval_instances=eval_names,
+        class_filter=ds_cfg.get("class_filter"),
+        load_capacity=load_capacity_from_config(config),
+    )
+    instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names}
+    portions = list(config["problem"]["charging_portions"])
+    demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 6) or 6)
+    decisions = build_bc_decision_cache(
+        episodes,
+        instance_by_name,
+        charging_portions=portions,
+        environment_config=config.get("environment") or {},
+        num_workers=demo_workers,
+    )
+    if not decisions:
+        raise PipelineError("Decision-level demonstration cache is empty")
+
+    decision_payload = {
+        "decisions": decisions,
+        "episodes": episodes,
+        "meta": {
+            **(payload.get("meta") or {}),
+            "format": "hanif_decision_level_v1",
+            "n_decisions": len(decisions),
+            "n_episodes": len(episodes),
+            "expert_generation_time": expert_generation_time,
+        },
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(decision_payload, out_path)
+
+    summary = {
+        "path": str(out_path),
+        "episodes_path": str(path),
+        "n_episodes": len(episodes),
+        "n_actions": n_actions,
+        "n_decisions": len(decisions),
+        "expert_generation_time": expert_generation_time,
+        "instances": sorted({ep.get("instance_name") for ep in episodes}),
+    }
+    summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    LOGGER.info(
+        "Demonstrations OK | episodes=%d decisions=%d -> %s",
+        len(episodes), len(decisions), out_path,
+    )
+    return out_path
 
 
 def stage_behavior_cloning(config: dict, run_dir: Path, *, reuse: bool) -> dict:
@@ -411,16 +535,26 @@ def stage_rl_finetune(config: dict, run_dir: Path) -> dict:
     ckpt_dir = Path(config["outputs"]["checkpoints"])
     last_src = ckpt_dir / "last.pt"
     best_src = ckpt_dir / "best.pt"
+    best_feas = ckpt_dir / "best_cycle_feasibility.pt"
+    best_obj = ckpt_dir / "best_cycle_objective.pt"
     rl_dir = run_dir / "rl"
     rl_dir.mkdir(parents=True, exist_ok=True)
     if last_src.is_file():
         shutil.copy2(last_src, rl_dir / "rl_last.pt")
         shutil.copy2(last_src, run_dir / "checkpoints" / "rl_last.pt")
     if best_src.is_file():
+        shutil.copy2(best_src, rl_dir / "rl_best_served.pt")
         shutil.copy2(best_src, rl_dir / "rl_best.pt")
-        shutil.copy2(best_src, run_dir / "checkpoints" / "rl_best.pt")
+        shutil.copy2(best_src, run_dir / "checkpoints" / "rl_best_served.pt")
     elif last_src.is_file():
+        shutil.copy2(last_src, rl_dir / "rl_best_served.pt")
         shutil.copy2(last_src, rl_dir / "rl_best.pt")
+    if best_feas.is_file():
+        shutil.copy2(best_feas, rl_dir / "rl_best_feasibility.pt")
+        shutil.copy2(best_feas, run_dir / "checkpoints" / "rl_best_feasibility.pt")
+    if best_obj.is_file():
+        shutil.copy2(best_obj, rl_dir / "rl_best_objective.pt")
+        shutil.copy2(best_obj, run_dir / "checkpoints" / "rl_best_objective.pt")
 
     metrics_src = Path(config["outputs"]["results"]) / "training_metrics.csv"
     if metrics_src.is_file():
@@ -440,47 +574,107 @@ def stage_rl_finetune(config: dict, run_dir: Path) -> dict:
 
 def stage_final_evaluation(config: dict, run_dir: Path) -> dict:
     LOGGER.info("=" * 60)
-    LOGGER.info("Stage — final holdout evaluation")
+    LOGGER.info("Stage — multi-checkpoint final evaluation (test)")
     LOGGER.info("=" * 60)
-    ckpt = run_dir / "rl" / "rl_last.pt"
-    if not ckpt.is_file():
-        ckpt = run_dir / "checkpoints" / "last.pt"
-    if not ckpt.is_file():
-        raise PipelineError(f"No RL checkpoint for final evaluation: {ckpt}")
+    from src.training.final_report import (
+        evaluate_checkpoint_on_split,
+        select_final_checkpoint,
+    )
 
-    from src.evaluation.evaluate import evaluate
+    # Validation-first selection uses validation_instances when present.
+    ds = config.setdefault("dataset", {})
+    val_names = list(ds.get("validation_instances") or [])
+    test_names = list(ds.get("test_instances") or ds.get("eval_instances") or [])
+    if not test_names:
+        raise PipelineError("No test instances for final evaluation")
 
-    cfg = json.loads(json.dumps(config, default=str))
-    cfg["outputs"] = {
-        **cfg["outputs"],
-        "results": str(run_dir / "evaluation"),
-        "routes": str(run_dir / "evaluation" / "routes"),
-        "figures": str(run_dir / "evaluation" / "figures"),
-    }
-    Path(cfg["outputs"]["results"]).mkdir(parents=True, exist_ok=True)
+    candidates: dict[str, Path] = {}
+    bc_best = run_dir / "bc" / "bc_best_policy.pt"
+    bc_last = run_dir / "bc" / "bc_last_policy.pt"
+    if bc_best.is_file():
+        candidates["bc_best"] = bc_best
+    if bc_last.is_file():
+        candidates["bc_last"] = bc_last
+    for label, fname in (
+        ("rl_best_served", "rl_best_served.pt"),
+        ("rl_best_feasibility", "rl_best_feasibility.pt"),
+        ("rl_best_objective", "rl_best_objective.pt"),
+        ("rl_last", "rl_last.pt"),
+    ):
+        p = run_dir / "rl" / fname
+        if p.is_file():
+            candidates[label] = p
+    if not candidates:
+        raise PipelineError("No BC/RL checkpoints found for final evaluation")
 
-    summary = evaluate(cfg, checkpoint=str(ckpt))
-    eval_path = run_dir / "evaluation" / "final_eval_metrics.json"
-    eval_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    # Select on validation (prefer), then evaluate selected + all on test for comparison.
+    selection_names = val_names if val_names else test_names
+    sel_cfg = json.loads(json.dumps(config, default=str))
+    sel_cfg["dataset"]["eval_instances"] = list(selection_names)
+    sel_cfg["dataset"]["test_instances"] = list(selection_names)
 
-    results_csv = Path(cfg["outputs"]["results"]) / "results.csv"
-    per_inst = run_dir / "evaluation" / "per_instance_eval.csv"
-    if results_csv.is_file():
-        shutil.copy2(results_csv, per_inst)
-
-    holdout = summary.get("holdout_report") or summary.get("summary") or summary
-    batt = float(holdout.get("mean_battery_violations", holdout.get("battery_violations", 0)) or 0)
-    tw = float(holdout.get("mean_time_window_violations", holdout.get("time_window_violations", 0)) or 0)
-    cap = float(holdout.get("mean_capacity_violations", holdout.get("capacity_violations", 0)) or 0)
-    if batt > 0 or tw > 0 or cap > 0:
-        LOGGER.error(
-            "FINAL EVAL HARD VIOLATIONS | battery=%.4f tw=%.4f capacity=%.4f",
-            batt, tw, cap,
+    val_results: dict[str, dict] = {}
+    for label, ckpt in candidates.items():
+        LOGGER.info("Validation eval | %s | %s", label, ckpt.name)
+        val_results[label] = evaluate_checkpoint_on_split(
+            sel_cfg, ckpt,
+            out_dir=run_dir / "evaluation" / "validation" / label,
+            label=label,
         )
-    else:
-        LOGGER.info("Final eval: no hard EVRPTW violations reported")
-    LOGGER.info("Final evaluation -> %s", eval_path)
-    return summary
+
+    selected, _ = select_final_checkpoint(val_results)
+    LOGGER.info("Selected checkpoint on validation protocol: %s", selected)
+
+    test_cfg = json.loads(json.dumps(config, default=str))
+    test_cfg["dataset"]["eval_instances"] = list(test_names)
+    test_cfg["dataset"]["test_instances"] = list(test_names)
+
+    test_results: dict[str, dict] = {}
+    for label, ckpt in candidates.items():
+        LOGGER.info("Test eval | %s | %s", label, ckpt.name)
+        row = evaluate_checkpoint_on_split(
+            test_cfg, ckpt,
+            out_dir=run_dir / "evaluation" / "test" / label,
+            label=label,
+        )
+        test_results[label] = row
+        by = row.get("by_class") or {}
+        hard = by.get("hard_violations") or {}
+        if any((hard.get(c) or 0) > 0 for c in hard):
+            raise PipelineError(
+                f"Hard EVRPTW violations on test for {label}: {hard}"
+            )
+
+    methods = {
+        k: {
+            "macro_served": v.get("macro_served"),
+            "macro_feasibility": v.get("macro_feasibility"),
+            "macro_objective": v.get("macro_objective"),
+            "by_class": v.get("by_class"),
+            "checkpoint": v.get("checkpoint"),
+        }
+        for k, v in test_results.items()
+    }
+    comparison = {
+        "selection_split": "validation" if val_names else "test_fallback",
+        "selected_on_validation": selected,
+        "validation": {k: {
+            "macro_served": v.get("macro_served"),
+            "macro_feasibility": v.get("macro_feasibility"),
+            "macro_objective": v.get("macro_objective"),
+        } for k, v in val_results.items()},
+        "methods": methods,
+        "selected_test": methods.get(selected),
+    }
+    out = run_dir / "evaluation" / "checkpoint_comparison.json"
+    out.write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
+    LOGGER.info("Multi-checkpoint comparison -> %s", out)
+    return {
+        "selected": selected,
+        "comparison": comparison,
+        "test_results": test_results,
+        "holdout_report": (test_results.get(selected) or {}).get("summary"),
+    }
 
 
 def _write_comparison_html(report: dict, path: Path) -> None:
@@ -625,10 +819,27 @@ def run_training_pipeline(
     cfg = _wire_run_outputs(config, run_dir)
 
     stages: dict[str, Any] = {}
+    runtime: dict[str, float] = {}
     t0 = time.time()
 
+    from src.data.hanif_dataset import is_hanif_config
+
+    dataset_report: dict = {}
+    split_meta: dict = {}
+    if is_hanif_config(cfg):
+        t_ds = time.time()
+        dataset_report, split_meta = stage_hanif_dataset(cfg, run_dir)
+        runtime["dataset_stage_s"] = time.time() - t_ds
+        stages["dataset"] = {"report": dataset_report, "split": split_meta}
+        # Persist wired config after split mutation.
+        (run_dir / "config.yaml").write_text(
+            yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8",
+        )
+
     if flags.get("run_internal_checks", True):
+        t_c = time.time()
         run_internal_checks(cfg)
+        runtime["checks_s"] = time.time() - t_c
         stages["checks"] = {"ok": True}
 
     want_expert = bool(flags.get("run_expert", True))
@@ -639,7 +850,9 @@ def run_training_pipeline(
         LOGGER.info(
             "Pipeline: Stage 1 demos (+ expert metrics) → Stage 2 BC → Stage 3 RL"
         )
+        t_d = time.time()
         demo_path = stage_demonstrations(cfg, run_dir, reuse=reuse)
+        runtime["expert_generation_time"] = time.time() - t_d
         stages["demonstrations"] = {"path": str(demo_path)}
         stages["expert"] = stage_expert_from_demonstrations(
             cfg, run_dir, demo_path, reuse=reuse,
@@ -647,24 +860,52 @@ def run_training_pipeline(
     elif want_expert:
         stages["expert"] = stage_expert(cfg, run_dir, reuse=reuse)
     elif want_demos:
+        t_d = time.time()
         demo_path = stage_demonstrations(cfg, run_dir, reuse=reuse)
+        runtime["expert_generation_time"] = time.time() - t_d
         stages["demonstrations"] = {"path": str(demo_path)}
-        # Still write expert metrics from the same demos (no second rollout).
         stages["expert"] = stage_expert_from_demonstrations(
             cfg, run_dir, demo_path, reuse=reuse,
         )
 
     if flags.get("run_behavior_cloning", True):
+        t_bc = time.time()
         stages["bc"] = stage_behavior_cloning(cfg, run_dir, reuse=reuse)
+        runtime["bc_stage_s"] = time.time() - t_bc
 
     if flags.get("run_rl_finetuning", True):
+        t_rl = time.time()
         stages["rl"] = stage_rl_finetune(cfg, run_dir)
+        runtime["rl_stage_s"] = time.time() - t_rl
 
     if flags.get("run_final_evaluation", True):
+        t_ev = time.time()
         stages["evaluation"] = stage_final_evaluation(cfg, run_dir)
+        runtime["final_eval_s"] = time.time() - t_ev
 
+    t_dash = time.time()
     write_dashboard_bundle(run_dir, stages)
+    runtime["dashboard_ms"] = (time.time() - t_dash) * 1000.0
+
+    if is_hanif_config(cfg):
+        from src.training.final_report import write_final_report
+
+        eval_stage = stages.get("evaluation") or {}
+        write_final_report(
+            run_dir,
+            dataset_report=dataset_report,
+            split_meta=split_meta,
+            stages=stages,
+            checkpoint_comparison=eval_stage.get("comparison") or {},
+            selected=str(eval_stage.get("selected") or "unknown"),
+            runtime=runtime,
+        )
+
     elapsed = time.time() - t0
+    runtime["total_s"] = elapsed
+    (run_dir / "metrics" / "runtime_profile.json").write_text(
+        json.dumps(runtime, indent=2), encoding="utf-8",
+    )
     LOGGER.info("=" * 60)
     LOGGER.info("Pipeline complete in %.1f min | run=%s", elapsed / 60.0, run_dir)
     LOGGER.info("Open dashboard: python main_dashboard.py")

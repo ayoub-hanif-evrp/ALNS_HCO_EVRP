@@ -105,6 +105,20 @@ def compute_dynamic_candidate_features(
         if details:
             enabled_after[j] = float(max(d.enabled_customer_count for d in details if d.feasible)) / n_cust
 
+    # Hanif station attrs: expected queue wait (physics) + density (feature only).
+    station_wait_n = np.zeros(n, dtype=np.float32)
+    density_n = np.zeros(n, dtype=np.float32)
+    waits = getattr(inst, "station_wait_mu", None)
+    dens = getattr(inst, "station_density_score", None)
+    if waits is not None:
+        w = np.asarray(waits, dtype=np.float32)
+        w = np.where(np.isnan(w), 0.0, np.maximum(w, 0.0))
+        station_wait_n = np.where(is_station, w / horizon, 0.0).astype(np.float32)
+    if dens is not None:
+        d = np.asarray(dens, dtype=np.float32)
+        d = np.where(np.isnan(d), 0.0, d)
+        density_n = np.where(is_station, d, 0.0).astype(np.float32)
+
     feats = np.column_stack([
         travel_dist_n,
         travel_time_n,
@@ -123,6 +137,8 @@ def compute_dynamic_candidate_features(
         np.full(n, useful_station_norm, dtype=np.float32),
         charge_feasible,
         enabled_after,
+        station_wait_n,
+        density_n,
         is_customer.astype(np.float32),
         is_station.astype(np.float32),
         is_depot.astype(np.float32),

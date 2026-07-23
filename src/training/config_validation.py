@@ -38,26 +38,51 @@ def validate_training_config(config: dict) -> list[str]:
             "environment.action_pruning.enabled must stay true — hard feasibility and pruning layers are required."
         )
 
-    phase = normalize_training_phase(config)
+    from src.data.hanif_dataset import is_hanif_config
+
+    hanif = is_hanif_config(config)
+    if hanif:
+        if str(ds.get("name", "")).lower() != "hanif":
+            raise ValueError("Hanif study requires dataset.name: hanif")
+        if ds.get("use_only_this_dataset", True) is False:
+            raise ValueError("dataset.use_only_this_dataset must be true for Hanif-only study")
+        path = str(ds.get("path") or ds.get("root") or "")
+        if "schneider" in path.lower():
+            raise ValueError("Refusing Schneider dataset path in Hanif-only study")
+        problem = config.get("problem") or {}
+        if problem.get("load_capacity") not in (None, "", 0, 0.0):
+            warnings.append(
+                "problem.load_capacity overrides Hanif per-instance capacities; "
+                "set to null for Hanif-only runs."
+            )
+
+    phase = "hanif" if hanif else normalize_training_phase(config)
     train_names = list(ds.get("train_instances") or [])
-    eval_names = list(ds.get("eval_instances") or [])
+    eval_names = list(ds.get("eval_instances") or ds.get("test_instances") or [])
     # Phase 3 holdouts may be listed under holdout_by_class only.
     if phase == "all_classes":
         hold = ds.get("holdout_by_class") or {}
         for cls_names in hold.values():
             eval_names.extend(list(cls_names or []))
 
-    for name in train_names + eval_names:
-        if phase in {"single_rc", "full_rc"} and not _is_rc21(name):
-            raise ValueError(
-                f"Instance '{name}' is not Schneider RC _21 — phase {phase} is RC-only."
-            )
-        if phase == "all_classes" and not str(name).endswith("_21"):
-            raise ValueError(f"Instance '{name}' must use full-size _21 for all_classes.")
+    if phase != "hanif":
+        for name in train_names + eval_names:
+            if phase in {"single_rc", "full_rc"} and not _is_rc21(name):
+                raise ValueError(
+                    f"Instance '{name}' is not Schneider RC _21 — phase {phase} is RC-only."
+                )
+            if phase == "all_classes" and not str(name).endswith("_21"):
+                raise ValueError(f"Instance '{name}' must use full-size _21 for all_classes.")
 
     overlap = set(train_names) & set(eval_names)
     if overlap:
         raise ValueError(f"train/eval instance overlap: {sorted(overlap)}")
+
+    val_names = list(ds.get("validation_instances") or [])
+    if set(train_names) & set(val_names):
+        raise ValueError(f"train/validation overlap: {sorted(set(train_names) & set(val_names))}")
+    if set(val_names) & set(eval_names):
+        raise ValueError(f"validation/test overlap: {sorted(set(val_names) & set(eval_names))}")
 
     if train_names and phase == "full_rc" and len(train_names) != 20:
         expected = int(ds.get("expected_train_count", 20))
@@ -96,6 +121,9 @@ def validate_training_config(config: dict) -> list[str]:
     if phase == "single_rc":
         if updates <= 0 and not bool(tcfg.get("debug_overfit_one_instance", False)):
             warnings.append("Phase 1 should set training.updates (e.g. 500).")
+    elif phase == "hanif":
+        if cycles < 1:
+            warnings.append("Hanif pilot should set training.cycles >= 1.")
     elif cycles < 50:
         warnings.append(f"cycles={cycles} is short for MARL EVRP; recommend >= 50.")
 
