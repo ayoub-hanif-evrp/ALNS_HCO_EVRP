@@ -1,6 +1,9 @@
-# Hanif-only study (A1 original TW + B3 pilot subset).
+# EVRP-TW-D study: unanchored Cus_100 RC, easiest wide warm-start.
+# Train 100 easiest RC wide / test 10 (5 wide + 5 narrow). No validation.
+# RL: 10 cycles × 100 instances = 1000 updates.
 # User commands:
 #   python main_train.py --config configs/train.yaml --device cuda
+#   python main_train.py --config configs/train.yaml --device cuda --stage eval
 #   python main_dashboard.py
 
 seed: 42
@@ -8,36 +11,44 @@ device: cuda
 deterministic: false
 
 pipeline:
-  run_internal_sanity_checks: true
-  run_internal_checks: true
+  # Skip heavy internal checks for throughput (exact masks still on).
+  run_internal_sanity_checks: false
+  run_internal_checks: false
   run_expert: true
   generate_demonstrations: true
   run_behavior_cloning: true
   run_rl_finetuning: true
   run_final_evaluation: true
+  # New demo path below — do not reuse old medium-200 cache.
   reuse_cached_stages: true
 
 dataset:
-  name: hanif
-  root: dataset/Hanif/converted_hanif_original_tw
-  path: dataset/Hanif/converted_hanif_original_tw
-  source_txt: dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_A_original_TW
-  format: solomon_txt
-  classes: [C, R, RC]
-  split_mode: deterministic_by_class
+  name: evrptwd
+  root: dataset/EVRPTWD/used_dataset_instances
+  path: dataset/EVRPTWD/used_dataset_instances
+  source_txt: dataset/EVRPTWD/unanchored/Cus_100/solomon
+  manifest: dataset/EVRPTWD/used_dataset_instances/split_manifest.json
+  split_dir: dataset/EVRPTWD/splits
+  format: schneider_txt
+  classes: [RC]
+  split_mode: easy_wide_train_test
+  difficulty: easy_wide
   use_only_this_dataset: true
-  customers: 1000
-  training_phase: hanif
+  customers: 100
+  family: RC
+  train_size: 100
+  test_size: 10
+  training_phase: evrptwd
   shuffle_instances: false
   auto_discover_rc21: false
   train_size_filter: []
   eval_size_filter: []
   instance_suffix: ""
-  pilot:
-    enabled: true
-    train_per_class: 2
-    val_per_class: 1
-    test_per_class: 1
+  # filled by pipeline stage (do not hand-edit)
+  train_instances: []
+  validation_instances: []
+  test_instances: []
+  eval_instances: []
 
 environment:
   mask_semantics: exact_original_evrptw
@@ -72,24 +83,27 @@ constraints:
 
 expert:
   enabled: true
-  lookahead_depth: 1
+  # 0 = greedy feasibility-first ranking (exact masks every step).
+  lookahead_depth: 0
   max_customer_candidates: 15
   max_recharge_candidates: 5
   debug_dump_dir: outputs/expert_diagnostics
 
 behavior_cloning:
   enabled: true
-  epochs: 20
-  batch_decisions: 64
-  updates_per_epoch: 16
+  epochs: 10
+  batch_decisions: 512
+  updates_per_epoch: 32
   batch_episodes: 1
-  batch_size: 64
+  batch_size: 512
   learning_rate: 0.0001
   grad_clip: 1.0
   log_every: 1
-  validation_split: 0.1
+  validation_split: 0.0
   early_stopping: false
-  run_greedy_eval: true
+  # No mid-training val/test graphs — final eval only after RL.
+  run_greedy_eval: false
+  use_amp: true
   output_dir: outputs/bc
 
 initialization:
@@ -99,10 +113,11 @@ initialization:
   reset_optimizer: true
 
 demonstrations:
-  input: outputs/demonstrations/hanif_expert_train.pt
-  output: outputs/demonstrations/hanif_expert_train.pt
-  eval_report: outputs/demonstrations/expert_eval_report.json
-  num_workers: 6
+  input: outputs/demonstrations/evrptwd_expert_train_easy100.pt
+  output: outputs/demonstrations/evrptwd_expert_train_easy100.pt
+  eval_report: outputs/demonstrations/expert_eval_report_easy100.json
+  # 0 = auto process pool sized to CPU / #jobs
+  num_workers: 0
 
 optimizer:
   actor_lr: 0.00002
@@ -125,12 +140,12 @@ training:
   reward_scale: 10000.0
   log_every: 1
   checkpoint_every: 0
-  dashboard_ma_window: 20
+  dashboard_ma_window: 10
   min_decisions_warn: 10
   use_amp: true
   gradient_accumulation_steps: 1
   use_local_search_in_training: false
-  critic_warmup_steps: 20
+  critic_warmup_steps: 10
   debug_overfit_one_instance: false
   generate_static_dashboard: false
   live_checkpoint_every: 0
@@ -217,6 +232,7 @@ model:
   use_ev_communication: true
   use_dynamic_candidate_encoder: true
   use_edge_aware_encoder: false
+  # Off by default: Hanif graphs are dynamic-size; compile often hurts more than it helps.
   torch_compile: false
 
 decoding:
@@ -225,7 +241,7 @@ decoding:
   max_steps_factor: 6
 
 problem:
-  # null = use per-instance Hanif load capacity (200 / 700 / 1000)
+  # null = use per-instance load capacity from converted files
   load_capacity: null
   allow_partial_charging: true
   charging_portions: [0.25, 0.50, 0.75, 1.00]
@@ -238,7 +254,7 @@ cost:
   lambda_distance: 1.0
   lambda_duration: 0.1
   lambda_charging: 0.5
-  lambda_charging_price: 1.0
+  lambda_charging_price: 0.0
   lambda_waiting: 0.1
   penalty_unserved: 10000.0
   penalty_duplicate: 10000.0
@@ -288,7 +304,7 @@ diagnostics:
   run_cycle_probes: false
 
 checkpointing:
-  save_last_every_updates: 20
+  save_last_every_updates: 50
   save_cycle_checkpoint: true
   save_best_cycle_objective: true
   save_best_cycle_feasibility: true
@@ -300,7 +316,7 @@ maps_dashboard:
 
 evaluation:
   decoding: greedy
-  multi_sample_n: 16
+  multi_sample_n: 8
   run_after_training: false
   local_search:
     enabled: false
@@ -313,3 +329,9 @@ gpu:
   torch_compile: false
   cudnn_benchmark: true
   allow_tf32: true
+
+cpu:
+  # 0 = use all logical cores in the parent process (BC/RL CPU mask work)
+  torch_num_threads: 0
+  # Demo / decision-cache process pool: 0 = auto (cpu_count - 1)
+  parallel_reserve: 1

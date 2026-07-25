@@ -3,9 +3,12 @@
 Full pipeline:
     python main_train.py --config configs/train.yaml --device cuda
 
+Test (held-out eval on latest run):
+    python main_train.py --config configs/train.yaml --device cuda --stage eval
+
 Single stage (later stages reuse the latest run folder automatically):
-    python main_train.py --config configs/train.yaml --device cuda --stage expert
     python main_train.py --config configs/train.yaml --device cuda --stage demos
+    python main_train.py --config configs/train.yaml --device cuda --stage bc
 """
 from __future__ import annotations
 
@@ -15,8 +18,8 @@ from pathlib import Path
 
 from src.utils.config import load_config
 
-STAGE_CHOICES = ("all", "checks", "expert", "demos", "bc", "rl")
-STAGES_CONTINUE_LATEST = frozenset({"demos", "bc", "rl"})
+STAGE_CHOICES = ("all", "checks", "expert", "demos", "bc", "rl", "eval")
+STAGES_CONTINUE_LATEST = frozenset({"demos", "bc", "rl", "eval"})
 
 
 def _apply_stage_flags(config: dict, stage: str) -> None:
@@ -31,7 +34,7 @@ def _apply_stage_flags(config: dict, stage: str) -> None:
     pipe["generate_demonstrations"] = stage == "demos"
     pipe["run_behavior_cloning"] = stage == "bc"
     pipe["run_rl_finetuning"] = stage == "rl"
-    pipe["run_final_evaluation"] = False
+    pipe["run_final_evaluation"] = stage == "eval"
 
 
 def _latest_run_dir(config: dict) -> Path | None:
@@ -93,9 +96,11 @@ def main() -> None:
 
     _apply_stage_flags(config, args.stage)
 
-    from src.utils.gpu_runtime import configure_cuda_runtime
+    from src.utils.gpu_runtime import configure_cpu_runtime, configure_cuda_runtime
 
     gpu_cfg = config.get("gpu") or {}
+    cpu_cfg = config.get("cpu") or {}
+    configure_cpu_runtime(torch_num_threads=int(cpu_cfg.get("torch_num_threads", 0) or 0))
     configure_cuda_runtime(
         cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
         allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),

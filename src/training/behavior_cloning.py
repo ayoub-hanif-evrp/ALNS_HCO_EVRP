@@ -321,7 +321,7 @@ def _parallel_bc_cache_job(job: dict) -> tuple[str, list[CachedBCDecision]]:
     """Process-pool worker for one demo episode → BC cache entries."""
     from src.utils.gpu_runtime import limit_cpu_threads_for_worker
 
-    limit_cpu_threads_for_worker(1)
+    limit_cpu_threads_for_worker(int(job.get("threads_per_worker", 1) or 1))
     ep = job["episode"]
     name = str(ep["instance_name"])
     entries = _cache_decisions_for_one_episode(
@@ -346,8 +346,9 @@ def build_bc_decision_cache(
     Exact legality is identical to live ``analyze_decision`` at demo time;
     later BC only re-forwards the policy (GPU), not CPU feasibility.
     """
-    import os
     from concurrent.futures import ProcessPoolExecutor
+
+    from src.utils.gpu_runtime import resolve_parallel_workers, threads_per_worker
 
     env_cfg = environment_config or {}
     jobs = []
@@ -362,15 +363,16 @@ def build_bc_decision_cache(
             "environment_config": env_cfg,
         })
 
-    n_workers = int(num_workers or 1)
-    if n_workers <= 0:
-        n_workers = min(8, max(1, (os.cpu_count() or 2) - 1))
-    n_workers = max(1, min(n_workers, len(jobs) or 1))
+    # Caller may pass config-driven reserve via environment; default leave 1 core free.
+    n_workers = resolve_parallel_workers(int(num_workers or 0), n_jobs=len(jobs) or 1, reserve=1)
+    tpw = threads_per_worker(n_workers)
+    for job in jobs:
+        job["threads_per_worker"] = tpw
 
     LOGGER.info(
-        "BC decision cache | episodes=%d workers=%d "
+        "BC decision cache | episodes=%d workers=%d threads/worker=%d "
         "(one-time exact-mask replay; progress logs below)",
-        len(jobs), n_workers,
+        len(jobs), n_workers, tpw,
     )
 
     cache: list[CachedBCDecision] = []
@@ -651,9 +653,15 @@ def evaluate_bc_policy(config: dict, policy: TransformerEVRPTWPolicy, device: to
 def train_behavior_cloning(config: dict) -> dict:
     set_seed(int(config.get("seed", 42)), deterministic=bool(config.get("deterministic", False)))
     device = resolve_device(config.get("device", "auto"))
-    from src.utils.gpu_runtime import configure_cuda_runtime
+    from src.utils.gpu_runtime import (
+        configure_cpu_runtime,
+        configure_cuda_runtime,
+        maybe_compile_module,
+    )
 
     gpu_cfg = config.get("gpu") or {}
+    cpu_cfg = config.get("cpu") or {}
+    configure_cpu_runtime(torch_num_threads=int(cpu_cfg.get("torch_num_threads", 0) or 0))
     configure_cuda_runtime(
         cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
         allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),
@@ -670,11 +678,12 @@ def train_behavior_cloning(config: dict) -> dict:
 
     train_names, eval_names, _ = resolve_training_phase_split(config)
     ds_cfg = dict(config["dataset"])
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
     train_filter = ds_cfg.get("train_size_filter")
     eval_filter = ds_cfg.get("eval_size_filter")
-    if is_hanif_config(config):
+    if is_hanif_config(config) or is_evrptwd_config(config):
         train_filter = train_filter if train_filter is not None else []
         eval_filter = eval_filter if eval_filter is not None else []
     else:
@@ -697,6 +706,16 @@ def train_behavior_cloning(config: dict) -> dict:
     portions = list(config["problem"]["charging_portions"])
     policy = build_policy(config, portions).to(device)
     bcfg = config.get("behavior_cloning") or config.get("bc") or {}
+    use_amp = bool(bcfg.get("use_amp", gpu_cfg.get("use_amp", True))) and device.type == "cuda"
+    compile_models = bool(
+        (config.get("model") or {}).get("torch_compile", False)
+        or gpu_cfg.get("torch_compile", False)
+    ) and device.type == "cuda"
+    if compile_models:
+        policy = maybe_compile_module(policy, enabled=True)
+    amp_scaler = torch.amp.GradScaler("cuda", enabled=use_amp) if use_amp else None
+    if use_amp:
+        LOGGER.info("BC AMP (fp16) enabled")
     if bool(bcfg.get("early_stopping", False)):
         LOGGER.warning(
             "behavior_cloning.early_stopping=true ignored — BC always runs all configured epochs"
@@ -728,7 +747,7 @@ def train_behavior_cloning(config: dict) -> dict:
     else:
         episodes = list(payload.get("episodes") or [])
         LOGGER.info("Loaded %d demo episodes from %s", len(episodes), demo_path)
-        demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 8) or 8)
+        demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 0) or 0)
         LOGGER.info("Building BC decision cache (one-time exact-mask replay)…")
         decision_cache = build_bc_decision_cache(
             episodes,
@@ -751,8 +770,8 @@ def train_behavior_cloning(config: dict) -> dict:
     best_path = out_dir / best_name
     history = []
     LOGGER.info(
-        "BC training for %d epochs × %d updates (batch_decisions=%d, cache=%d) — no early stopping",
-        epochs, updates_per_epoch, batch_decisions, len(decision_cache),
+        "BC training for %d epochs × %d updates (batch_decisions=%d, cache=%d, amp=%s) — no early stopping",
+        epochs, updates_per_epoch, batch_decisions, len(decision_cache), use_amp,
     )
 
     for epoch in range(epochs):
@@ -762,19 +781,29 @@ def train_behavior_cloning(config: dict) -> dict:
             "depot_accuracy": 0.0, "n_decisions": 0.0,
         }
         for _ in range(updates_per_epoch):
-            loss, metrics = bc_loss_on_cached_batch(
-                policy,
-                decision_cache,
-                instance_by_name,
-                instance_embeddings,
-                device=device,
-                batch_decisions=batch_decisions,
-                rng=rng,
-            )
+            from src.utils.gpu_runtime import autocast_ctx
+
+            with autocast_ctx(device, enabled=use_amp):
+                loss, metrics = bc_loss_on_cached_batch(
+                    policy,
+                    decision_cache,
+                    instance_by_name,
+                    instance_embeddings,
+                    device=device,
+                    batch_decisions=batch_decisions,
+                    rng=rng,
+                )
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(policy.parameters(), float(bcfg.get("grad_clip", 1.0)))
-            optimizer.step()
+            if amp_scaler is not None:
+                amp_scaler.scale(loss).backward()
+                amp_scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(policy.parameters(), float(bcfg.get("grad_clip", 1.0)))
+                amp_scaler.step(optimizer)
+                amp_scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(policy.parameters(), float(bcfg.get("grad_clip", 1.0)))
+                optimizer.step()
             for k in epoch_metrics:
                 epoch_metrics[k] += float(metrics.get(k, 0.0))
         for k in epoch_metrics:
@@ -791,13 +820,16 @@ def train_behavior_cloning(config: dict) -> dict:
             )
         if epoch_metrics.get("bc_loss", 1e9) < best_val:
             best_val = float(epoch_metrics["bc_loss"])
+            # Unwrap compile wrapper for clean checkpoints when present.
+            raw_policy = getattr(policy, "_orig_mod", policy)
+            state = raw_policy.state_dict() if hasattr(raw_policy, "state_dict") else policy.state_dict()
             torch.save({
                 "architecture_version": getattr(
                     __import__("src.models.feature_specs", fromlist=["ARCHITECTURE_VERSION"]),
                     "ARCHITECTURE_VERSION",
                     "exact_smdp_dynamic_v1",
                 ),
-                "model_state": policy.state_dict(),
+                "model_state": state,
                 "model_config": config["model"],
                 "charging_portions": portions,
                 "bc_epoch": epoch,
@@ -806,9 +838,11 @@ def train_behavior_cloning(config: dict) -> dict:
             LOGGER.info("Saved best BC policy → %s (epoch %d)", best_path, epoch + 1)
 
     last_path = out_dir / last_name
+    raw_policy = getattr(policy, "_orig_mod", policy)
+    last_state = raw_policy.state_dict() if hasattr(raw_policy, "state_dict") else policy.state_dict()
     torch.save({
         "architecture_version": "exact_smdp_dynamic_v1",
-        "model_state": policy.state_dict(),
+        "model_state": last_state,
         "model_config": config["model"],
         "charging_portions": portions,
         "bc_epoch": epochs - 1,

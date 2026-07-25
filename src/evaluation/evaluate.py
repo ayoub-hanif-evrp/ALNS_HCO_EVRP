@@ -54,10 +54,11 @@ def _load_eval_dataset(config: dict) -> EVRPTWDataset:
     load_cap = load_capacity_from_config(config)
 
     train_names, eval_names, meta = resolve_training_phase_split(config)
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
-    if is_hanif_config(config):
-        phase = "hanif"
+    if is_hanif_config(config) or is_evrptwd_config(config):
+        phase = "hanif" if is_hanif_config(config) else "evrptwd"
         ds_cfg["class_filter"] = list(ds_cfg.get("classes") or ["C", "R", "RC"])
         ds_cfg["train_size_filter"] = []
         ds_cfg["eval_size_filter"] = []

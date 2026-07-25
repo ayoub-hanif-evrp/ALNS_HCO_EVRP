@@ -51,8 +51,8 @@ def _parallel_demo_job(job: dict) -> dict:
     """Process-pool worker: one exact-mask expert episode (Windows-safe top-level)."""
     from src.utils.gpu_runtime import limit_cpu_threads_for_worker
 
-    # Avoid 13 workers × 24 BLAS threads thrashing the CPU.
-    limit_cpu_threads_for_worker(1)
+    # Split cores across workers (avoid N_workers × all_cores thrash).
+    limit_cpu_threads_for_worker(int(job.get("threads_per_worker", 1) or 1))
     cfg = job["config"]
     expert = FeasibilityFirstExpert(cfg)
     weights = CostWeights.from_config(cfg["cost"])
@@ -275,9 +275,10 @@ def _load_train_eval(config: dict):
     seed = int(config.get("seed", 42))
     ds_cfg = dict(config["dataset"])
     train_names, eval_names, meta = resolve_training_phase_split(config)
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
-    if is_hanif_config(config):
+    if is_hanif_config(config) or is_evrptwd_config(config):
         train_filter = ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else []
         eval_filter = ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else []
     else:
@@ -445,14 +446,32 @@ def generate_demonstrations(config: dict) -> Path:
         jobs.append({"instance": instance, "m": m, "config": config})
 
     demo_cfg = config.get("demonstrations") or {}
-    import os
-    raw_workers = int(demo_cfg.get("num_workers", 0) or 0)
-    n_workers = raw_workers if raw_workers > 0 else min(8, max(1, (os.cpu_count() or 2) - 1))
-    n_workers = max(1, min(n_workers, len(jobs) or 1))
+    from src.utils.gpu_runtime import resolve_parallel_workers, threads_per_worker
+
+    cpu_cfg = config.get("cpu") or {}
+    reserve = int(cpu_cfg.get("parallel_reserve", 1) or 1)
+    n_workers = resolve_parallel_workers(
+        int(demo_cfg.get("num_workers", 0) or 0),
+        n_jobs=len(jobs) or 1,
+        reserve=reserve,
+    )
+    tpw = threads_per_worker(n_workers)
+    for job in jobs:
+        job["threads_per_worker"] = tpw
 
     episodes: list[dict] = []
     if n_workers <= 1 or len(jobs) <= 1:
-        for job in jobs:
+        for ji, job in enumerate(jobs):
+            name = str(getattr(job["instance"], "instance_name", "?"))
+            LOGGER.info(
+                "Demo start %d/%d | %s | m=%d lookahead=%s",
+                ji + 1,
+                len(jobs),
+                name,
+                int(job["m"]),
+                (config.get("expert") or {}).get("lookahead_depth", "?"),
+            )
+            t0 = time.time()
             ep = run_expert_episode(
                 job["instance"], job["m"], expert, weights,
                 charging_portions=portions,
@@ -465,27 +484,51 @@ def generate_demonstrations(config: dict) -> Path:
             )
             episodes.append(_episode_to_demo_dict(ep))
             LOGGER.info(
-                "Demo %s | served=%.3f feas=%s decisions=%d",
-                ep.instance_name, ep.metrics["served_ratio"], ep.metrics["feasible"],
+                "Demo done %d/%d | %s | served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
+                ji + 1,
+                len(jobs),
+                ep.instance_name,
+                ep.metrics["served_ratio"],
+                ep.metrics["feasible"],
                 ep.metrics["num_decisions"],
+                time.time() - t0,
             )
     else:
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor, as_completed
 
+        names = [str(getattr(j["instance"], "instance_name", "?")) for j in jobs]
         LOGGER.info(
-            "Demo generation parallel | workers=%d instances=%d (exact masks unchanged)",
-            n_workers, len(jobs),
+            "Demo generation parallel | workers=%d threads/worker=%d instances=%d lookahead=%s | %s",
+            n_workers,
+            tpw,
+            len(jobs),
+            (config.get("expert") or {}).get("lookahead_depth", "?"),
+            ", ".join(names),
         )
         # Preserve instance order for reproducibility of the .pt file.
+        ordered: list[dict | None] = [None] * len(jobs)
+        done = 0
+        t_all = time.time()
         with ProcessPoolExecutor(max_workers=n_workers) as pool:
-            ordered = list(pool.map(_parallel_demo_job, jobs))
-        episodes = ordered
-        for ep in episodes:
-            LOGGER.info(
-                "Demo %s | served=%.3f feas=%s decisions=%d",
-                ep["instance_name"], ep["metrics"]["served_ratio"], ep["metrics"]["feasible"],
-                ep["metrics"]["num_decisions"],
-            )
+            future_to_idx = {pool.submit(_parallel_demo_job, job): i for i, job in enumerate(jobs)}
+            for fut in as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                ep = fut.result()
+                ordered[idx] = ep
+                done += 1
+                LOGGER.info(
+                    "Demo done %d/%d | %s | served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
+                    done,
+                    len(jobs),
+                    ep["instance_name"],
+                    ep["metrics"]["served_ratio"],
+                    ep["metrics"]["feasible"],
+                    ep["metrics"]["num_decisions"],
+                    time.time() - t_all,
+                )
+        episodes = [ep for ep in ordered if ep is not None]
+        if len(episodes) != len(jobs):
+            raise RuntimeError("Parallel demo generation lost episodes")
 
     payload = {
         "meta": {

@@ -340,12 +340,32 @@ def load_run_config(outputs_root: Path | None = None, fallback: Path | None = No
 
 def training_plan_from_config(cfg: dict) -> dict:
     tcfg = cfg.get("training") or {}
+    ds = cfg.get("dataset") or {}
     epochs = int(tcfg.get("epochs", 0) or 0)
     passes = int(tcfg.get("cycles") or tcfg.get("passes") or 0)
-    train_names = list((cfg.get("dataset") or {}).get("train_instances") or [])
-    n_train = len(train_names)
+    train_names = list(ds.get("train_instances") or [])
+    test_names = list(ds.get("test_instances") or ds.get("eval_instances") or [])
+    n_train = len(train_names) or int(ds.get("train_size") or 0)
+    n_test = len(test_names) or int(ds.get("test_size") or 0)
     if not epochs and passes and n_train:
         epochs = passes * n_train
+    name = str(ds.get("name", "")).lower()
+    phase = str(ds.get("training_phase", "")).lower()
+    if name in {"evrptwd", "evrp-tw-d"} or phase == "evrptwd" or "evrptwd" in str(ds.get("path", "")).lower():
+        study = "evrptwd"
+        diff = str(ds.get("difficulty") or "").lower()
+        if "easy" in diff or "wide" in diff:
+            study_label = "EVRP-TW-D · RC Cus_100 · easiest wide"
+        elif "medium" in diff:
+            study_label = "EVRP-TW-D · RC Cus_100 · medium"
+        else:
+            study_label = f"EVRP-TW-D · RC Cus_100 · {diff or 'study'}"
+    elif name == "hanif" or "hanif" in str(ds.get("path", "")).lower():
+        study = "hanif"
+        study_label = "Hanif · original TW"
+    else:
+        study = "schneider"
+        study_label = "Schneider EVRPTW"
     return {
         "phases": [],
         "total_training_updates": epochs,
@@ -357,8 +377,16 @@ def training_plan_from_config(cfg: dict) -> dict:
         "passes": passes,
         "cycles": passes,
         "n_train_instances": n_train,
+        "n_test_instances": n_test,
         "train_instances": train_names,
+        "test_instances": test_names,
         "ma_window": ma_window_from_config(cfg),
+        "study": study,
+        "study_label": study_label,
+        "difficulty": str(ds.get("difficulty") or ""),
+        "customers": ds.get("customers"),
+        "family": ds.get("family") or (ds.get("classes") or [""])[0],
+        "dataset_path": str(ds.get("path") or ds.get("root") or ""),
     }
 
 

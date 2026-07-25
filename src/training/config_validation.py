@@ -38,9 +38,13 @@ def validate_training_config(config: dict) -> list[str]:
             "environment.action_pruning.enabled must stay true — hard feasibility and pruning layers are required."
         )
 
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
     hanif = is_hanif_config(config)
+    evrptwd = is_evrptwd_config(config)
+    if hanif and evrptwd:
+        raise ValueError("Config cannot be both Hanif and EVRPTWD")
     if hanif:
         if str(ds.get("name", "")).lower() != "hanif":
             raise ValueError("Hanif study requires dataset.name: hanif")
@@ -55,8 +59,18 @@ def validate_training_config(config: dict) -> list[str]:
                 "problem.load_capacity overrides Hanif per-instance capacities; "
                 "set to null for Hanif-only runs."
             )
+    if evrptwd:
+        if str(ds.get("name", "")).lower() not in {"evrptwd", "evrp-tw-d", "evrptw-d"}:
+            raise ValueError("EVRPTWD study requires dataset.name: evrptwd")
+        if int(ds.get("train_size", 800)) <= 0 or int(ds.get("test_size", 200)) <= 0:
+            raise ValueError("EVRPTWD requires positive train_size and test_size")
 
-    phase = "hanif" if hanif else normalize_training_phase(config)
+    if hanif:
+        phase = "hanif"
+    elif evrptwd:
+        phase = "evrptwd"
+    else:
+        phase = normalize_training_phase(config)
     train_names = list(ds.get("train_instances") or [])
     eval_names = list(ds.get("eval_instances") or ds.get("test_instances") or [])
     # Phase 3 holdouts may be listed under holdout_by_class only.
@@ -65,7 +79,7 @@ def validate_training_config(config: dict) -> list[str]:
         for cls_names in hold.values():
             eval_names.extend(list(cls_names or []))
 
-    if phase != "hanif":
+    if phase not in {"hanif", "evrptwd"}:
         for name in train_names + eval_names:
             if phase in {"single_rc", "full_rc"} and not _is_rc21(name):
                 raise ValueError(
@@ -73,6 +87,11 @@ def validate_training_config(config: dict) -> list[str]:
                 )
             if phase == "all_classes" and not str(name).endswith("_21"):
                 raise ValueError(f"Instance '{name}' must use full-size _21 for all_classes.")
+
+    if phase == "evrptwd":
+        for name in train_names + eval_names:
+            if instance_class(name) != "RC":
+                raise ValueError(f"EVRPTWD RC study requires RC instances, got '{name}'")
 
     overlap = set(train_names) & set(eval_names)
     if overlap:
@@ -121,9 +140,9 @@ def validate_training_config(config: dict) -> list[str]:
     if phase == "single_rc":
         if updates <= 0 and not bool(tcfg.get("debug_overfit_one_instance", False)):
             warnings.append("Phase 1 should set training.updates (e.g. 500).")
-    elif phase == "hanif":
+    elif phase in {"hanif", "evrptwd"}:
         if cycles < 1:
-            warnings.append("Hanif pilot should set training.cycles >= 1.")
+            warnings.append(f"{phase} study should set training.cycles >= 1.")
     elif cycles < 50:
         warnings.append(f"cycles={cycles} is short for MARL EVRP; recommend >= 50.")
 

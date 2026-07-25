@@ -1,13 +1,22 @@
-"""Solomon/Schneider instance-class detection (C / R / RC).
+"""Solomon/Schneider/EVRP-TW-D instance-class detection (C / R / RC).
 
-Supported naming: ``c101_21``, ``c101C5``, ``r201C10``, ``rc108C15``, etc.
+Supported naming:
+  - Schneider: ``c101_21``, ``r201C10``, ``rc108C15``, …
+  - EVRP-TW-D: ``solomon_dataset_{id}_{R|C|RC}_{wide|narrow}_{ts}``
 """
 from __future__ import annotations
+
+import re
 
 CLASSES = ("C", "R", "RC")
 
 # Schneider reduced instances (e.g. rc108C5, rc201C10).
 SMALL_SIZE_MARKERS = ("C5", "C10", "C15")
+
+_EVRPTWD_FAMILY = re.compile(
+    r"solomon_dataset_\d+_(?P<family>R|C|RC)_(?:wide|narrow)_\d+",
+    re.IGNORECASE,
+)
 
 
 def is_small_instance(name: str) -> bool:
@@ -18,12 +27,16 @@ def is_small_instance(name: str) -> bool:
 
 def instance_class(name: str) -> str:
     """Return the customer-distribution class ('C', 'R' or 'RC') for a name."""
-    key = name.strip().lower()
-    if key.startswith("rc"):
+    key = name.strip()
+    m = _EVRPTWD_FAMILY.search(key)
+    if m:
+        return m.group("family").upper()
+    low = key.lower()
+    if low.startswith("rc"):
         return "RC"
-    if key.startswith("r"):
+    if low.startswith("r"):
         return "R"
-    if key.startswith("c"):
+    if low.startswith("c"):
         return "C"
     return "R"
 

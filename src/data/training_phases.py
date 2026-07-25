@@ -21,7 +21,7 @@ from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
 
-TRAINING_PHASES = ("single_rc", "full_rc", "all_classes", "hanif")
+TRAINING_PHASES = ("single_rc", "full_rc", "all_classes", "hanif", "evrptwd")
 
 # Backward-compatible aliases from older curriculum_stage keys.
 _PHASE_ALIASES = {
@@ -35,6 +35,9 @@ _PHASE_ALIASES = {
     "hanif": "hanif",
     "hanif_pilot": "hanif",
     "hanif_full": "hanif",
+    "evrptwd": "evrptwd",
+    "evrp_tw_d": "evrptwd",
+    "evrp-tw-d": "evrptwd",
 }
 
 
@@ -153,7 +156,22 @@ def resolve_all_classes_split(config: dict) -> tuple[list[str], list[str], dict]
 
 def resolve_training_phase_split(config: dict) -> tuple[list[str], list[str], dict]:
     """Dispatch on ``dataset.training_phase`` (preferred) or legacy curriculum_stage."""
+    from src.data.evrptwd_dataset import (
+        is_evrptwd_config,
+        resolve_evrptwd_split,
+        save_split_into_config as save_evrptwd_split,
+    )
     from src.data.hanif_dataset import is_hanif_config, resolve_hanif_split, save_split_into_config
+
+    if is_evrptwd_config(config) or (
+        str((config.get("dataset") or {}).get("training_phase", "")).lower() == "evrptwd"
+    ):
+        train, _validation, test, meta = resolve_evrptwd_split(config)
+        save_evrptwd_split(config, train, [], test, meta)
+        out_meta = dict(meta)
+        out_meta["training_phase"] = "evrptwd"
+        out_meta["curriculum_stage"] = "evrptwd"
+        return train, test, out_meta
 
     if is_hanif_config(config) or normalize_training_phase(config) == "hanif":
         train, validation, test, meta = resolve_hanif_split(config)

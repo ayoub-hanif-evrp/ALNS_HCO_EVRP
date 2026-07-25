@@ -132,10 +132,19 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
         "rl_dir": str(run_dir / "rl"),
     }
     cfg.setdefault("demonstrations", {})
-    cfg["demonstrations"]["output"] = str(run_dir / "demonstrations" / "hanif_expert_train.pt")
+    demo_name = "evrptwd_expert_train.pt"
+    from src.data.evrptwd_dataset import is_evrptwd_config
+    from src.data.hanif_dataset import is_hanif_config
+    if is_hanif_config(cfg):
+        demo_name = "hanif_expert_train.pt"
+    elif is_evrptwd_config(cfg):
+        demo_name = "evrptwd_expert_train.pt"
+    else:
+        demo_name = "expert_train.pt"
+    cfg["demonstrations"]["output"] = str(run_dir / "demonstrations" / demo_name)
     cfg["demonstrations"]["episodes_output"] = str(run_dir / "demonstrations" / "expert_episodes.pt")
     cfg["demonstrations"]["eval_report"] = str(run_dir / "expert" / "expert_metrics.json")
-    cfg["demonstrations"]["input"] = str(run_dir / "demonstrations" / "hanif_expert_train.pt")
+    cfg["demonstrations"]["input"] = str(run_dir / "demonstrations" / demo_name)
     cfg.setdefault("behavior_cloning", {})
     cfg["behavior_cloning"]["output_dir"] = str(run_dir / "bc")
     cfg["behavior_cloning"]["early_stopping"] = False
@@ -147,6 +156,32 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
     cfg.setdefault("evaluation", {})
     cfg["evaluation"]["run_after_training"] = False
     return cfg
+
+
+def stage_evrptwd_dataset(config: dict, run_dir: Path) -> tuple[dict, dict]:
+    """Convert EVRP-TW-D RC Cus_100 slice and write train/test split (no validation)."""
+    LOGGER.info("=" * 60)
+    LOGGER.info("Stage — EVRP-TW-D convert + train/test split")
+    LOGGER.info("=" * 60)
+    from src.data.evrptwd_dataset import EvrptwdDatasetError, ensure_evrptwd_dataset
+
+    try:
+        report, meta = ensure_evrptwd_dataset(config)
+    except EvrptwdDatasetError as exc:
+        raise PipelineError(str(exc)) from exc
+    out = run_dir / "dataset"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "evrptwd_dataset_report.json").write_text(
+        json.dumps(report, indent=2, default=str), encoding="utf-8",
+    )
+    (out / "split_all.json").write_text(
+        json.dumps(meta, indent=2, default=str), encoding="utf-8",
+    )
+    LOGGER.info(
+        "EVRPTWD split | train=%d val=0 test=%d",
+        meta.get("num_train", 0), meta.get("num_test", 0),
+    )
+    return report, meta
 
 
 def stage_hanif_dataset(config: dict, run_dir: Path) -> tuple[dict, dict]:
@@ -411,7 +446,7 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     )
     instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names}
     portions = list(config["problem"]["charging_portions"])
-    demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 6) or 6)
+    demo_workers = int((config.get("demonstrations") or {}).get("num_workers", 0) or 0)
     decisions = build_bc_decision_cache(
         episodes,
         instance_by_name,
@@ -822,11 +857,20 @@ def run_training_pipeline(
     runtime: dict[str, float] = {}
     t0 = time.time()
 
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
     dataset_report: dict = {}
     split_meta: dict = {}
-    if is_hanif_config(cfg):
+    if is_evrptwd_config(cfg):
+        t_ds = time.time()
+        dataset_report, split_meta = stage_evrptwd_dataset(cfg, run_dir)
+        runtime["dataset_stage_s"] = time.time() - t_ds
+        stages["dataset"] = {"report": dataset_report, "split": split_meta}
+        (run_dir / "config.yaml").write_text(
+            yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8",
+        )
+    elif is_hanif_config(cfg):
         t_ds = time.time()
         dataset_report, split_meta = stage_hanif_dataset(cfg, run_dir)
         runtime["dataset_stage_s"] = time.time() - t_ds

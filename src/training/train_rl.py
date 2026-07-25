@@ -225,9 +225,13 @@ def train(config: dict) -> dict:
     seed = int(config.get("seed", 42))
     set_seed(seed, deterministic=deterministic)
     device = resolve_device(config.get("device", "auto"))
+    from src.data.evrptwd_dataset import is_evrptwd_config
     from src.data.hanif_dataset import is_hanif_config
 
-    phase = "hanif" if is_hanif_config(config) else normalize_training_phase(config)
+    phase = (
+        "evrptwd" if is_evrptwd_config(config)
+        else ("hanif" if is_hanif_config(config) else normalize_training_phase(config))
+    )
     LOGGER.info(f"Training on device: {describe_device(device)}")
     LOGGER.info("Mode: exact-mask semi-MDP actor-critic | phase=%s", phase)
 
@@ -240,11 +244,11 @@ def train(config: dict) -> dict:
     ds_cfg["train_instances"] = train_names
     ds_cfg["eval_instances"] = eval_names
     # Phase 3 includes C/R; do not force RC-only filter when evaluating the union.
-    if phase in {"all_classes", "hanif"}:
+    if phase in {"all_classes", "hanif", "evrptwd"}:
         ds_cfg["class_filter"] = list(ds_cfg.get("classes") or ["C", "R", "RC"])
         ds_cfg["auto_discover_rc21"] = False
 
-    if phase == "hanif":
+    if phase in {"hanif", "evrptwd"}:
         train_filter = ds_cfg.get("train_size_filter") if ds_cfg.get("train_size_filter") is not None else []
         eval_filter = ds_cfg.get("eval_size_filter") if ds_cfg.get("eval_size_filter") is not None else []
     else:
@@ -289,18 +293,25 @@ def train(config: dict) -> dict:
             ckpt_path, len(missing), len(unexpected),
         )
     rl_cfg = RLConfig.from_config(config)
-    use_amp = bool(tcfg.get("use_amp", False)) and device.type == "cuda"
+    use_amp = (
+        bool(tcfg.get("use_amp", False)) or bool((config.get("gpu") or {}).get("use_amp", False))
+    ) and device.type == "cuda"
     grad_accum = int(tcfg.get("gradient_accumulation_steps", 1))
     amp_scaler = torch.amp.GradScaler("cuda", enabled=use_amp) if use_amp else None
 
-    from src.utils.gpu_runtime import configure_cuda_runtime, maybe_compile_module
+    from src.utils.gpu_runtime import configure_cpu_runtime, configure_cuda_runtime, maybe_compile_module
     perf = (config.get("environment") or {}).get("performance") or {}
     gpu_cfg = config.get("gpu") or {}
+    cpu_cfg = config.get("cpu") or {}
+    configure_cpu_runtime(torch_num_threads=int(cpu_cfg.get("torch_num_threads", 0) or 0))
     configure_cuda_runtime(
         cudnn_benchmark=bool(gpu_cfg.get("cudnn_benchmark", True)),
         allow_tf32=bool(gpu_cfg.get("allow_tf32", True)),
     )
-    compile_models = bool(gpu_cfg.get("torch_compile", False)) and device.type == "cuda"
+    compile_models = (
+        bool(gpu_cfg.get("torch_compile", False))
+        or bool((config.get("model") or {}).get("torch_compile", False))
+    ) and device.type == "cuda"
     if compile_models:
         policy = maybe_compile_module(policy, enabled=True)
     value_critic, q_critic = build_critics(

@@ -1,0 +1,15 @@
+{
+  "instance_name": "solomon_dataset_4481_RC_wide_1770612394",
+  "num_nodes": 122,
+  "num_customers": 100,
+  "num_charging_stations": 21,
+  "depot_has_charging": true,
+  "planning_horizon": 23.983,
+  "battery_capacity": 130.74,
+  "load_capacity": 1.1,
+  "energy_consumption_rate": 0.4173,
+  "inverse_charging_rate": 0.0068,
+  "speed": 42.43,
+  "validation_passed": true,
+  "validation_errors": []
+}

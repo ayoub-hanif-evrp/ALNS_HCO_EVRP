@@ -61,7 +61,7 @@ create_dashboard(
 )
 
 ui.run(
-    title="MARL EVRP Pipeline Dashboard",
+    title="Transformer MARL · EVRP-TW-D Dashboard",
     host=args.host,
     port=args.port,
     reload=False,

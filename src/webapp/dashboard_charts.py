@@ -739,7 +739,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
             "id": "time_window_diagnosis",
             "title": "3. Time-window diagnosis",
             "nav": "Time windows",
-            "subtitle": "Why customers become unserved under original hard Schneider time windows.",
+            "subtitle": "Why customers become unserved under hard original time windows.",
             "charts": [
                 *([{
                     "type": "multi_series_ma",
@@ -946,7 +946,7 @@ def build_flat_training_sections(df: pd.DataFrame, plan: dict) -> list[dict[str,
 
 
 def get_training_chart_sections(df: pd.DataFrame, plan: dict) -> list[dict[str, Any]]:
-    """Live dashboard sections for flat RC _21 training."""
+    """Live dashboard sections for flat train/test study (EVRPTWD / Hanif / Schneider)."""
     return build_flat_training_sections(df, plan)
 
 

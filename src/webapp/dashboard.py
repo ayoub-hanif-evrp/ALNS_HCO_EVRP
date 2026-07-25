@@ -194,19 +194,22 @@ def _load_pipeline_comparison(outputs_root: Path) -> dict | None:
     return None
 
 
-def _load_hanif_run_extras(outputs_root: Path) -> dict:
-    """Load Hanif dataset report / final report for the latest run (read-only)."""
+def _load_study_run_extras(outputs_root: Path) -> dict:
+    """Load dataset / split / final extras for the latest run (Hanif or EVRPTWD)."""
     run_dir = _latest_run_dir(outputs_root)
     if run_dir is None:
         return {}
     out: dict = {"run_dir": str(run_dir)}
     for key, rel in (
         ("dataset_report", "dataset/hanif_dataset_report.json"),
+        ("evrptwd_report", "dataset/evrptwd_dataset_report.json"),
         ("split_all", "dataset/split_all.json"),
         ("final_report", "final_report.json"),
         ("runtime", "metrics/runtime_profile.json"),
         ("expert", "expert/expert_metrics.json"),
         ("bc_eval", "bc/bc_eval_metrics.json"),
+        ("bc_summary", "bc/bc_summary.json"),
+        ("rl_summary", "rl/rl_summary.json"),
     ):
         path = run_dir / rel
         if path.is_file():
@@ -215,6 +218,48 @@ def _load_hanif_run_extras(outputs_root: Path) -> dict:
                 out[key] = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 pass
+    # Prefer run config for study identity / manifest fallback.
+    cfg_path = run_dir / "config.yaml"
+    if cfg_path.is_file():
+        try:
+            from src.utils.config import load_config
+            out["run_config"] = load_config(str(cfg_path))
+        except Exception:
+            pass
+    if "evrptwd_report" not in out:
+        cfg = out.get("run_config") or {}
+        ds = cfg.get("dataset") or {}
+        for cand in (
+            ds.get("manifest"),
+            "dataset/EVRPTWD/used_dataset_instances/split_manifest.json",
+        ):
+            if not cand:
+                continue
+            path = Path(cand)
+            if path.is_file():
+                try:
+                    import json
+                    man = json.loads(path.read_text(encoding="utf-8"))
+                    out["evrptwd_report"] = {
+                        "dataset": man.get("dataset", "evrptwd"),
+                        "family": man.get("family", "RC"),
+                        "scale": man.get("scale", 100),
+                        "difficulty": man.get("difficulty"),
+                        "num_train": man.get("n_train"),
+                        "num_validation": man.get("n_validation", 0),
+                        "num_test": man.get("n_test"),
+                        "train_tw": man.get("train_tw"),
+                        "test_tw": man.get("test_tw"),
+                        "train_ease_mean": man.get("train_ease_mean"),
+                        "test_ease_mean": man.get("test_ease_mean"),
+                        "selection": man.get("selection"),
+                        "source": "split_manifest",
+                    }
+                    if "split_all" not in out:
+                        out["split_all"] = man
+                except Exception:
+                    pass
+                break
     return out
 
 
@@ -240,9 +285,8 @@ def _render_pipeline_comparison(comparison: dict) -> None:
     with ui.card().classes(_SECTION):
         with ui.element("div").classes(_SECTION_HEAD):
             ui.label("Pipeline stage comparison").classes("text-sm font-semibold text-slate-800")
-            ui.label("Expert → BC → RL fine-tune → final holdout").classes("text-xs text-slate-500")
+            ui.label("Expert → BC → RL fine-tune → final test").classes("text-xs text-slate-500")
         with ui.element("div").classes(_SECTION_BODY):
-            # Simple HTML table
             header = "".join(f"<th style='padding:6px 10px;text-align:right'>{c}</th>" for c in cols)
             body = []
             for label, key in rows:
@@ -266,37 +310,99 @@ def _render_pipeline_comparison(comparison: dict) -> None:
             )
 
 
-def _render_hanif_extras(extras: dict) -> None:
-    if not extras:
+def _render_study_extras(extras: dict, plan: dict) -> None:
+    if not extras and not plan:
         return
-    ds = extras.get("dataset_report") or {}
+    ds_hanif = extras.get("dataset_report") or {}
+    ds_evrp = extras.get("evrptwd_report") or {}
     split = extras.get("split_all") or {}
     final = extras.get("final_report") or {}
+    study = plan.get("study") or ("evrptwd" if ds_evrp else ("hanif" if ds_hanif else "unknown"))
+    title = {
+        "evrptwd": "EVRP-TW-D study",
+        "hanif": "Hanif study",
+        "schneider": "Schneider study",
+    }.get(study, "Dataset study")
+
     with ui.card().classes(_SECTION):
         with ui.element("div").classes(_SECTION_HEAD):
-            ui.label("Hanif study").classes("text-sm font-semibold text-slate-800")
-            ui.label(str(extras.get("run_dir") or "")).classes("text-xs text-slate-500")
+            ui.label(title).classes("text-sm font-semibold text-slate-800")
+            ui.label(str(extras.get("run_dir") or plan.get("dataset_path") or "")).classes(
+                "text-xs text-slate-500"
+            )
         with ui.element("div").classes(_SECTION_BODY + " gap-2"):
-            if ds:
+            ui.label(str(plan.get("study_label") or title)).classes("text-sm text-slate-800 font-medium")
+            n_train = plan.get("n_train_instances") or ds_evrp.get("num_train") or "—"
+            n_test = plan.get("n_test_instances") or ds_evrp.get("num_test") or "—"
+            ui.label(
+                f"Train={n_train} · Val=0 · Test={n_test} · "
+                f"family={plan.get('family') or ds_evrp.get('family') or '—'} · "
+                f"customers={plan.get('customers') or ds_evrp.get('scale') or '—'} · "
+                f"difficulty={plan.get('difficulty') or ds_evrp.get('difficulty') or '—'}"
+            ).classes("text-sm text-slate-700")
+
+            if ds_evrp:
+                tw_tr = ds_evrp.get("train_tw") or {}
+                tw_te = ds_evrp.get("test_tw") or {}
                 ui.label(
-                    f"Files={ds.get('number_of_files')} | "
-                    f"C={ds.get('number_of_C_instances')} "
-                    f"R={ds.get('number_of_R_instances')} "
-                    f"RC={ds.get('number_of_RC_instances')} | "
-                    f"customers={ds.get('customers_per_instance')} | "
-                    f"TW modified={ds.get('time_windows_modified')}"
+                    f"TW mix — train wide/narrow={tw_tr.get('wide', '—')}/{tw_tr.get('narrow', '—')} · "
+                    f"test wide/narrow={tw_te.get('wide', '—')}/{tw_te.get('narrow', '—')}"
+                ).classes("text-xs text-slate-600")
+                if ds_evrp.get("train_ease_mean") is not None:
+                    ui.label(
+                        f"Mean ease score — train={float(ds_evrp['train_ease_mean']):.3f} · "
+                        f"test={float(ds_evrp.get('test_ease_mean') or 0):.3f} "
+                        f"(medium band; higher = easier)"
+                    ).classes("text-xs text-slate-600")
+                sel = ds_evrp.get("selection") or {}
+                if sel.get("note"):
+                    ui.label(str(sel["note"])).classes("text-xs text-slate-500")
+
+            if ds_hanif:
+                ui.label(
+                    f"Files={ds_hanif.get('number_of_files')} | "
+                    f"C={ds_hanif.get('number_of_C_instances')} "
+                    f"R={ds_hanif.get('number_of_R_instances')} "
+                    f"RC={ds_hanif.get('number_of_RC_instances')} | "
+                    f"customers={ds_hanif.get('customers_per_instance')} | "
+                    f"TW modified={ds_hanif.get('time_windows_modified')}"
                 ).classes("text-sm text-slate-700")
+
             if split:
-                ui.label(f"Train: {split.get('train')}").classes("text-xs text-slate-600")
-                ui.label(f"Val: {split.get('validation')}").classes("text-xs text-slate-600")
-                ui.label(f"Test: {split.get('test')}").classes("text-xs text-slate-600")
+                n_tr = split.get("n_train") or split.get("num_train")
+                n_te = split.get("n_test") or split.get("num_test")
+                train = split.get("train_instances") or split.get("train")
+                test = split.get("test_instances") or split.get("test") or split.get("eval_instances")
+                if n_tr is None and isinstance(train, list):
+                    n_tr = len(train)
+                if n_te is None and isinstance(test, list):
+                    n_te = len(test)
+                if n_tr is not None:
+                    ui.label(f"Train list size: {n_tr}").classes("text-xs text-slate-600")
+                if n_te is not None:
+                    ui.label(f"Test list size: {n_te}").classes("text-xs text-slate-600")
+                ui.label("Validation: none (train → final test only)").classes("text-xs text-slate-500")
+
+            expert = extras.get("expert") or {}
+            if expert:
+                ui.label(
+                    f"Expert demos — served={expert.get('mean_served_ratio', '—')} · "
+                    f"feas={expert.get('feasibility_rate', '—')}"
+                ).classes("text-xs text-slate-600")
+
             if final:
                 ui.label(
                     f"Chosen checkpoint: {final.get('chosen_final_checkpoint')}"
                 ).classes("text-sm font-medium text-slate-800")
+
             runtime = extras.get("runtime") or {}
             if runtime:
-                ui.label(f"Runtime profile: {runtime}").classes("text-xs text-slate-500")
+                bits = []
+                for k in ("dataset_stage_s", "expert_generation_time", "bc_stage_s", "rl_stage_s", "final_eval_s", "total_s"):
+                    if k in runtime:
+                        bits.append(f"{k}={float(runtime[k]):.1f}s")
+                if bits:
+                    ui.label("Runtime: " + " · ".join(bits)).classes("text-xs text-slate-500")
 
 
 def create_dashboard(
@@ -397,17 +503,30 @@ def create_dashboard(
 
                         with ui.column().classes("p-5 gap-2"):
                             ui.label("Schedule").classes("text-xs font-bold text-slate-400")
-                            n_inst = plan.get("n_train_instances") or 20
-                            passes = plan.get("passes") or plan.get("cycles") or 20
-                            ui.label(
-                                f"{n_inst} RC _21 train instances · {passes} cycles · MA window {ma_window}"
-                            ).classes("text-xs text-slate-500")
-                            ui.label("Held-out (not used in training): rc101_21, rc104_21, rc208_21").classes(
-                                "text-[10px] text-slate-400"
+                            n_inst = plan.get("n_train_instances") or "—"
+                            n_test = plan.get("n_test_instances") or "—"
+                            passes = plan.get("passes") or plan.get("cycles") or "—"
+                            ui.label(str(plan.get("study_label") or "Training study")).classes(
+                                "text-xs font-medium text-slate-700"
                             )
+                            ui.label(
+                                f"{n_inst} train · 0 val · {n_test} test · "
+                                f"{passes} cycles · MA window {ma_window}"
+                            ).classes("text-xs text-slate-500")
+                            if plan.get("study") == "evrptwd":
+                                ui.label(
+                                    "Easiest RC wide train · test 5 wide + 5 narrow · no validation"
+                                ).classes("text-[10px] text-slate-400")
+                            elif plan.get("test_instances"):
+                                held = ", ".join(str(x) for x in list(plan["test_instances"])[:6])
+                                more = len(plan["test_instances"]) - 6
+                                suffix = f" (+{more} more)" if more > 0 else ""
+                                ui.label(f"Held-out test: {held}{suffix}").classes(
+                                    "text-[10px] text-slate-400"
+                                )
                             algo = str(plan.get("method", "actor_critic")).replace("_", "-")
                             _field("Algorithm", f"Actor-critic ({algo})")
-                            ui.label("outputs/results/training_metrics.csv").classes(
+                            ui.label(str(log_path)).classes(
                                 "text-[10px] font-mono text-slate-400 mt-1"
                             )
 
@@ -417,9 +536,9 @@ def create_dashboard(
                 comparison = _load_pipeline_comparison(outputs_root)
                 if comparison:
                     _render_pipeline_comparison(comparison)
-                hanif_extras = _load_hanif_run_extras(outputs_root)
-                if hanif_extras:
-                    _render_hanif_extras(hanif_extras)
+                study_extras = _load_study_run_extras(outputs_root)
+                if study_extras or plan.get("study"):
+                    _render_study_extras(study_extras, plan)
 
                 if df.empty:
                     with ui.card().classes(_SECTION + " p-10 text-center"):
@@ -460,7 +579,7 @@ def create_dashboard(
                 "w-full max-w-[1400px] mx-auto px-6 py-3 items-center justify-between"
             ):
                 with ui.column().classes("gap-0"):
-                    ui.label("MARL EVRP · Pipeline dashboard").classes("text-lg font-bold")
+                    ui.label("Transformer MARL · E-VRPTW dashboard").classes("text-lg font-bold")
                     ui.label(f"{log_path} · auto-loads latest outputs/runs/run_*").classes("text-xs text-slate-400")
                 with ui.row().classes("gap-3 items-center"):
                     ui.link("Maps dashboard", f"http://127.0.0.1:{maps_dashboard_port}").props(
@@ -469,7 +588,7 @@ def create_dashboard(
                     ui.button("Refresh", on_click=refresh, icon="refresh").props("outline dense")
                     auto = ui.switch("Auto-refresh (3s)", value=True).props("dense")
             ui.label(
-                "Training-only · auto-refresh every 3s · held-out test instances excluded"
+                "Expert → BC → RL · training metrics only · test held out · auto-refresh 3s"
             ).classes("text-[11px] text-slate-400 px-6 pb-2 w-full max-w-[1400px] mx-auto block")
 
         poll = ui.timer(3.0, refresh)

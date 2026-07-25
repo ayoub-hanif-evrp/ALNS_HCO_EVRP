@@ -11,3 +11,9 @@ venv/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# EVRP-TW-D raw corpora are huge (~GB); keep only used_dataset_instances + analysis in git.
+dataset/EVRPTWD/unanchored/
+dataset/EVRPTWD/anchored/
+dataset/EVRPTWD/converted/
+dataset/EVRPTWD/Downloads/
