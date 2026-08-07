@@ -58,6 +58,75 @@ class CachedBCDecision:
     battery_feats: np.ndarray
 
 
+def slim_mask_result_for_cache(mask_result):
+    """Drop diagnostic fields so decision caches stay pickle/RAM friendly."""
+    from src.env.action_masks import ActionMaskResult
+    from src.env.action_space import GlobalServiceability
+
+    if not isinstance(mask_result, ActionMaskResult):
+        return mask_result
+    gs = mask_result.global_serviceability
+    slim_gs = GlobalServiceability(
+        remaining_customers_count=int(getattr(gs, "remaining_customers_count", 0) or 0),
+        globally_serviceable_customers_count=int(
+            getattr(gs, "globally_serviceable_customers_count", 0) or 0
+        ),
+        globally_expired_customers_count=int(
+            getattr(gs, "globally_expired_customers_count", 0) or 0
+        ),
+        globally_unreachable_battery_count=int(
+            getattr(gs, "globally_unreachable_battery_count", 0) or 0
+        ),
+        globally_unreachable_capacity_count=int(
+            getattr(gs, "globally_unreachable_capacity_count", 0) or 0
+        ),
+        globally_no_safe_continuation_count=int(
+            getattr(gs, "globally_no_safe_continuation_count", 0) or 0
+        ),
+        globally_unserviceable_customers_count=int(
+            getattr(gs, "globally_unserviceable_customers_count", 0) or 0
+        ),
+        no_service_possible=bool(getattr(gs, "no_service_possible", False)),
+        serviceable_customer_ids=[],
+        time_window_expired_customer_ids=[],
+        battery_unserviceable_customer_ids=[],
+        capacity_unserviceable_customer_ids=[],
+        no_safe_continuation_customer_ids=[],
+        globally_unserviceable_customer_ids=[],
+    )
+    return ActionMaskResult(
+        state_version=int(mask_result.state_version),
+        node_mask=np.asarray(mask_result.node_mask),
+        node_reasons={},
+        charge_masks={
+            int(k): np.asarray(v) for k, v in (mask_result.charge_masks or {}).items()
+        },
+        charge_reasons={},
+        depot_mode_mask=np.asarray(mask_result.depot_mode_mask),
+        depot_mode_reasons=[],
+        feasible_customer_count=int(mask_result.feasible_customer_count),
+        feasible_station_count=int(mask_result.feasible_station_count),
+        feasible_depot_recharge=bool(mask_result.feasible_depot_recharge),
+        feasible_depot_finish=bool(mask_result.feasible_depot_finish),
+        global_serviceability=slim_gs,
+        mask_reason_counts={},
+        mask_semantics=str(mask_result.mask_semantics),
+        computation_time_ms=0.0,
+        charge_portion_details={},
+        hard_node_mask=(
+            None if mask_result.hard_node_mask is None
+            else np.asarray(mask_result.hard_node_mask)
+        ),
+        hard_node_reasons={},
+        pruning_node_mask=(
+            None if mask_result.pruning_node_mask is None
+            else np.asarray(mask_result.pruning_node_mask)
+        ),
+        pruning_node_reasons={},
+        hard_feasible_customer_count=int(mask_result.hard_feasible_customer_count),
+        hard_feasible_station_count=int(mask_result.hard_feasible_station_count),
+    )
+
 def _portion_index(portions: list[float], value: float) -> int:
     for i, p in enumerate(portions):
         if abs(float(p) - float(value)) < 1e-9:
@@ -72,6 +141,56 @@ def masked_ce_from_logits(logits: torch.Tensor, target_idx: int, mask: torch.Ten
     if not bool(mask[target_idx].item()):
         raise RuntimeError(f"BC target index {target_idx} is illegal under mask")
     return -log_probs[target_idx]
+
+
+def masked_reverse_kl_from_logits(
+    logits: torch.Tensor,
+    target_idx: int,
+    mask: torch.Tensor,
+    *,
+    label_smoothing: float = 0.05,
+) -> torch.Tensor:
+    """Decision-seeking reverse KL (LLR-BC style) with smoothed one-hot teacher.
+
+    Minimizes D_KL(q || p) where q = policy softmax and p is a smoothed expert
+    one-hot over feasible actions. Mode-seeking preserves greedy expert decisions.
+    """
+    masked = safe_mask_logits(logits, mask)
+    log_q = torch.log_softmax(masked, dim=-1)
+    q = log_q.exp()
+    if not bool(mask[target_idx].item()):
+        raise RuntimeError(f"BC target index {target_idx} is illegal under mask")
+    n_feas = int(mask.sum().item())
+    if n_feas <= 0:
+        return torch.zeros((), device=logits.device)
+    eps = float(max(0.0, min(0.5, label_smoothing)))
+    # p = (1-eps) * one_hot + eps / |A_feas|
+    log_p = torch.full_like(log_q, -1e9)
+    uniform = eps / float(n_feas)
+    # Fill feasible entries with uniform mass, then boost target.
+    log_p = torch.where(mask, torch.log(torch.full_like(q, max(uniform, 1e-12))), log_p)
+    target_mass = (1.0 - eps) + uniform
+    log_p = log_p.clone()
+    log_p[target_idx] = float(torch.log(torch.tensor(max(target_mass, 1e-12), device=logits.device)))
+    # Reverse KL: sum_a q(a) (log q(a) - log p(a)) over feasible support.
+    kl = (q * (log_q - log_p)).masked_fill(~mask, 0.0).sum()
+    return kl
+
+
+def _node_supervision_loss(
+    logits: torch.Tensor,
+    target_idx: int,
+    mask: torch.Tensor,
+    *,
+    loss_mode: str = "ce",
+    label_smoothing: float = 0.05,
+) -> torch.Tensor:
+    mode = str(loss_mode or "ce").lower()
+    if mode in {"reverse_kl", "rkl", "decision_seeking", "dsbc"}:
+        return masked_reverse_kl_from_logits(
+            logits, target_idx, mask, label_smoothing=label_smoothing,
+        )
+    return masked_ce_from_logits(logits, target_idx, mask)
 
 
 def bc_loss_on_decision(
@@ -251,6 +370,10 @@ def _cache_decisions_for_one_episode(
     environment_config: dict | None = None,
 ) -> list[CachedBCDecision]:
     """Replay one demo episode into frozen exact-mask BC decisions."""
+    from src.data.mixed_class_split import _is_type1_instance
+    from src.env.mask_errors import InvalidActionMaskError
+    from src.expert.feasibility_first_expert import ExpertConfig, FeasibilityFirstExpert
+
     env_cfg = environment_config or {}
     name = ep["instance_name"]
     env = EVRPTWEnv(
@@ -262,10 +385,32 @@ def _cache_decisions_for_one_episode(
         hard_time_windows=True,
     )
     env.environment_config = env_cfg
+    # Match type-1 expert rollout: seed earliest-due customers, then type-1 EV pick.
+    type1_expert = None
+    if _is_type1_instance(str(name)):
+        try:
+            type1_expert = FeasibilityFirstExpert(ExpertConfig())
+            type1_expert.bootstrap_type1_seeds(env)
+        except Exception:
+            type1_expert = None
+    transitions = list(ep.get("transitions") or [])
     cache: list[CachedBCDecision] = []
     action_i = 0
     while not env.is_done() and action_i < len(ep["actions"]):
-        ev = env.select_acting_ev()
+        ev = None
+        if action_i < len(transitions):
+            tr = transitions[action_i] or {}
+            sf = tr.get("state_features") or {}
+            eid = sf.get("ev_id")
+            if eid is not None:
+                for candidate in env.evs:
+                    if int(candidate.ev_id) == int(eid) and not candidate.finished:
+                        ev = candidate
+                        break
+        if ev is None and type1_expert is not None:
+            ev = type1_expert.select_acting_ev_for_type1(env)
+        if ev is None:
+            ev = env.select_acting_ev()
         if ev is None:
             break
         analysis = env.analyze_decision(ev)
@@ -281,39 +426,55 @@ def _cache_decisions_for_one_episode(
             continue
         if analysis.dynamic_candidate_features is None:
             continue
-        cache.append(
-            CachedBCDecision(
-                instance_name=name,
-                expert_node=int(a["node"]),
-                expert_charge_portion=(
-                    None if a.get("charge_portion") is None else float(a["charge_portion"])
-                ),
-                expert_depot_finish=bool(a.get("depot_finish", False)),
-                mask_result=analysis.mask_result,
-                acting_ev_feats=np.asarray(acting_ev_features(env, ev), dtype=np.float32),
-                token_scalars=np.stack(
-                    [ev_token_scalars(env, e) for e in env.evs]
-                ).astype(np.float32),
-                fleet_balance=np.asarray(fleet_balance_features(env), dtype=np.float32),
-                finished=np.array([e.finished for e in env.evs], dtype=bool),
-                current_nodes=np.array([e.current_node for e in env.evs], dtype=np.int64),
-                acting_idx=[e.ev_id for e in env.evs].index(ev.ev_id),
-                global_features=np.asarray(analysis.global_features, dtype=np.float32),
-                mask_summary_features=np.asarray(
-                    analysis.mask_summary_features, dtype=np.float32,
-                ),
-                dynamic_candidate_features=np.asarray(
-                    analysis.dynamic_candidate_features, dtype=np.float32,
-                ),
-                battery_feats=np.asarray(battery_state_features(env, ev), dtype=np.float32),
-            )
-        )
         expert_action = PolicyAction(
             node=int(a["node"]),
             charge_portion=a.get("charge_portion"),
             depot_finish=bool(a.get("depot_finish", False)),
         )
-        apply_policy_action(env, ev, expert_action, mask_result=analysis.mask_result)
+        # Skip decisions that are illegal under the replayed mask (EV-selection drift).
+        try:
+            node = int(expert_action.node)
+            if analysis.mask_result.node_mask is not None and not bool(
+                analysis.mask_result.node_mask[node]
+            ):
+                LOGGER.warning(
+                    "BC cache: skip illegal expert node %s on %s (reason=%s)",
+                    node,
+                    name,
+                    (analysis.mask_result.node_reasons or {}).get(node, "?"),
+                )
+                break
+            cache.append(
+                CachedBCDecision(
+                    instance_name=name,
+                    expert_node=int(a["node"]),
+                    expert_charge_portion=(
+                        None if a.get("charge_portion") is None else float(a["charge_portion"])
+                    ),
+                    expert_depot_finish=bool(a.get("depot_finish", False)),
+                    mask_result=slim_mask_result_for_cache(analysis.mask_result),
+                    acting_ev_feats=np.asarray(acting_ev_features(env, ev), dtype=np.float32),
+                    token_scalars=np.stack(
+                        [ev_token_scalars(env, e) for e in env.evs]
+                    ).astype(np.float32),
+                    fleet_balance=np.asarray(fleet_balance_features(env), dtype=np.float32),
+                    finished=np.array([e.finished for e in env.evs], dtype=bool),
+                    current_nodes=np.array([e.current_node for e in env.evs], dtype=np.int64),
+                    acting_idx=[e.ev_id for e in env.evs].index(ev.ev_id),
+                    global_features=np.asarray(analysis.global_features, dtype=np.float32),
+                    mask_summary_features=np.asarray(
+                        analysis.mask_summary_features, dtype=np.float32,
+                    ),
+                    dynamic_candidate_features=np.asarray(
+                        analysis.dynamic_candidate_features, dtype=np.float32,
+                    ),
+                    battery_feats=np.asarray(battery_state_features(env, ev), dtype=np.float32),
+                )
+            )
+            apply_policy_action(env, ev, expert_action, mask_result=analysis.mask_result)
+        except InvalidActionMaskError as exc:
+            LOGGER.warning("BC cache: stop replay on %s after action %d (%s)", name, action_i, exc)
+            break
     return cache
 
 
@@ -413,8 +574,11 @@ def bc_loss_on_cached_decision(
     cached: CachedBCDecision,
     node_embeddings: torch.Tensor,
     instance,
+    *,
+    loss_mode: str = "ce",
+    label_smoothing: float = 0.05,
 ) -> tuple[torch.Tensor, dict]:
-    """CE on one cached exact-mask decision (policy forward only)."""
+    """CE / reverse-KL on one cached exact-mask decision (policy forward only)."""
     mask_result = cached.mask_result
     state = policy.build_decision_state_from_arrays(
         node_embeddings,
@@ -431,14 +595,19 @@ def bc_loss_on_cached_decision(
         instance_name=cached.instance_name,
     )
     device = node_embeddings.device
-    dtype = node_embeddings.dtype
     scores = policy.pointer.node_scores(
         state.decoder_context,
         state.candidate_embeddings,
         state.dynamic_candidate_embeddings,
     )
     node_mask = torch.tensor(state.feasible_mask, dtype=torch.bool, device=device)
-    node_loss = masked_ce_from_logits(scores, int(cached.expert_node), node_mask)
+    node_loss = _node_supervision_loss(
+        scores,
+        int(cached.expert_node),
+        node_mask,
+        loss_mode=loss_mode,
+        label_smoothing=label_smoothing,
+    )
 
     charge_loss = torch.zeros((), device=device)
     depot_loss = torch.zeros((), device=device)
@@ -519,8 +688,10 @@ def bc_loss_on_cached_batch(
     device: torch.device,
     batch_decisions: int = 32,
     rng: random.Random | None = None,
+    loss_mode: str = "ce",
+    label_smoothing: float = 0.05,
 ) -> tuple[torch.Tensor, dict]:
-    """Sample cached decisions and accumulate masked CE (no CPU re-analysis)."""
+    """Sample cached decisions and accumulate masked CE / reverse-KL (no CPU re-analysis)."""
     rng = rng or random.Random(0)
     if not cache:
         return torch.zeros((), device=device), {}
@@ -534,7 +705,14 @@ def bc_loss_on_cached_batch(
     for sample in chosen:
         H = instance_embeddings[sample.instance_name]
         inst = instance_by_name[sample.instance_name]
-        loss, stats = bc_loss_on_cached_decision(policy, sample, H, inst)
+        loss, stats = bc_loss_on_cached_decision(
+            policy,
+            sample,
+            H,
+            inst,
+            loss_mode=loss_mode,
+            label_smoothing=label_smoothing,
+        )
         losses.append(loss)
         for k in ("node_correct", "charge_correct", "depot_correct", "charge_used", "depot_used"):
             agg[k] += float(stats.get(k, 0.0))
@@ -566,20 +744,24 @@ def evaluate_bc_policy(config: dict, policy: TransformerEVRPTWPolicy, device: to
         class_filter=ds_cfg.get("class_filter"),
         load_capacity=load_capacity_from_config(config),
     )
-    weights = CostWeights.from_config(config["cost"])
+    weights = CostWeights.from_eval_config(config)
     extra_margin = int(config["fleet_search"].get("extra_margin", 4))
     max_steps_factor = int(config["decoding"].get("max_steps_factor", 6))
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
     use_depot = bool(config["problem"].get("use_depot_charging", True))
     env_cfg = config.get("environment") or {}
     rng = random.Random(int(config.get("seed", 42)))
+    from src.evaluation.mstar_cache import load_mstar_map
+    mstar_map = load_mstar_map(config)
+    fleet_cfg = dict(config.get("fleet_search") or {})
+    fleet_cfg["_mstar_map_cache"] = mstar_map
     policy.eval()
     rows = []
     # Evaluate on holdout preferentially.
     ds = eval_ds if len(eval_ds) else train_ds
     for i in range(len(ds)):
         instance = ds[i]
-        m = sample_fleet_size(instance, extra_margin, rng)
+        m = sample_fleet_size(instance, extra_margin, rng, fleet_cfg=fleet_cfg, mstar_map=mstar_map)
         env = EVRPTWEnv(
             instance, m=m,
             charging_portions=list(policy.charging_portions),
@@ -704,8 +886,13 @@ def train_behavior_cloning(config: dict) -> dict:
     instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names}
 
     portions = list(config["problem"]["charging_portions"])
-    policy = build_policy(config, portions).to(device)
     bcfg = config.get("behavior_cloning") or config.get("bc") or {}
+    init_ckpt = Path(str(bcfg.get("init_checkpoint") or "") or "")
+    if init_ckpt.is_file():
+        LOGGER.info("Warm-starting BC policy from %s", init_ckpt)
+        policy = load_policy(init_ckpt, device=device)
+    else:
+        policy = build_policy(config, portions).to(device)
     use_amp = bool(bcfg.get("use_amp", gpu_cfg.get("use_amp", True))) and device.type == "cuda"
     compile_models = bool(
         (config.get("model") or {}).get("torch_compile", False)

@@ -216,7 +216,7 @@ def evaluate(
     if not eval_indices:
         eval_indices = list(range(len(eval_ds)))
 
-    weights = CostWeights.from_config(config["cost"])
+    weights = CostWeights.from_eval_config(config)
     charging_portions = config["problem"]["charging_portions"]
     use_horizon = bool(config["problem"].get("use_horizon_check", True))
     use_depot_charging = bool(config["problem"].get("use_depot_charging", True))
@@ -267,7 +267,9 @@ def evaluate(
         for method_name, runner in methods.items():
             t0 = time.time()
             with torch.no_grad():
-                best, candidates = fleet_search(instance, runner, extra_margin, selection_mode)
+                best, candidates = fleet_search(
+                    instance, runner, extra_margin, selection_mode, fleet_cfg=fcfg,
+                )
             runtime = time.time() - t0
             env = best.result.env
             raw_objective = best.objective

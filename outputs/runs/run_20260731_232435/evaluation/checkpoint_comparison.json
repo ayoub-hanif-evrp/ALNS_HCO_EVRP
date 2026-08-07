@@ -1,0 +1,444 @@
+{
+  "selection_split": "test_fallback",
+  "selected_on_validation": "rl_best_served",
+  "validation": {
+    "bc_best": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null
+    },
+    "bc_last": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null
+    },
+    "rl_best_served": {
+      "macro_served": null,
+      "macro_feasibility": 0.555556,
+      "macro_objective": null
+    },
+    "rl_best_feasibility": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null
+    },
+    "rl_best_objective": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null
+    },
+    "rl_last": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null
+    }
+  },
+  "methods": {
+    "bc_best": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.444444,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.865556,
+          "feasibility_rate": 0.444444,
+          "original_objective": 226189.5682,
+          "station_action_fraction": 0.127894,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\bc\\bc_best_policy.pt"
+    },
+    "bc_last": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.444444,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.865556,
+          "feasibility_rate": 0.444444,
+          "original_objective": 226189.5682,
+          "station_action_fraction": 0.127894,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\bc\\bc_last_policy.pt"
+    },
+    "rl_best_served": {
+      "macro_served": null,
+      "macro_feasibility": 0.555556,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.555556,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.98,
+          "feasibility_rate": 0.555556,
+          "original_objective": 101062.5899,
+          "station_action_fraction": 0.194047,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\rl\\rl_best_served.pt"
+    },
+    "rl_best_feasibility": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.444444,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.868889,
+          "feasibility_rate": 0.444444,
+          "original_objective": 222952.8105,
+          "station_action_fraction": 0.144425,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\rl\\rl_best_feasibility.pt"
+    },
+    "rl_best_objective": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.444444,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.868889,
+          "feasibility_rate": 0.444444,
+          "original_objective": 222952.8105,
+          "station_action_fraction": 0.144425,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\rl\\rl_best_objective.pt"
+    },
+    "rl_last": {
+      "macro_served": null,
+      "macro_feasibility": 0.444444,
+      "macro_objective": null,
+      "by_class": {
+        "served": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "feasibility": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "objective": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "unserved": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "hard_violations": {
+          "C": null,
+          "R": null,
+          "RC": null
+        },
+        "macro_served": null,
+        "macro_feasibility": 0.444444,
+        "macro_objective": null,
+        "aggregate": {
+          "num_instances": 9,
+          "instances": [
+            "c101_21",
+            "c104_21",
+            "c208_21",
+            "r101_21",
+            "r104_21",
+            "r211_21",
+            "rc101_21",
+            "rc104_21",
+            "rc208_21"
+          ],
+          "served_ratio": 0.873333,
+          "feasibility_rate": 0.444444,
+          "original_objective": 218438.7564,
+          "station_action_fraction": 0.139437,
+          "depot_lateness": 0.0,
+          "battery_violations": 0.0,
+          "max_step_terminations": 0.0,
+          "objective_reconstruction_mismatch": 0.0
+        }
+      },
+      "checkpoint": "outputs\\runs\\run_20260731_232435\\rl\\rl_last.pt"
+    }
+  },
+  "selected_test": {
+    "macro_served": null,
+    "macro_feasibility": 0.555556,
+    "macro_objective": null,
+    "by_class": {
+      "served": {
+        "C": null,
+        "R": null,
+        "RC": null
+      },
+      "feasibility": {
+        "C": null,
+        "R": null,
+        "RC": null
+      },
+      "objective": {
+        "C": null,
+        "R": null,
+        "RC": null
+      },
+      "unserved": {
+        "C": null,
+        "R": null,
+        "RC": null
+      },
+      "hard_violations": {
+        "C": null,
+        "R": null,
+        "RC": null
+      },
+      "macro_served": null,
+      "macro_feasibility": 0.555556,
+      "macro_objective": null,
+      "aggregate": {
+        "num_instances": 9,
+        "instances": [
+          "c101_21",
+          "c104_21",
+          "c208_21",
+          "r101_21",
+          "r104_21",
+          "r211_21",
+          "rc101_21",
+          "rc104_21",
+          "rc208_21"
+        ],
+        "served_ratio": 0.98,
+        "feasibility_rate": 0.555556,
+        "original_objective": 101062.5899,
+        "station_action_fraction": 0.194047,
+        "depot_lateness": 0.0,
+        "battery_violations": 0.0,
+        "max_step_terminations": 0.0,
+        "objective_reconstruction_mismatch": 0.0
+      }
+    },
+    "checkpoint": "outputs\\runs\\run_20260731_232435\\rl\\rl_best_served.pt"
+  }
+}

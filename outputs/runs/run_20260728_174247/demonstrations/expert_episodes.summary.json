@@ -1,0 +1,10 @@
+{
+  "num_episodes": 47,
+  "mean_served_ratio": 0.9378723404255319,
+  "feasibility_rate": 0.46808510638297873,
+  "mean_objective": 151750.06466541562,
+  "mean_m_star": 29.02127659574468,
+  "path": "outputs\\runs\\run_20260728_174247\\demonstrations\\expert_episodes.pt",
+  "mstar_cache": "outputs\\demonstrations\\schneider21_mstar.json",
+  "num_workers": 1
+}

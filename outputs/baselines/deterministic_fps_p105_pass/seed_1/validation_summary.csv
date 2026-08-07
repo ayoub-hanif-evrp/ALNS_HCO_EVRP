@@ -1,0 +1,7 @@
+instance,customer_class,tw_family,mathematical_lower_bound,heuristic_lower_estimate,first_feasible_upper_bound,smallest_feasible_fleet,successful_attempts_at_mstar,complete_feasibility,served_customers,total_customers,used_vehicles,total_distance,charging_visits,total_charging_time,paper_j,runtime,within_budget_5pct,search_termination_reason,stuck_at_upper_after_one_fail
+c103_21,C,type1,19,19,37,26,0,True,100,100,26,2474.7144083976746,24,2602.5357896089554,33476.188070269585,640.9522915000562,True,completed,False
+c201_21,C,type2,19,19,37,30,0,True,100,100,30,3133.8877096176147,6,779.1186304092406,45628.51031659317,674.5857801001985,True,completed,False
+r103_21,R,type1,15,15,34,28,0,True,100,100,28,2363.3712499141693,35,442.4443698406219,31286.271578583717,641.8059195999522,True,completed,False
+r201_21,R,type2,15,15,34,16,2,True,100,100,16,2098.4290764331818,0,0.0,20280.38651459217,640.6958365999162,True,completed,False
+rc103_21,RC,type1,18,18,36,26,0,True,100,100,26,2876.8108711242676,37,436.905008380413,29743.630751360415,644.9354335998651,True,completed,False
+rc201_21,RC,type2,18,18,36,26,0,True,100,100,26,3315.6984329223633,1,13.182283020019533,32598.550127372742,685.4318743001204,True,completed,False

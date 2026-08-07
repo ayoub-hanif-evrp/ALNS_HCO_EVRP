@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [
+    "station_without_portion:route=6:pos=1:node=8"
+  ],
+  "nonempty_routes": 23,
+  "n_served": 100,
+  "charging_visits": 36,
+  "replay_feasible": true,
+  "hard_violations": 0,
+  "objective": 26428.11769116783,
+  "used_vehicles": 23,
+  "distance": 2706.5006759166718,
+  "charging_time": 494.20150816440594,
+  "duration": 4472.932397885323
+}

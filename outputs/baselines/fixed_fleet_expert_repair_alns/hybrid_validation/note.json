@@ -1,0 +1,22 @@
+{
+  "selected_from_smoke": "Expert+Repair+ALNS",
+  "validation_instances_reserved": [
+    "c103_21",
+    "c201_21",
+    "r103_21",
+    "r201_21",
+    "rc103_21",
+    "rc201_21"
+  ],
+  "holdouts_untouched_until_now": [
+    "c101_21",
+    "c104_21",
+    "c208_21",
+    "r101_21",
+    "r104_21",
+    "r211_21",
+    "rc101_21",
+    "rc104_21",
+    "rc208_21"
+  ]
+}

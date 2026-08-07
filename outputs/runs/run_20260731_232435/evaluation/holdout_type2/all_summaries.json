@@ -1,0 +1,20 @@
+{
+  "Expert": {
+    "n": 3,
+    "mean_served": 1.0,
+    "feasibility_rate": 1.0,
+    "mean_objective": 39960.75391096886
+  },
+  "BC": {
+    "n": 3,
+    "mean_served": 1.0,
+    "feasibility_rate": 1.0,
+    "mean_objective": 39343.24682742293
+  },
+  "RL-best": {
+    "n": 3,
+    "mean_served": 1.0,
+    "feasibility_rate": 1.0,
+    "mean_objective": 39636.86458160766
+  }
+}

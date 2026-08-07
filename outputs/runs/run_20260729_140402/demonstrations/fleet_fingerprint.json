@@ -1,0 +1,14 @@
+{
+  "tw_aware_floor": true,
+  "target_customers_per_vehicle": 8.0,
+  "training_fleet_mode": "expert_mstar",
+  "extra_margin": 12,
+  "lexicographic": true,
+  "expert_probes": 0,
+  "customers_per_vehicle_lo": 12.0,
+  "customers_per_vehicle_hi": 4.0,
+  "expert_lookahead_depth": 0,
+  "expert_max_customer_candidates": 25,
+  "demo_tag": "outputs\\runs\\run_20260729_140402\\demonstrations\\expert_train.pt",
+  "tw_family": "type2"
+}

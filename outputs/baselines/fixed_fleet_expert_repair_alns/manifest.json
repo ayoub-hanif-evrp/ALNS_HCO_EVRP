@@ -1,0 +1,26 @@
+{
+  "baseline_id": "fixed_fleet_expert_repair_alns",
+  "method_name": "FixedFleet-Expert+Repair+ALNS",
+  "immutable": true,
+  "fleet_minimization_performed": false,
+  "fleet_protocol": "FIXED_UPPER_BOUND",
+  "fleet_upper_bound_m": 40,
+  "note": "Fleet minimization was NOT performed. Solutions were evaluated at a fixed large fleet upper bound (m=40). Do not claim optimized fleet size from this baseline.",
+  "source_commit": "fe59f84e5095f6f034d6cc22e619ea5e26a4caca",
+  "source_paths": [
+    "outputs/tgfps_full9",
+    "outputs/baselines/expert_repair_alns_20260801"
+  ],
+  "config_file": "configs/train_tgfps.yaml",
+  "seed": 42,
+  "summary_sha256": "6327f3678060b1a90c80b35c19a4a71acf15ceec931b9f209dd56933949cbc21",
+  "live_summary": {
+    "n": 9,
+    "mean_served": 0.9977777777777779,
+    "feasibility_rate": 0.8888888888888888,
+    "mean_objective": 62371.049834538615,
+    "mean_used_evs": 39.77777777777778,
+    "mean_runtime": 142.82586056666656
+  },
+  "frozen_at": "2026-08-03T13:01:37.653263+00:00"
+}

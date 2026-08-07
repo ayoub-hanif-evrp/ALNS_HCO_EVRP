@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "errors": [],
+  "warnings": [],
+  "nonempty_routes": 19,
+  "n_served": 100,
+  "charging_visits": 12,
+  "replay_feasible": true,
+  "hard_violations": 0,
+  "objective": 29686.82389351511,
+  "used_vehicles": 19,
+  "distance": 2428.3590817451477,
+  "charging_time": 1626.6232569611072,
+  "duration": 43753.25708580017
+}

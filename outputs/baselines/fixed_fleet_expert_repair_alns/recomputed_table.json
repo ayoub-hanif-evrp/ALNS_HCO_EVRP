@@ -1,0 +1,16 @@
+{
+  "tables": {
+    "Expert+Repair+ALNS": {
+      "n": 9,
+      "mean_served": 0.9977777777777779,
+      "feasibility_rate": 0.8888888888888888,
+      "mean_used_vehicles": 39.77777777777778,
+      "mean_distance": 4219.204393320613,
+      "mean_charging_time": 2054.6536571204992,
+      "mean_duration": 25036.18875517597,
+      "mean_paper_j": 62371.049834538615,
+      "mean_runtime": 142.82586056666656
+    }
+  },
+  "n_rows": 9
+}

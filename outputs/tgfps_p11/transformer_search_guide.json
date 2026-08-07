@@ -1,0 +1,7 @@
+{
+  "checkpoint": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_p11\\transformer_search_guide.pt",
+  "n_samples": 251,
+  "epochs": 25,
+  "final_loss": 1.3199447708911196,
+  "train_seconds": 77.47404620004818
+}

@@ -1,0 +1,11 @@
+{
+  "selected": "Expert+Repair+ALNS",
+  "live_summary": {
+    "n": 9,
+    "mean_served": 0.9977777777777779,
+    "feasibility_rate": 0.8888888888888888,
+    "mean_objective": 62371.049834538615,
+    "mean_used_evs": 39.77777777777778,
+    "mean_runtime": 142.82586056666656
+  }
+}

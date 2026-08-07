@@ -1,0 +1,456 @@
+{
+  "instance": "rc201_21",
+  "m_star": 20,
+  "feasible": true,
+  "routes": [
+    {
+      "nodes": [
+        0,
+        114,
+        117,
+        50,
+        85,
+        71,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        119,
+        78,
+        45,
+        42,
+        43,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        94,
+        68,
+        31,
+        109,
+        103,
+        87,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        23,
+        27,
+        62,
+        91,
+        121,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        86,
+        46,
+        44,
+        70,
+        84,
+        101,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        41,
+        93,
+        75,
+        25,
+        76,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        83,
+        107,
+        118,
+        95,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        64,
+        28,
+        22,
+        66,
+        26,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        40,
+        69,
+        98,
+        73,
+        89,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        111,
+        108,
+        96,
+        79,
+        113,
+        115,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        104,
+        72,
+        110,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        88,
+        55,
+        51,
+        47,
+        92,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        120,
+        34,
+        37,
+        30,
+        80,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        53,
+        59,
+        58,
+        63,
+        60,
+        102,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        77,
+        106,
+        112,
+        32,
+        39,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        81,
+        24,
+        65,
+        61,
+        56,
+        82,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        100,
+        38,
+        36,
+        33,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        90,
+        74,
+        35,
+        99,
+        29,
+        67,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        57,
+        116,
+        54,
+        105,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        97,
+        49,
+        48,
+        52,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  ],
+  "score": [
+    0,
+    0,
+    20,
+    2798.4661145210266,
+    0.0,
+    15076.727531433105,
+    25433.965009355546
+  ]
+}

@@ -1,0 +1,495 @@
+{
+  "instance": "c101_21",
+  "m_star": 23,
+  "feasible": true,
+  "routes": [
+    {
+      "nodes": [
+        0,
+        62,
+        46,
+        49,
+        47,
+        31,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        44,
+        33,
+        35,
+        6,
+        27,
+        30,
+        29,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        0.25,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        10,
+        55,
+        57,
+        60,
+        58,
+        56,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        119,
+        116,
+        23,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        41,
+        45,
+        48,
+        10,
+        40,
+        36,
+        0,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        1.0,
+        null,
+        null,
+        0.5,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        88,
+        86,
+        83,
+        85,
+        89,
+        90,
+        68,
+        64,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        42,
+        50,
+        51,
+        59,
+        10,
+        10,
+        32,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        1.0,
+        0.25,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        16,
+        80,
+        74,
+        78,
+        0
+      ],
+      "charge_labels": [
+        null,
+        0.75,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        4,
+        115,
+        103,
+        104,
+        105,
+        109,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        12,
+        53,
+        54,
+        72,
+        73,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        4,
+        117,
+        114,
+        118,
+        121,
+        0
+      ],
+      "charge_labels": [
+        null,
+        0.75,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        16,
+        81,
+        66,
+        69,
+        16,
+        75,
+        71,
+        70,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        43,
+        0,
+        4,
+        113,
+        106,
+        110,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        1.0,
+        1.0,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        111,
+        108,
+        107,
+        2,
+        102,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        0.75,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        95,
+        20,
+        100,
+        99,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        0.75,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        61,
+        63,
+        65,
+        67,
+        0,
+        120,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        0.75,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        25,
+        28,
+        24,
+        26,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        20,
+        97,
+        93,
+        82,
+        87,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        84,
+        6,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        1.0,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        2,
+        94,
+        91,
+        92,
+        98,
+        101,
+        20,
+        0
+      ],
+      "charge_labels": [
+        null,
+        0.75,
+        null,
+        null,
+        null,
+        null,
+        null,
+        0.5,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        96,
+        22,
+        6,
+        37,
+        52,
+        12,
+        112,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        1.0,
+        null,
+        null,
+        1.0,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        39,
+        38,
+        34,
+        0
+      ],
+      "charge_labels": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes": [
+        0,
+        16,
+        79,
+        77,
+        76,
+        0
+      ],
+      "charge_labels": [
+        null,
+        1.0,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+[
+  {
+    "m": 37,
+    "attempt": 1,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "upper_bound_probe",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 37,
+    "distance": 3862.6552085876465,
+    "runtime": 30.23691650002729,
+    "failure_reason": null
+  },
+  {
+    "m": 36,
+    "attempt": 2,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "warm_from_m=37",
+    "feasible": false,
+    "served": 99,
+    "used_vehicles": 36,
+    "distance": 3754.5666971206665,
+    "runtime": 11.978495199931785,
+    "failure_reason": "descent_failed"
+  },
+  {
+    "m": 36,
+    "attempt": 3,
+    "expert_variant": "regret",
+    "seed": 2,
+    "warm_start_source": "warm_from_m=37",
+    "feasible": false,
+    "served": 99,
+    "used_vehicles": 36,
+    "distance": 3754.5666971206665,
+    "runtime": 10.904540800023824,
+    "failure_reason": "descent_failed"
+  }
+]

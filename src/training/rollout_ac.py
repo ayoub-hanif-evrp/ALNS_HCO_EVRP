@@ -235,8 +235,17 @@ def run_episode_trajectory(
             if pending_decision is not None:
                 pending_decision.next_state_features = decision_state
                 _flush_decision()
+            logit_bias = None
+            if train_calc is not None:
+                unserved_ratio = 1.0 - (
+                    float(env.num_served_customers) / max(1, len(env.instance.customer_indices))
+                )
+                logit_bias = train_calc.training_logit_adjustments(
+                    env, ev, feasible_mask, unserved_ratio=unserved_ratio,
+                )
             action = policy.select_action_from_state(
                 env, ev, node_embeddings, mask_result, decision_state, mode=mode,
+                logit_bias=logit_bias,
             )
         timing_ms["policy_forward_ms"] += (time.perf_counter() - t_p0) * 1000.0
         need_slack_stats = (

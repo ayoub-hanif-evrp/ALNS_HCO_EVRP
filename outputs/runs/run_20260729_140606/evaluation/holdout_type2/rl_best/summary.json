@@ -1,0 +1,43 @@
+{
+  "label": "rl_best",
+  "checkpoint": "outputs\\runs\\run_20260729_140606\\rl\\rl_best.pt",
+  "n": 3,
+  "mean_served": 1.0,
+  "feasibility_rate": 1.0,
+  "mean_objective": 40183.79113964089,
+  "per_instance": [
+    {
+      "instance": "c208_21",
+      "m": 31,
+      "objective": 50216.16278646255,
+      "feasible": true,
+      "served_ratio": 1.0,
+      "unserved": 0,
+      "used_evs": 31,
+      "fleet_mode": "lex_probe_hi",
+      "seconds": 39.69627670000773
+    },
+    {
+      "instance": "r211_21",
+      "m": 27,
+      "objective": 33259.79967904091,
+      "feasible": true,
+      "served_ratio": 1.0,
+      "unserved": 0,
+      "used_evs": 27,
+      "fleet_mode": "lex_probe_hi",
+      "seconds": 4.708865499938838
+    },
+    {
+      "instance": "rc208_21",
+      "m": 30,
+      "objective": 37075.41095341921,
+      "feasible": true,
+      "served_ratio": 1.0,
+      "unserved": 0,
+      "used_evs": 30,
+      "fleet_mode": "lex_probe_hi",
+      "seconds": 18.733211599988863
+    }
+  ]
+}

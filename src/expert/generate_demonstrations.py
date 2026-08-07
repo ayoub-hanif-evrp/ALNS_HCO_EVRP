@@ -19,12 +19,33 @@ from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
 from src.env.policy_action import apply_policy_action
 from src.env.reward import StepRewardCalculator, snapshot_env
+from src.evaluation.fleet_search import FleetCandidate, lexicographic_min_fleet_search
+from src.evaluation.mstar_cache import save_mstar_map
 from src.expert.feasibility_first_expert import ExpertConfig, FeasibilityFirstExpert
 from src.training.flat_schedule import sample_fleet_size
 from src.utils.config import load_config
 from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
+
+
+def _fleet_cfg_for_instance(instance, fleet_cfg: dict | None) -> dict:
+    """Prefer a larger high-fleet probe when due-times look tight (state, not name)."""
+    import numpy as np
+
+    cfg = dict(fleet_cfg or {})
+    dues = [float(n.due_time) for n in instance.nodes if getattr(n, "is_customer", False)]
+    if len(dues) < 3:
+        return cfg
+    arr = np.asarray(dues, dtype=np.float64)
+    span = float(arr.max() - arr.min()) + 1e-9
+    cv = float(arr.std() / max(float(arr.mean()), 1e-9))
+    early_cut = float(arr.min() + 0.35 * span)
+    frac_early = float(np.mean(arr <= early_cut))
+    if frac_early >= 0.55 or cv < 0.45:
+        cfg["customers_per_vehicle_hi"] = min(float(cfg.get("customers_per_vehicle_hi", 5) or 5), 2.0)
+        cfg["extra_margin"] = max(int(cfg.get("extra_margin", 12) or 12), 26)
+    return cfg
 
 
 def _episode_to_demo_dict(ep: EpisodeResult) -> dict:
@@ -47,31 +68,169 @@ def _episode_to_demo_dict(ep: EpisodeResult) -> dict:
     }
 
 
+def _expert_fleet_runner(
+    instance,
+    m: int,
+    *,
+    expert: FeasibilityFirstExpert,
+    weights: CostWeights,
+    portions: list[float],
+    use_horizon: bool,
+    use_depot: bool,
+    max_steps_factor: int,
+    env_cfg: dict | None,
+    reward_scale: float,
+    collect_transitions: bool,
+) -> FleetCandidate:
+    ep = run_expert_episode(
+        instance,
+        int(m),
+        expert,
+        weights,
+        charging_portions=portions,
+        use_horizon_check=use_horizon,
+        use_depot_charging=use_depot,
+        max_steps_factor=max_steps_factor,
+        environment_config=env_cfg,
+        reward_scale=reward_scale,
+        collect_transitions=collect_transitions,
+    )
+    # Lightweight summary for hierarchical keys (used_evs / distance proxies).
+    from src.env.cost import SolutionSummary
+
+    summary = SolutionSummary(
+        used_evs=int(ep.metrics.get("used_evs", m) or m),
+        total_distance=float(ep.metrics.get("objective", 0.0) or 0.0),
+        unserved_customers=int(ep.metrics.get("unserved_customers", 0) or 0),
+        infeasible_flag=0 if ep.metrics.get("feasible") else 1,
+    )
+    return FleetCandidate(
+        m=int(m),
+        feasible=bool(ep.metrics.get("feasible")),
+        objective=float(ep.metrics.get("objective", 0.0) or 0.0),
+        summary=summary,
+        result=ep,
+    )
+
+
+def _resolve_expert_m_and_episode(
+    instance,
+    *,
+    config: dict,
+    expert: FeasibilityFirstExpert,
+    weights: CostWeights,
+    collect_transitions: bool,
+) -> tuple[int, EpisodeResult, list[FleetCandidate]]:
+    """Lexicographic min-fleet when enabled; else single sample_fleet_size episode."""
+    problem = config.get("problem") or {}
+    env_cfg = config.get("environment") or {}
+    fleet_cfg = _fleet_cfg_for_instance(instance, config.get("fleet_search") or {})
+    portions = list(problem.get("charging_portions") or [0.25, 0.5, 0.75, 1.0])
+    use_horizon = bool(problem.get("use_horizon_check", True))
+    use_depot = bool(problem.get("use_depot_charging", True))
+    max_steps_factor = int((config.get("decoding") or {}).get("max_steps_factor", 6))
+    reward_scale = float((config.get("rl") or {}).get("reward_scale", 10000.0))
+    extra_margin = int(fleet_cfg.get("extra_margin", 4) or 4)
+    selection_mode = str(fleet_cfg.get("selection_mode", "hierarchical"))
+
+    if bool(fleet_cfg.get("lexicographic", False)):
+        # Single-probe expert demos can collect transitions during the search roll.
+        collect_during_search = bool(collect_transitions) and int(fleet_cfg.get("expert_probes", 0) or 0) == 1
+
+        def runner(inst, m):
+            return _expert_fleet_runner(
+                inst,
+                m,
+                expert=expert,
+                weights=weights,
+                portions=portions,
+                use_horizon=use_horizon,
+                use_depot=use_depot,
+                max_steps_factor=max_steps_factor,
+                env_cfg=env_cfg,
+                reward_scale=reward_scale,
+                collect_transitions=collect_during_search,
+            )
+
+        best, candidates = lexicographic_min_fleet_search(
+            instance,
+            runner,
+            fleet_cfg=fleet_cfg,
+            selection_mode=selection_mode,
+            extra_margin=extra_margin,
+        )
+        # Re-roll at m* with transitions if the search episode has none.
+        if collect_transitions and not getattr(best.result, "transitions", None):
+            ep = run_expert_episode(
+                instance,
+                int(best.m),
+                expert,
+                weights,
+                charging_portions=portions,
+                use_horizon_check=use_horizon,
+                use_depot_charging=use_depot,
+                max_steps_factor=max_steps_factor,
+                environment_config=env_cfg,
+                reward_scale=reward_scale,
+                collect_transitions=True,
+            )
+        elif collect_transitions and best.result is not None and getattr(best.result, "transitions", None):
+            ep = best.result
+        elif collect_transitions:
+            ep = run_expert_episode(
+                instance,
+                int(best.m),
+                expert,
+                weights,
+                charging_portions=portions,
+                use_horizon_check=use_horizon,
+                use_depot_charging=use_depot,
+                max_steps_factor=max_steps_factor,
+                environment_config=env_cfg,
+                reward_scale=reward_scale,
+                collect_transitions=True,
+            )
+        else:
+            ep = best.result
+        return int(best.m), ep, candidates
+
+    rng = __import__("random").Random(int(config.get("seed", 42)) + hash(instance.instance_name) % 10_000)
+    m = sample_fleet_size(instance, extra_margin, rng, fleet_cfg=fleet_cfg)
+    ep = run_expert_episode(
+        instance,
+        m,
+        expert,
+        weights,
+        charging_portions=portions,
+        use_horizon_check=use_horizon,
+        use_depot_charging=use_depot,
+        max_steps_factor=max_steps_factor,
+        environment_config=env_cfg,
+        reward_scale=reward_scale,
+        collect_transitions=collect_transitions,
+    )
+    return int(m), ep, []
+
+
 def _parallel_demo_job(job: dict) -> dict:
-    """Process-pool worker: one exact-mask expert episode (Windows-safe top-level)."""
+    """Process-pool worker: lexicographic (or fixed) expert episode."""
     from src.utils.gpu_runtime import limit_cpu_threads_for_worker
 
-    # Split cores across workers (avoid N_workers × all_cores thrash).
     limit_cpu_threads_for_worker(int(job.get("threads_per_worker", 1) or 1))
     cfg = job["config"]
     expert = FeasibilityFirstExpert(cfg)
-    weights = CostWeights.from_config(cfg["cost"])
-    problem = cfg.get("problem") or {}
-    env_cfg = cfg.get("environment") or {}
-    ep = run_expert_episode(
+    weights = CostWeights.from_eval_config(cfg)
+    m, ep, _cands = _resolve_expert_m_and_episode(
         job["instance"],
-        int(job["m"]),
-        expert,
-        weights,
-        charging_portions=list(problem.get("charging_portions") or [0.25, 0.5, 0.75, 1.0]),
-        use_horizon_check=bool(problem.get("use_horizon_check", True)),
-        use_depot_charging=bool(problem.get("use_depot_charging", True)),
-        max_steps_factor=int((cfg.get("decoding") or {}).get("max_steps_factor", 6)),
-        environment_config=env_cfg,
-        reward_scale=float((cfg.get("rl") or {}).get("reward_scale", 10000.0)),
+        config=cfg,
+        expert=expert,
+        weights=weights,
         collect_transitions=True,
     )
-    return _episode_to_demo_dict(ep)
+    out = _episode_to_demo_dict(ep)
+    out["m"] = int(m)
+    out["m_star"] = int(m)
+    return out
 
 
 @dataclass
@@ -166,15 +325,39 @@ def run_expert_episode(
     name = instance.instance_name
     cls = instance_class(name)
 
+    # Type-1: seed earliest-due customers onto distinct idle EVs first.
+    if hasattr(expert, "bootstrap_type1_seeds"):
+        try:
+            expert.bootstrap_type1_seeds(env)
+        except Exception:
+            pass
+
     while not env.is_done():
-        ev = env.select_acting_ev()
+        # Type-1: prefer a fresh/idle EV that can serve the most urgent customer.
+        if hasattr(expert, "select_acting_ev_for_type1"):
+            ev = expert.select_acting_ev_for_type1(env)
+        else:
+            ev = env.select_acting_ev()
         if ev is None:
             break
         analysis = env.analyze_decision(ev)
         if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
             continue
-        if env.try_auto_close_from_analysis(ev, analysis) is not None:
-            continue
+        # Under high TW/fleet pressure, do not auto-close while this EV still
+        # has legal customers — let the expert decide depot finish (state-based).
+        from src.search.state_features import compute_construction_pressure
+
+        pressure = compute_construction_pressure(env)
+        if not (pressure.prefer_earliest_due or pressure.prefer_fresh_ev_release):
+            if env.try_auto_close_from_analysis(ev, analysis) is not None:
+                continue
+        else:
+            legal_c = int(np.sum([
+                1 for c in instance.customer_indices
+                if bool(analysis.final_node_mask[int(c)]) and not env.served_mask[int(c)]
+            ]))
+            if legal_c == 0 and env.try_auto_close_from_analysis(ev, analysis) is not None:
+                continue
 
         served_before = int(env.num_served_customers)
         prev_node = int(ev.current_node)
@@ -231,6 +414,55 @@ def run_expert_episode(
         if not ev.finished:
             env.auto_close_route(ev, forced=True)
 
+    # Type-1 repair: reopen depot EVs / continue serving leftover customers if possible.
+    repaired = 0
+    if int(instance.num_customers - env.num_served_customers) > 0:
+        try:
+            # Second seed wave on remaining earliest-due leftovers, then repair.
+            if hasattr(expert, "bootstrap_type1_seeds"):
+                expert.bootstrap_type1_seeds(env, max_seeds=min(12, env.m))
+            # Continue a short constructive burst with type-1 EV selection.
+            burst = 0
+            while (
+                burst < 80
+                and not env.is_done()
+                and env.num_served_customers < instance.num_customers
+            ):
+                ev = (
+                    expert.select_acting_ev_for_type1(env)
+                    if hasattr(expert, "select_acting_ev_for_type1")
+                    else env.select_acting_ev()
+                )
+                if ev is None:
+                    break
+                analysis = env.analyze_decision(ev)
+                if env.try_controlled_closure_from_analysis(ev, analysis) is not None:
+                    burst += 1
+                    continue
+                legal_c = [
+                    int(c) for c in instance.customer_indices
+                    if bool(analysis.final_node_mask[int(c)]) and not env.served_mask[int(c)]
+                ]
+                if not legal_c:
+                    if env.try_auto_close_from_analysis(ev, analysis) is not None:
+                        burst += 1
+                        continue
+                before_s = int(env.num_served_customers)
+                action = expert.select_action(env, ev, analysis)
+                apply_policy_action(env, ev, action, mask_result=analysis.mask_result)
+                if int(env.num_served_customers) > before_s:
+                    repaired += int(env.num_served_customers) - before_s
+                burst += 1
+            repaired += int(expert.repair_unserved(env))
+        except Exception:
+            try:
+                repaired = int(expert.repair_unserved(env))
+            except Exception:
+                repaired = 0
+        for ev in env.evs:
+            if not ev.finished:
+                env.auto_close_route(ev, forced=True)
+
     j, breakdown, summary = env.score(weights)
     diag = env.get_episode_diagnostics()
     cust_a = float(getattr(env, "customer_actions", 0))
@@ -253,6 +485,10 @@ def run_expert_episode(
         "max_step_terminations": int(bool(getattr(env, "max_steps_reached", False))),
         "done_reason": env.get_done_reason(),
         "num_decisions": len(result.actions),
+        "repair_served": int(repaired),
+        "unserved_customer_ids": [
+            int(c) for c in instance.customer_indices if not env.served_mask[int(c)]
+        ],
         "breakdown": {k: float(v) for k, v in (breakdown or {}).items()},
         **{k: float(v) if isinstance(v, (int, float, np.floating, np.integer)) else v
            for k, v in diag.items() if k in {
@@ -380,40 +616,42 @@ def evaluate_expert(config: dict, *, on_holdout: bool = False) -> dict:
     train_ds, eval_ds, meta = _load_train_eval(config)
     ds = eval_ds if on_holdout else train_ds
     expert = FeasibilityFirstExpert(config)
-    weights = CostWeights.from_config(config["cost"])
-    portions = list(config["problem"]["charging_portions"])
-    use_horizon = bool(config["problem"].get("use_horizon_check", True))
-    use_depot = bool(config["problem"].get("use_depot_charging", True))
-    max_steps_factor = int(config["decoding"].get("max_steps_factor", 6))
-    extra_margin = int(config["fleet_search"].get("extra_margin", 4))
+    weights = CostWeights.from_eval_config(config)
     env_cfg = config.get("environment") or {}
-    rng = __import__("random").Random(int(config.get("seed", 42)))
 
     rows = []
+    mstar: dict[str, int] = {}
     for i in range(len(ds)):
         instance = ds[i]
-        m = sample_fleet_size(instance, extra_margin, rng)
         t0 = time.time()
-        ep = run_expert_episode(
-            instance, m, expert, weights,
-            charging_portions=portions,
-            use_horizon_check=use_horizon,
-            use_depot_charging=use_depot,
-            max_steps_factor=max_steps_factor,
-            environment_config=env_cfg,
-            reward_scale=float((config.get("rl") or {}).get("reward_scale", 10000.0)),
+        m, ep, candidates = _resolve_expert_m_and_episode(
+            instance,
+            config=config,
+            expert=expert,
+            weights=weights,
             collect_transitions=False,
         )
         row = dict(ep.metrics)
         row["instance_name"] = instance.instance_name
         row["m"] = m
+        row["m_star"] = m
+        row["fleet_candidates_tried"] = len(candidates)
         row["runtime_seconds"] = time.time() - t0
         rows.append(row)
+        mstar[instance.instance_name] = int(m)
         LOGGER.info(
-            "Expert %s | served=%.3f feas=%s J=%.1f unserved=%d decisions=%d",
-            instance.instance_name, row["served_ratio"], row["feasible"],
+            "Expert %s | m*=%d tried=%d served=%.3f feas=%s J=%.1f unserved=%d decisions=%d",
+            instance.instance_name, m, len(candidates), row["served_ratio"], row["feasible"],
             row["objective"], row["unserved_customers"], row["num_decisions"],
         )
+
+    if not on_holdout and mstar:
+        path = save_mstar_map(
+            config,
+            mstar,
+            meta={"split": "train", "lexicographic": bool((config.get("fleet_search") or {}).get("lexicographic"))},
+        )
+        LOGGER.info("Wrote expert m* cache: %s (%d instances)", path, len(mstar))
 
     report = aggregate_expert_report(
         rows,
@@ -427,23 +665,11 @@ def evaluate_expert(config: dict, *, on_holdout: bool = False) -> dict:
 def generate_demonstrations(config: dict) -> Path:
     train_ds, _eval_ds, meta = _load_train_eval(config)
     expert = FeasibilityFirstExpert(config)
-    weights = CostWeights.from_config(config["cost"])
-    portions = list(config["problem"]["charging_portions"])
-    use_horizon = bool(config["problem"].get("use_horizon_check", True))
-    use_depot = bool(config["problem"].get("use_depot_charging", True))
-    max_steps_factor = int(config["decoding"].get("max_steps_factor", 6))
-    extra_margin = int(config["fleet_search"].get("extra_margin", 4))
-    env_cfg = config.get("environment") or {}
+    weights = CostWeights.from_eval_config(config)
     out_path = Path((config.get("demonstrations") or {}).get("output", "outputs/demonstrations/rc21_expert.pt"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    rng = __import__("random").Random(int(config.get("seed", 42)))
 
-    # Sample fleet sizes first so parallel runs stay seed-reproducible.
-    jobs = []
-    for i in range(len(train_ds)):
-        instance = train_ds[i]
-        m = sample_fleet_size(instance, extra_margin, rng)
-        jobs.append({"instance": instance, "m": m, "config": config})
+    jobs = [{"instance": train_ds[i], "config": config} for i in range(len(train_ds))]
 
     demo_cfg = config.get("demonstrations") or {}
     from src.utils.gpu_runtime import resolve_parallel_workers, threads_per_worker
@@ -460,52 +686,74 @@ def generate_demonstrations(config: dict) -> Path:
         job["threads_per_worker"] = tpw
 
     episodes: list[dict] = []
+    mstar: dict[str, int] = {}
+    # Resume partial sequential runs if a sidecar exists.
+    partial_path = out_path.with_suffix(".partial.pt")
+    done_names: set[str] = set()
+    if n_workers <= 1 and partial_path.is_file():
+        try:
+            prev = torch.load(partial_path, map_location="cpu", weights_only=False)
+            episodes = list(prev.get("episodes") or [])
+            mstar = {str(k): int(v) for k, v in (prev.get("mstar") or {}).items()}
+            done_names = {str(e.get("instance_name")) for e in episodes}
+            LOGGER.info("Resuming demos from partial cache | done=%d | %s", len(episodes), partial_path)
+        except Exception as exc:
+            LOGGER.warning("Could not resume partial demos (%s); starting fresh", exc)
+            episodes, mstar, done_names = [], {}, set()
+
     if n_workers <= 1 or len(jobs) <= 1:
         for ji, job in enumerate(jobs):
             name = str(getattr(job["instance"], "instance_name", "?"))
+            if name in done_names:
+                LOGGER.info("Demo skip %d/%d | %s (already in partial cache)", ji + 1, len(jobs), name)
+                continue
             LOGGER.info(
-                "Demo start %d/%d | %s | m=%d lookahead=%s",
+                "Demo start %d/%d | %s | lexicographic=%s lookahead=%s",
                 ji + 1,
                 len(jobs),
                 name,
-                int(job["m"]),
+                bool((config.get("fleet_search") or {}).get("lexicographic")),
                 (config.get("expert") or {}).get("lookahead_depth", "?"),
             )
             t0 = time.time()
-            ep = run_expert_episode(
-                job["instance"], job["m"], expert, weights,
-                charging_portions=portions,
-                use_horizon_check=use_horizon,
-                use_depot_charging=use_depot,
-                max_steps_factor=max_steps_factor,
-                environment_config=env_cfg,
-                reward_scale=float((config.get("rl") or {}).get("reward_scale", 10000.0)),
+            m, ep, candidates = _resolve_expert_m_and_episode(
+                job["instance"],
+                config=config,
+                expert=expert,
+                weights=weights,
                 collect_transitions=True,
             )
-            episodes.append(_episode_to_demo_dict(ep))
+            demo = _episode_to_demo_dict(ep)
+            demo["m"] = int(m)
+            demo["m_star"] = int(m)
+            demo["fleet_candidates_tried"] = len(candidates)
+            episodes.append(demo)
+            mstar[ep.instance_name] = int(m)
             LOGGER.info(
-                "Demo done %d/%d | %s | served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
+                "Demo done %d/%d | %s | m*=%d tried=%d served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
                 ji + 1,
                 len(jobs),
                 ep.instance_name,
+                m,
+                len(candidates),
                 ep.metrics["served_ratio"],
                 ep.metrics["feasible"],
                 ep.metrics["num_decisions"],
                 time.time() - t0,
             )
+            torch.save({"episodes": episodes, "mstar": mstar}, partial_path)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
         names = [str(getattr(j["instance"], "instance_name", "?")) for j in jobs]
         LOGGER.info(
-            "Demo generation parallel | workers=%d threads/worker=%d instances=%d lookahead=%s | %s",
+            "Demo generation parallel | workers=%d threads/worker=%d instances=%d lex=%s | %s",
             n_workers,
             tpw,
             len(jobs),
-            (config.get("expert") or {}).get("lookahead_depth", "?"),
+            bool((config.get("fleet_search") or {}).get("lexicographic")),
             ", ".join(names),
         )
-        # Preserve instance order for reproducibility of the .pt file.
         ordered: list[dict | None] = [None] * len(jobs)
         done = 0
         t_all = time.time()
@@ -516,11 +764,13 @@ def generate_demonstrations(config: dict) -> Path:
                 ep = fut.result()
                 ordered[idx] = ep
                 done += 1
+                mstar[ep["instance_name"]] = int(ep.get("m_star", ep.get("m", 0)))
                 LOGGER.info(
-                    "Demo done %d/%d | %s | served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
+                    "Demo done %d/%d | %s | m*=%s served=%.3f feas=%s decisions=%d | elapsed=%.1fs",
                     done,
                     len(jobs),
                     ep["instance_name"],
+                    ep.get("m_star", ep.get("m")),
                     ep["metrics"]["served_ratio"],
                     ep["metrics"]["feasible"],
                     ep["metrics"]["num_decisions"],
@@ -530,26 +780,47 @@ def generate_demonstrations(config: dict) -> Path:
         if len(episodes) != len(jobs):
             raise RuntimeError("Parallel demo generation lost episodes")
 
+    mstar_path = save_mstar_map(
+        config,
+        mstar,
+        meta={
+            "num_episodes": len(episodes),
+            "lexicographic": bool((config.get("fleet_search") or {}).get("lexicographic")),
+            "train_instances": list(meta.get("train_instances") or train_ds.names),
+        },
+    )
+    LOGGER.info("Wrote expert m* cache: %s (%d instances)", mstar_path, len(mstar))
+
     payload = {
         "meta": {
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "num_episodes": len(episodes),
             "train_instances": list(meta.get("train_instances") or train_ds.names),
             "config_expert": asdict(ExpertConfig.from_config(config)),
-            "charging_portions": portions,
+            "charging_portions": list(config["problem"]["charging_portions"]),
             "num_workers": n_workers,
+            "mstar_cache": str(mstar_path),
+            "lexicographic_fleet": bool((config.get("fleet_search") or {}).get("lexicographic")),
         },
         "episodes": episodes,
+        "mstar": mstar,
     }
     torch.save(payload, out_path)
     LOGGER.info("Wrote demonstrations: %s (%d episodes)", out_path, len(episodes))
+    if partial_path.is_file():
+        try:
+            partial_path.unlink()
+        except OSError:
+            pass
     summary_path = out_path.with_suffix(".summary.json")
     summary = {
         "num_episodes": len(episodes),
         "mean_served_ratio": float(np.mean([e["metrics"]["served_ratio"] for e in episodes])),
         "feasibility_rate": float(np.mean([1.0 if e["metrics"]["feasible"] else 0.0 for e in episodes])),
         "mean_objective": float(np.mean([e["metrics"]["objective"] for e in episodes])),
+        "mean_m_star": float(np.mean(list(mstar.values()))) if mstar else 0.0,
         "path": str(out_path),
+        "mstar_cache": str(mstar_path),
         "num_workers": n_workers,
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

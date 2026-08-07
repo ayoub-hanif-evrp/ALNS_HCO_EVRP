@@ -1,7 +1,6 @@
 """Feasibility-first exact-mask expert for warm-start demonstrations."""
 from __future__ import annotations
 
-import copy
 import json
 import time
 from dataclasses import dataclass, field
@@ -28,6 +27,12 @@ class ExpertConfig:
     lookahead_depth: int = 1
     max_customer_candidates: int = 15
     max_recharge_candidates: int = 5
+    # Cheap type-1 fix: only lookahead among critical-slack customers (not full set).
+    critical_lookahead_only: bool = True
+    max_critical_lookahead: int = 5
+    # After constructive pass, try a short reinsertion repair for leftover customers.
+    repair_unserved: bool = True
+    repair_max_attempts: int = 40
     debug_dump_dir: str = "outputs/expert_diagnostics"
 
     @classmethod
@@ -37,13 +42,20 @@ class ExpertConfig:
             lookahead_depth=int(raw.get("lookahead_depth", 1)),
             max_customer_candidates=int(raw.get("max_customer_candidates", 15)),
             max_recharge_candidates=int(raw.get("max_recharge_candidates", 5)),
+            critical_lookahead_only=bool(raw.get("critical_lookahead_only", True)),
+            max_critical_lookahead=int(raw.get("max_critical_lookahead", 5)),
+            repair_unserved=bool(raw.get("repair_unserved", True)),
+            repair_max_attempts=int(raw.get("repair_max_attempts", 40)),
             debug_dump_dir=str(raw.get("debug_dump_dir", "outputs/expert_diagnostics")),
         )
 
 
 @dataclass(order=True)
 class _CustomerRank:
+    # Type-1 (tight TW) needs earliest-due inside a slack bucket before follow-on count;
+    # otherwise the expert finishes vans while critical customers expire.
     slack_bucket: int
+    due_time: float
     neg_serviceable_after: float
     neg_continuation_margin: float
     unserviceable_risk: float
@@ -176,13 +188,39 @@ class FeasibilityFirstExpert:
 
         if legal_customers:
             ranked = self._rank_customers(env, active_ev, analysis, legal_customers)
+            # Type-1 Solomon-style: release this EV when it cannot serve the
+            # globally most urgent leftover and a fresh van is waiting.
+            if self._solomon_type1_should_release_ev(env, active_ev, analysis, legal_customers):
+                depot = int(env.instance.depot_index)
+                return PolicyAction(node=depot, charge_portion=None, depot_finish=True)
             if self.cfg.lookahead_depth > 0 and len(ranked) > 1:
-                best = self._lookahead_pick(
-                    env, active_ev, analysis,
-                    candidates=[self._customer_action(j) for j in ranked[: self.cfg.max_customer_candidates]],
-                )
-                if best is not None:
-                    return best
+                candidates = ranked
+                if self.cfg.critical_lookahead_only:
+                    # Restrict expensive deepcopy lookahead to urgent customers only.
+                    critical = []
+                    due = env.instance.due_time_array()
+                    ready = env.instance.ready_time_array()
+                    travel = env.instance.travel_time_matrix
+                    horizon = float(env.instance.nodes[env.instance.depot_index].due_time)
+                    for j in ranked:
+                        jj = int(j)
+                        arrival = float(active_ev.current_time + travel[active_ev.current_node, jj])
+                        slack = float(due[jj] - max(arrival, ready[jj]))
+                        if _slack_bucket(slack, horizon) <= _BUCKET_URGENT:
+                            critical.append(jj)
+                    if critical:
+                        candidates = critical[: max(1, int(self.cfg.max_critical_lookahead))]
+                    else:
+                        candidates = ranked[:1]  # no urgent → skip multi-candidate lookahead
+                else:
+                    candidates = ranked[: self.cfg.max_customer_candidates]
+                if len(candidates) > 1:
+                    best = self._lookahead_pick(
+                        env, active_ev, analysis,
+                        candidates=[self._customer_action(j) for j in candidates],
+                    )
+                    if best is not None:
+                        return best
             return self._customer_action(ranked[0])
 
         # Priority 2/3 — useful recharge (station or depot recharge).
@@ -340,6 +378,7 @@ class FeasibilityFirstExpert:
 
             ranks.append(_CustomerRank(
                 slack_bucket=_slack_bucket(slack, horizon),
+                due_time=float(due[jj]),
                 neg_serviceable_after=-float(serviceable_after),
                 neg_continuation_margin=-cont_margin,
                 unserviceable_risk=float(risk),
@@ -347,7 +386,14 @@ class FeasibilityFirstExpert:
                 travel_distance=float(dist[ev.current_node, jj]),
                 node=jj,
             ))
-        ranks.sort()
+        # Tight-TW pressure → earliest-due inside slack bucket (state features, not names).
+        from src.search.state_features import compute_construction_pressure
+
+        pressure = compute_construction_pressure(env)
+        if pressure.prefer_earliest_due:
+            ranks.sort(key=lambda r: (r.slack_bucket, r.due_time, r.service_start, r.travel_distance, r.node))
+        else:
+            ranks.sort()
         return [r.node for r in ranks]
 
     def _rank_recharges(
@@ -530,10 +576,309 @@ class FeasibilityFirstExpert:
                         return False
         gs = analysis.global_serviceability
         if gs is not None and int(getattr(gs, "globally_serviceable_customers_count", 0) or 0) > 0:
-            # Other EVs may still serve; finishing this EV is OK only if it cannot help.
+            # Prefer keeping this EV alive when the fleet still has work.
+            # Only finish if this EV itself has no useful recharge that enables customers.
+            ea = analysis.active_ev_analysis
+            if ea is not None:
+                for nr in (ea.recharge_node_results or {}).values():
+                    if nr is not None and int(getattr(nr, "enabled_customer_count", 0) or 0) > 0:
+                        return False
             return True
         return True
 
+    def bootstrap_type1_seeds(self, env, *, max_seeds: int | None = None) -> int:
+        """Send distinct idle EVs to the earliest-due customers (Solomon seed).
+
+        Returns number of customers seeded.
+        """
+        inst = env.instance
+        from src.search.state_features import compute_construction_pressure
+
+        pressure = compute_construction_pressure(env)
+        if not (pressure.prefer_earliest_due or pressure.prefer_fresh_ev_release):
+            return 0
+        depot = int(inst.depot_index)
+        due = inst.due_time_array()
+        idle = [
+            e for e in env.evs
+            if (not e.finished)
+            and int(e.current_node) == depot
+            and len(getattr(e, "route_nodes", []) or []) <= 1
+        ]
+        unserved = [int(c) for c in inst.customer_indices if not env.served_mask[int(c)]]
+        # Prefer earliest-due customers that are NOT directly legal from depot
+        # (these need a station preposition and are the ones left unserved historically).
+        hard = []
+        easy = []
+        if idle:
+            probe = env.analyze_decision(idle[0])
+            for c in unserved:
+                if bool(probe.final_node_mask[int(c)]):
+                    easy.append(int(c))
+                else:
+                    hard.append(int(c))
+        else:
+            hard, easy = [], list(unserved)
+        hard.sort(key=lambda j: (float(due[int(j)]), int(j)))
+        easy.sort(key=lambda j: (float(due[int(j)]), int(j)))
+        unserved = hard + easy
+        idle.sort(key=lambda e: int(e.ev_id))
+        # More seeds when fleet pressure / depot-illegal customers are high.
+        if pressure.fleet_pressure > 0.45 or pressure.customers_depot_illegal > 3:
+            default_cap = max(22, env.m // 2)
+        else:
+            default_cap = max(12, env.m // 3)
+        n_seed = int(max_seeds if max_seeds is not None else min(len(idle), len(unserved), default_cap))
+        # Ensure all hard (station-needed) early customers get a seed slot.
+        n_seed = min(len(idle), max(n_seed, min(len(hard) + 8, len(unserved))))
+        seeded = 0
+        for ev, cust in zip(idle[:n_seed], unserved[:n_seed]):
+            try:
+                cust = int(cust)
+                analysis = env.analyze_decision(ev)
+                if not bool(analysis.final_node_mask[cust]):
+                    # Need a station stop before a distant early-due customer.
+                    stations = list(inst.charging_station_indices)
+                    energy = inst.energy_matrix
+                    # Prefer stations that leave enough battery for cust → depot/station.
+                    stations.sort(
+                        key=lambda s: float(energy[int(s), cust]) + float(energy[cust, depot])
+                    )
+                    placed = False
+                    for s in stations[:12]:
+                        analysis = env.analyze_decision(ev)
+                        if not bool(analysis.final_node_mask[int(s)]):
+                            continue
+                        portions = []
+                        cm = (
+                            analysis.final_charge_masks.get(int(s))
+                            if analysis.final_charge_masks
+                            else None
+                        )
+                        if cm is not None:
+                            portions = [
+                                float(p)
+                                for p, ok in zip(
+                                    list(getattr(env, "charging_portions", None) or [0.25, 0.5, 0.75, 1.0]),
+                                    cm,
+                                )
+                                if ok
+                            ]
+                        if not portions:
+                            continue
+                        apply_policy_action(
+                            env,
+                            ev,
+                            PolicyAction(node=int(s), charge_portion=max(portions), depot_finish=False),
+                            mask_result=analysis.mask_result,
+                        )
+                        analysis = env.analyze_decision(ev)
+                        if bool(analysis.final_node_mask[cust]):
+                            apply_policy_action(
+                                env, ev, self._customer_action(cust), mask_result=analysis.mask_result,
+                            )
+                            seeded += 1
+                            placed = True
+                            break
+                        # Wrong station — this EV is now mid-route; stop seeding it.
+                        break
+                    if not placed:
+                        continue
+                    continue
+                apply_policy_action(
+                    env, ev, self._customer_action(cust), mask_result=analysis.mask_result,
+                )
+                seeded += 1
+            except Exception:
+                continue
+        return seeded
+
+    def select_acting_ev_for_type1(self, env) -> EVState | None:
+        """Prefer an idle depot EV that can serve the most urgent unserved customer.
+
+        Falls back to the env's default event-queue selection.
+        """
+        inst = env.instance
+        from src.search.state_features import compute_construction_pressure
+
+        pressure = compute_construction_pressure(env)
+        if not (pressure.prefer_earliest_due or pressure.prefer_fresh_ev_release):
+            return env.select_acting_ev()
+
+        due = inst.due_time_array()
+        unserved = [int(c) for c in inst.customer_indices if not env.served_mask[int(c)]]
+        if not unserved:
+            return env.select_acting_ev()
+        unserved.sort(key=lambda j: (float(due[int(j)]), int(j)))
+        urgent = int(unserved[0])
+        depot = int(inst.depot_index)
+
+        # Prefer unused/idle depot vans that can serve `urgent` now.
+        idle = [
+            e for e in env.evs
+            if (not e.finished)
+            and int(e.current_node) == depot
+            and len(getattr(e, "route_nodes", []) or []) <= 1
+        ]
+        for ev in idle:
+            try:
+                analysis = env.analyze_decision(ev)
+                if bool(analysis.final_node_mask[urgent]):
+                    return ev
+            except Exception:
+                continue
+
+        # Else any non-finished EV that can serve urgent.
+        for ev in env.evs:
+            if ev.finished:
+                continue
+            try:
+                analysis = env.analyze_decision(ev)
+                if bool(analysis.final_node_mask[urgent]):
+                    return ev
+            except Exception:
+                continue
+        return env.select_acting_ev()
+
+    def repair_unserved(self, env, *, max_attempts: int | None = None) -> int:
+        """Multi-EV earliest-due reinsertion of leftover customers.
+
+        For each attempt, pick the most urgent unserved customer and try every
+        reopenable EV (regret-lite). Falls back to recharge / open fresh depot
+        vans when no direct insertion exists.
+        """
+        if not bool(self.cfg.repair_unserved):
+            return 0
+        attempts = int(max_attempts if max_attempts is not None else self.cfg.repair_max_attempts)
+        served0 = int(env.num_served_customers)
+        depot = int(env.instance.depot_index)
+        depot_due = float(env.instance.nodes[depot].due_time)
+        due = env.instance.due_time_array()
+        travel = env.instance.travel_time_matrix
+        ready = env.instance.ready_time_array()
+
+        def _reopen_or_idle() -> list:
+            cands = []
+            for cand in env.evs:
+                at_depot = int(cand.current_node) == depot
+                if float(cand.current_time) + 1e-6 >= depot_due:
+                    continue
+                if cand.finished and at_depot:
+                    cands.append(cand)
+                elif (not cand.finished) and at_depot:
+                    cands.append(cand)
+            cands.sort(key=lambda e: (float(e.current_time), -float(e.remaining_battery)))
+            return cands
+
+        for _ in range(max(0, attempts)):
+            if env.num_served_customers >= env.instance.num_customers:
+                break
+            unserved = [
+                int(c) for c in env.instance.customer_indices if not env.served_mask[int(c)]
+            ]
+            if not unserved:
+                break
+            unserved.sort(key=lambda j: (float(due[int(j)]), int(j)))
+            target = int(unserved[0])
+
+            # Evaluate all reopenable / idle EVs for a legal insertion of `target`.
+            best = None  # (service_start, ev, analysis)
+            for cand in _reopen_or_idle():
+                was_finished = bool(cand.finished)
+                if was_finished:
+                    cand.finished = False
+                try:
+                    analysis = env.analyze_decision(cand)
+                    mask = analysis.final_node_mask
+                    if bool(mask[target]):
+                        arrival = float(cand.current_time + travel[cand.current_node, target])
+                        service_start = float(max(arrival, ready[target]))
+                        if best is None or service_start < best[0]:
+                            best = (service_start, cand, analysis)
+                    elif was_finished:
+                        cand.finished = True
+                except Exception:
+                    if was_finished:
+                        cand.finished = True
+
+            if best is not None:
+                _, ev, analysis = best
+                action = self._customer_action(target)
+                apply_policy_action(env, ev, action, mask_result=analysis.mask_result)
+                continue
+
+            # No EV can take the urgent customer: recharge the earliest idle EV,
+            # else finish one EV to rotate the acting set.
+            idle = _reopen_or_idle()
+            if not idle:
+                break
+            ev = idle[0]
+            ev.finished = False
+            analysis = env.analyze_decision(ev)
+            mask = analysis.final_node_mask
+            # Any other legal customer (next-best urgency).
+            legal = [
+                int(c) for c in unserved if bool(mask[int(c)])
+            ]
+            if legal:
+                legal.sort(key=lambda j: (float(due[int(j)]), int(j)))
+                apply_policy_action(
+                    env, ev, self._customer_action(legal[0]), mask_result=analysis.mask_result,
+                )
+                continue
+            recharge_actions = self._rank_recharges(env, ev, analysis)
+            if recharge_actions:
+                apply_policy_action(
+                    env, ev, recharge_actions[0], mask_result=analysis.mask_result,
+                )
+                continue
+            if env.try_auto_close_from_analysis(ev, analysis) is None:
+                if bool(mask[depot]):
+                    apply_policy_action(
+                        env,
+                        ev,
+                        PolicyAction(node=depot, charge_portion=None, depot_finish=True),
+                        mask_result=analysis.mask_result,
+                    )
+                else:
+                    ev.finished = True
+        return int(env.num_served_customers) - served0
+
+    def _solomon_type1_should_release_ev(
+        self,
+        env,
+        active_ev: EVState,
+        analysis: DecisionStateAnalysis,
+        legal_customers: list[int],
+    ) -> bool:
+        """True when current EV should finish so a fresher van can take urgent work."""
+        inst = env.instance
+        from src.search.state_features import compute_construction_pressure
+
+        pressure = compute_construction_pressure(env)
+        if not (pressure.prefer_earliest_due or pressure.prefer_fresh_ev_release):
+            return False
+        unused = [
+            e for e in env.evs
+            if (not e.finished)
+            and int(e.current_node) == int(inst.depot_index)
+            and int(e.ev_id) != int(active_ev.ev_id)
+            and len(getattr(e, "route_nodes", []) or []) <= 1
+        ]
+        if not unused:
+            return False
+        due = inst.due_time_array()
+        unserved = [int(c) for c in inst.customer_indices if not env.served_mask[int(c)]]
+        if not unserved:
+            return False
+        unserved.sort(key=lambda j: (float(due[int(j)]), int(j)))
+        urgent = int(unserved[0])
+        if urgent in set(int(c) for c in legal_customers):
+            return False
+        # Depot finish must be legal.
+        if analysis.depot_mode_mask is None or len(analysis.depot_mode_mask) < 2:
+            return False
+        return bool(analysis.depot_mode_mask[1])
     def _lookahead_pick(
         self,
         env,
@@ -556,36 +901,81 @@ class FeasibilityFirstExpert:
         return best_action
 
     def _lookahead_score(self, env, ev: EVState, action: PolicyAction) -> float:
-        """Copy env, apply action with exact masks, score resulting state."""
-        env2 = copy.deepcopy(env)
-        # Find matching EV by id in the copy.
-        ev2 = next(e for e in env2.evs if int(e.ev_id) == int(ev.ev_id))
-        analysis2 = env2.analyze_decision(ev2)
-        apply_policy_action(env2, ev2, action, mask_result=analysis2.mask_result)
-        # Re-analyze for score.
-        if not env2.is_done():
-            nxt = env2.select_acting_ev()
-            if nxt is not None:
-                a3 = env2.analyze_decision(nxt)
-                gs = a3.global_serviceability
-            else:
-                gs = env2.get_global_serviceability(force=False)
-        else:
-            gs = env2.get_global_serviceability(force=False)
-        served = float(env2.num_served_customers)
-        svc = float(getattr(gs, "globally_serviceable_customers_count", 0) or 0)
-        unsvc = float(getattr(gs, "globally_unserviceable_customers_count", 0) or 0)
-        batt = float(min((e.remaining_battery for e in env2.evs if not e.finished), default=0.0))
-        # Distance penalty light.
-        dist = float(sum(e.route_distance for e in env2.evs))
+        """Cheap 1-step score without deepcopy (critical for type-1 runtime).
+
+        Deepcopy+re-analyze was correct but too slow on 100-customer / high-m
+        instances. Approximate post-action state from travel/energy matrices and
+        follow-on counts already used by the ranking heuristics.
+        """
+        inst = env.instance
+        j = int(action.node)
+        travel = inst.travel_time_matrix
+        energy = inst.energy_matrix
+        dist_m = inst.distance_matrix
+        ready = inst.ready_time_array()
+        due = inst.due_time_array()
+        svc = inst.service_time_array()
+        demands = inst.demand_array()
+        depot = int(inst.depot_index)
+
+        served0 = float(env.num_served_customers)
+        unserved0 = float(inst.num_customers - env.num_served_customers)
+
+        # Depot finish / recharge: prefer enabling remaining work, not early close.
+        if bool(action.depot_finish):
+            return (
+                1000.0 * served0
+                - 200.0 * unserved0
+                - 0.001 * float(sum(e.route_distance for e in env.evs))
+            )
+
+        # Customer visit approximation.
+        if j in set(int(c) for c in inst.customer_indices):
+            arrival = float(ev.current_time + travel[ev.current_node, j])
+            service_start = float(max(arrival, ready[j]))
+            service_end = float(service_start + svc[j])
+            slack = float(due[j] - service_start)
+            batt_after = float(ev.remaining_battery - energy[ev.current_node, j])
+            cap_after = float(ev.remaining_capacity - demands[j])
+            legal = [
+                int(c) for c in inst.customer_indices
+                if (not env.served_mask[int(c)]) and int(c) != j
+            ]
+            follow_on, risk = self._count_follow_on_customers(
+                env, ev, j,
+                service_end=service_end,
+                batt_after=batt_after,
+                cap_after=cap_after,
+                legal_customers=legal,
+            )
+            e_dep = float(energy[j, depot])
+            t_dep = float(travel[j, depot])
+            depot_ok = (batt_after >= e_dep - 1e-6) and (
+                service_end + t_dep <= float(inst.nodes[depot].due_time) + 1e-6
+            )
+            return (
+                1000.0 * (served0 + 1.0)
+                + 10.0 * float(follow_on)
+                + 0.05 * float(slack)
+                + 0.01 * batt_after
+                - 50.0 * float(risk)
+                - 0.001 * float(dist_m[ev.current_node, j])
+                - (0.0 if depot_ok else 100.0)
+                - 5.0 * max(0.0, unserved0 - 1.0)
+            )
+
+        # Station / depot recharge: prefer actions that enable more customers.
+        arrival = float(ev.current_time + travel[ev.current_node, j])
+        batt_after = float(ev.remaining_battery - energy[ev.current_node, j])
+        portion = 0.0 if action.charge_portion is None else float(action.charge_portion)
+        # Soft battery fill proxy (exact charge dynamics live in the env).
+        batt_fill = batt_after + portion * float(getattr(inst, "battery_capacity", batt_after) or batt_after)
         return (
-            1000.0 * served
-            + 10.0 * svc
-            + 0.01 * batt
-            + 0.1 * float(getattr(gs, "mean_customer_slack", 0.0) or 0.0)
-            - 50.0 * unsvc
-            - 0.001 * dist
-            - 5.0 * float(getattr(env2, "num_customers", env2.instance.num_customers) - served)
+            1000.0 * served0
+            + 0.02 * float(batt_fill)
+            - 5.0 * unserved0
+            - 0.01 * float(arrival)
+            - 0.001 * float(dist_m[ev.current_node, j])
         )
 
 

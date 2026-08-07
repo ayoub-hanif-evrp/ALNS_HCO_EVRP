@@ -23,6 +23,33 @@ from src.env.cost import CostWeights
 from src.models.policy import TransformerEVRPTWPolicy
 from src.models.feature_specs import ARCHITECTURE_VERSION
 from src.training.ac_train import actor_critic_train_step, build_critics, critic_parameters
+
+
+def _encoder_param_names(policy) -> list[str]:
+    names = []
+    for name, _ in policy.named_parameters():
+        if name.startswith("node_encoder.") or name.startswith("ev_communication."):
+            names.append(name)
+    return names
+
+
+def set_policy_encoder_trainable(policy, trainable: bool) -> int:
+    """Freeze/unfreeze static node encoder (+ EV-comm) to reduce early RL drift."""
+    n = 0
+    for name, param in policy.named_parameters():
+        if name.startswith("node_encoder.") or name.startswith("ev_communication."):
+            if param.requires_grad != bool(trainable):
+                param.requires_grad = bool(trainable)
+                n += 1
+    return n
+
+
+def sync_encoder_freeze_for_update(policy, *, global_epoch: int, freeze_updates: int) -> bool:
+    """Return True if encoder is currently frozen for this update."""
+    freeze_updates = max(0, int(freeze_updates or 0))
+    should_freeze = freeze_updates > 0 and int(global_epoch) < freeze_updates
+    set_policy_encoder_trainable(policy, trainable=not should_freeze)
+    return should_freeze
 from src.training.actor_critic import RLConfig
 from src.training.config_validation import apply_safe_training_defaults, validate_training_config
 from src.training.cycle_summary import aggregate_cycle, dedupe_metric_rows
@@ -100,7 +127,18 @@ def _run_class_probes(
     out: dict[str, float] = {}
     policy.eval()
     for cls, instance in probes.items():
-        m = sample_fleet_size(instance, extra_margin, rng)
+        m = sample_fleet_size(
+            instance,
+            extra_margin,
+            rng,
+            fleet_cfg={
+                "extra_margin": extra_margin,
+                "tw_aware_floor": True,
+                "training_fleet_mode": "expert_mstar",
+                "target_customers_per_vehicle": 8,
+                "lexicographic": True,
+            },
+        )
         with torch.no_grad():
             result = run_episode(
                 instance, policy, m, weights,
@@ -276,7 +314,7 @@ def train(config: dict) -> dict:
     log_dataset_immutability(config, train_names)
 
     charging_portions = config["problem"]["charging_portions"]
-    weights = CostWeights.from_config(config["cost"])
+    weights = CostWeights.from_training_config(config)
     policy = build_policy(config, charging_portions).to(device)
     init_cfg = config.get("initialization") or {}
     if bool(init_cfg.get("load_actor", False)):
@@ -400,6 +438,9 @@ def train(config: dict) -> dict:
             macro_updates=bool(
                 (config.get("training") or {}).get("macro_class_updates", True)
             ),
+            type2_warmup_cycles=int(
+                (config.get("training") or {}).get("type2_warmup_cycles", 0) or 0
+            ),
         )
         epoch_schedule = len(sequential_schedule)
         updates_per_cycle = int(interleave_meta["updates_per_cycle"])
@@ -465,12 +506,25 @@ def train(config: dict) -> dict:
         LOGGER.info("Resumed from %s at epoch/update %d", resume_path, start_epoch)
 
     best_reward = -float("inf")
+    best_hierarchical: tuple[float, float, float] | None = None  # (-feas, -served, J)
     best_cycle_objective = float("inf")
     best_cycle_feasibility = -float("inf")
+    best_cycle_hierarchical: tuple[float, float, float] | None = None
+    cycles_without_improve = 0
+    early_stop_patience = int(tcfg.get("early_stop_patience_cycles", 0) or 0)
     checkpoint_every = int(tcfg.get("checkpoint_every", 0))
     min_decisions_warn = tcfg.get("min_decisions_warn")
     mismatch_warn = float(dbg.get("objective_mismatch_warn_threshold", 0.05))
     fail_on_mismatch = bool(dbg.get("fail_on_large_objective_mismatch", False))
+    best_metric = str(tcfg.get("best_checkpoint_metric", "hierarchical_j")).lower()
+    early_stopped = False
+
+    from src.evaluation.mstar_cache import load_mstar_map
+    mstar_map = load_mstar_map(config)
+    if mstar_map:
+        LOGGER.info("Loaded expert m* cache | %d instances", len(mstar_map))
+    fleet_cfg_train = dict(config.get("fleet_search") or {})
+    fleet_cfg_train["_mstar_map_cache"] = mstar_map
 
     cycle_rows: list[dict] = []
     cycle_logger = JsonlLogger(results_dir / "cycle_summaries.jsonl")
@@ -506,33 +560,54 @@ def train(config: dict) -> dict:
         demo_path = Path((config.get("demonstrations") or {}).get("input", "outputs/demonstrations/rc21_expert.pt"))
         if demo_path.is_file():
             demo_payload = torch.load(demo_path, map_location="cpu", weights_only=False)
-            bc_episodes = list(demo_payload.get("episodes") or [])
-            bc_instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names if n in train_ds.names}
-            LOGGER.info("BC regularization enabled | demos=%d from %s", len(bc_episodes), demo_path)
-            # One-time exact-mask cache: avoids re-running analyze_decision every update.
-            from src.training.behavior_cloning import build_bc_decision_cache
-            t_cache0 = time.perf_counter()
-            bc_decision_cache = build_bc_decision_cache(
-                bc_episodes,
-                bc_instance_by_name,
-                charging_portions=charging_portions,
-                environment_config=config.get("environment"),
-            )
-            bc_instance_embeddings = {
-                name: policy.encode(inst, device=device).detach()
-                for name, inst in bc_instance_by_name.items()
-                if any(s.instance_name == name for s in bc_decision_cache)
+            bc_instance_by_name = {
+                n: train_ds[train_ds.names.index(n)] for n in train_ds.names if n in train_ds.names
             }
-            LOGGER.info(
-                "BC-reg cache ready | decisions=%d embeddings=%d in %.1fs "
-                "(exact masks frozen; every_n=%s decay=%s batch_decisions=%s)",
-                len(bc_decision_cache),
-                len(bc_instance_embeddings),
-                time.perf_counter() - t_cache0,
-                bc_reg.get("every_n_updates", 1),
-                bc_reg.get("decay_updates", 200),
-                bc_reg.get("batch_decisions", 32),
-            )
+            cached = demo_payload.get("decisions")
+            if cached:
+                bc_decision_cache = list(cached)
+                bc_episodes = []
+                LOGGER.info(
+                    "BC regularization enabled | cached_decisions=%d from %s",
+                    len(bc_decision_cache), demo_path,
+                )
+            else:
+                bc_episodes = list(demo_payload.get("episodes") or [])
+                LOGGER.info(
+                    "BC regularization enabled | demos=%d from %s",
+                    len(bc_episodes), demo_path,
+                )
+                from src.training.behavior_cloning import build_bc_decision_cache
+                t_cache0 = time.perf_counter()
+                bc_decision_cache = build_bc_decision_cache(
+                    bc_episodes,
+                    bc_instance_by_name,
+                    charging_portions=charging_portions,
+                    environment_config=config.get("environment"),
+                )
+                LOGGER.info(
+                    "BC-reg cache built | decisions=%d in %.1fs",
+                    len(bc_decision_cache),
+                    time.perf_counter() - t_cache0,
+                )
+            if bc_decision_cache:
+                names_needed = {s.instance_name for s in bc_decision_cache}
+                bc_instance_embeddings = {
+                    name: policy.encode(inst, device=device).detach()
+                    for name, inst in bc_instance_by_name.items()
+                    if name in names_needed
+                }
+                LOGGER.info(
+                    "BC-reg cache ready | decisions=%d embeddings=%d "
+                    "(exact masks frozen; every_n=%s decay=%s batch_decisions=%s)",
+                    len(bc_decision_cache),
+                    len(bc_instance_embeddings),
+                    bc_reg.get("every_n_updates", 1),
+                    bc_reg.get("decay_updates", 200),
+                    bc_reg.get("batch_decisions", 32),
+                )
+            else:
+                LOGGER.warning("BC regularization enabled but decision cache is empty")
         else:
             LOGGER.warning("BC regularization enabled but demo file missing: %s", demo_path)
     from src.env.analysis_counters import (
@@ -572,6 +647,18 @@ def train(config: dict) -> dict:
         elif epoch == start_epoch:
             reset_cycle_counters()
 
+        freeze_updates = int(tcfg.get("freeze_encoder_updates", 0) or 0)
+        encoder_frozen = sync_encoder_freeze_for_update(
+            policy, global_epoch=epoch, freeze_updates=freeze_updates,
+        )
+        if epoch == start_epoch and freeze_updates > 0:
+            LOGGER.info(
+                "Encoder freeze for first %d RL updates (node_encoder + ev_communication)",
+                freeze_updates,
+            )
+        if encoder_frozen and epoch == freeze_updates - 1:
+            LOGGER.info("Encoder freeze ending after update %d", epoch)
+
         record = actor_critic_train_step(
             policy, value_critic, q_critic, optimizer, critic_optimizer,
             train_ds, batch_idx, weights, device, charging_portions,
@@ -592,6 +679,7 @@ def train(config: dict) -> dict:
             bc_regularization_cfg=(config.get("rl") or {}).get("bc_regularization"),
             bc_decision_cache=bc_decision_cache,
             bc_instance_embeddings=bc_instance_embeddings,
+            fleet_cfg=fleet_cfg_train,
         )
         record["epoch"] = epoch
         record["learning_rate"] = actor_lr
@@ -644,9 +732,19 @@ def train(config: dict) -> dict:
                 )
 
         batch_mean_reward = float(record.get("reward", 0.0))
-        improved = batch_mean_reward > best_reward
-        if improved:
-            best_reward = batch_mean_reward
+        j_now = float(record.get("cost", record.get("final_objective", record.get("macro_objective", 1e18))))
+        feas_now = float(record.get("feasibility_rate", record.get("macro_feasibility", 0.0)))
+        served_now = float(record.get("served_rate", record.get("macro_served_rate", 0.0)))
+        if best_metric in {"hierarchical_j", "j", "objective"}:
+            key = (-feas_now, -served_now, j_now)
+            improved = best_hierarchical is None or key < best_hierarchical
+            if improved:
+                best_hierarchical = key
+                best_reward = batch_mean_reward
+        else:
+            improved = batch_mean_reward > best_reward
+            if improved:
+                best_reward = batch_mean_reward
 
         jsonl.log(record)
         run_logger.log(record)
@@ -732,6 +830,7 @@ def train(config: dict) -> dict:
                 summary = aggregate_cycle(cycle_rows[-cycle_len:], cycle_id=int(cycle_num or 0))
                 c_obj = float(summary.get("mean_objective", float("inf")))
                 c_feas = float(summary.get("feasibility_rate", 0.0))
+                c_served = float(summary.get("mean_served_ratio", 0.0))
                 if c_obj < best_cycle_objective:
                     best_cycle_objective = c_obj
                     _save_checkpoint(
@@ -749,6 +848,40 @@ def train(config: dict) -> dict:
                         optimizer=optimizer, critic_optimizer=critic_optimizer,
                         amp_scaler=amp_scaler, rng=rng,
                         training_meta={"cycle": cycle_num, "feasibility_rate": c_feas, "phase": phase},
+                    )
+                # Hierarchical cycle metric (same order as best checkpoint): feas → served → J.
+                cycle_key = (-c_feas, -c_served, c_obj)
+                if best_cycle_hierarchical is None or cycle_key < best_cycle_hierarchical:
+                    best_cycle_hierarchical = cycle_key
+                    cycles_without_improve = 0
+                    _save_checkpoint(
+                        policy, config, Path(out_cfg["checkpoints"]) / "best.pt",
+                        value_critic=value_critic, q_critic=q_critic,
+                        optimizer=optimizer, critic_optimizer=critic_optimizer,
+                        amp_scaler=amp_scaler, rng=rng,
+                        training_meta={
+                            "cycle": cycle_num,
+                            "feasibility_rate": c_feas,
+                            "mean_served_ratio": c_served,
+                            "mean_objective": c_obj,
+                            "phase": phase,
+                            "source": "best_cycle_hierarchical",
+                        },
+                    )
+                    LOGGER.info(
+                        "cycle %d is new best | feas=%.3f served=%.3f J=%.1f",
+                        cycle_num, c_feas, c_served, c_obj,
+                    )
+                else:
+                    cycles_without_improve += 1
+                    LOGGER.info(
+                        "cycle %d no hierarchical improve (%d/%s) | feas=%.3f served=%.3f J=%.1f",
+                        cycle_num,
+                        cycles_without_improve,
+                        early_stop_patience or "∞",
+                        c_feas,
+                        c_served,
+                        c_obj,
                     )
                 dup = snapshot_for_log(get_cycle_counters())
                 dup_warn = expected_per_decision_ok(dup)
@@ -838,6 +971,33 @@ def train(config: dict) -> dict:
                     )
                 summary["analysis_counters"] = dup
                 cycle_logger.log(summary)
+
+                if (
+                    early_stop_patience > 0
+                    and cycles_without_improve >= early_stop_patience
+                ):
+                    best_path = Path(out_cfg["checkpoints"]) / "best.pt"
+                    LOGGER.info(
+                        "Early stopping after cycle %d | no hierarchical improve for %d cycles | restoring %s",
+                        cycle_num, cycles_without_improve, best_path,
+                    )
+                    if best_path.is_file():
+                        _restore_training_checkpoint(
+                            best_path,
+                            policy=policy,
+                            value_critic=value_critic,
+                            q_critic=q_critic,
+                            optimizer=None,
+                            critic_optimizer=None,
+                            amp_scaler=None,
+                            rng=rng,
+                            device=device,
+                        )
+                    early_stopped = True
+                    break
+
+    if early_stopped:
+        LOGGER.info("RL training stopped early; using best hierarchical checkpoint weights")
 
     _save_checkpoint(
         policy, config, Path(out_cfg["checkpoints"]) / "last.pt",
@@ -1170,11 +1330,25 @@ def _restore_training_checkpoint(
             norm_state.get("dynamic_continuous", {})
         )
     if ckpt.get("python_rng_state") is not None:
-        rng.setstate(ckpt["python_rng_state"])
+        try:
+            rng.setstate(ckpt["python_rng_state"])
+        except Exception as exc:
+            LOGGER.warning("Could not restore python RNG state: %s", exc)
     if ckpt.get("torch_rng_state") is not None:
-        torch.set_rng_state(ckpt["torch_rng_state"])
+        try:
+            state = ckpt["torch_rng_state"]
+            if not isinstance(state, torch.Tensor):
+                state = torch.as_tensor(bytearray(state), dtype=torch.uint8)
+            elif state.dtype != torch.uint8:
+                state = state.to(dtype=torch.uint8)
+            torch.set_rng_state(state.cpu())
+        except Exception as exc:
+            LOGGER.warning("Could not restore torch RNG state: %s", exc)
     if ckpt.get("cuda_rng_state") is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
+        try:
+            torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
+        except Exception as exc:
+            LOGGER.warning("Could not restore CUDA RNG state: %s", exc)
     meta = ckpt.get("training_meta") or {}
     if "resume_epoch" in meta:
         return int(meta["resume_epoch"])

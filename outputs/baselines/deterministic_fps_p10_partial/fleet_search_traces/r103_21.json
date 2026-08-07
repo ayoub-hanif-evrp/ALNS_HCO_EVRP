@@ -1,0 +1,93 @@
+[
+  {
+    "m": 34,
+    "attempt": 1,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "upper_bound_probe",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 34,
+    "distance": 3053.0370194911957,
+    "runtime": 316.85411519999616,
+    "failure_reason": null
+  },
+  {
+    "m": 33,
+    "attempt": 2,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "warm_from_m=34",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 33,
+    "distance": 2893.3155982494354,
+    "runtime": 5.153501800028607,
+    "failure_reason": null
+  },
+  {
+    "m": 33,
+    "attempt": 3,
+    "expert_variant": "regret",
+    "seed": 2,
+    "warm_start_source": "warm_from_m=34",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 33,
+    "distance": 2893.3155982494354,
+    "runtime": 4.199043600005098,
+    "failure_reason": null
+  },
+  {
+    "m": 32,
+    "attempt": 4,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "warm_from_m=33",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 32,
+    "distance": 2829.933044195175,
+    "runtime": 16.238829900044948,
+    "failure_reason": null
+  },
+  {
+    "m": 32,
+    "attempt": 5,
+    "expert_variant": "regret",
+    "seed": 2,
+    "warm_start_source": "warm_from_m=33",
+    "feasible": true,
+    "served": 100,
+    "used_vehicles": 32,
+    "distance": 2829.933044195175,
+    "runtime": 14.858536900021136,
+    "failure_reason": null
+  },
+  {
+    "m": 31,
+    "attempt": 6,
+    "expert_variant": "edf",
+    "seed": 0,
+    "warm_start_source": "warm_from_m=32",
+    "feasible": false,
+    "served": 99,
+    "used_vehicles": 31,
+    "distance": 2741.8921840190887,
+    "runtime": 52.20658310002182,
+    "failure_reason": "descent_failed"
+  },
+  {
+    "m": 31,
+    "attempt": 7,
+    "expert_variant": "regret",
+    "seed": 2,
+    "warm_start_source": "warm_from_m=32",
+    "feasible": false,
+    "served": 99,
+    "used_vehicles": 31,
+    "distance": 2741.8921840190887,
+    "runtime": 50.58330639998894,
+    "failure_reason": "descent_failed"
+  }
+]

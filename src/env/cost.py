@@ -33,6 +33,26 @@ class CostWeights:
     def from_config(cls, cost_cfg: dict) -> "CostWeights":
         return cls(**{k: float(v) for k, v in cost_cfg.items() if k in cls.__annotations__})
 
+    @classmethod
+    def from_training_config(cls, config: dict) -> "CostWeights":
+        """Paper ``cost`` overlayed by softened ``cost_train`` (RL gradients)."""
+        base = dict(config.get("cost") or {})
+        train = config.get("cost_train") or {}
+        for k, v in train.items():
+            if v is not None and k in cls.__annotations__:
+                base[k] = v
+        return cls.from_config(base)
+
+    @classmethod
+    def from_eval_config(cls, config: dict) -> "CostWeights":
+        """Paper ``cost`` overlayed by optional ``cost_eval`` (reporting)."""
+        base = dict(config.get("cost") or {})
+        ev = config.get("cost_eval") or {}
+        for k, v in ev.items():
+            if v is not None and k in cls.__annotations__:
+                base[k] = v
+        return cls.from_config(base)
+
 
 @dataclass
 class SolutionSummary:

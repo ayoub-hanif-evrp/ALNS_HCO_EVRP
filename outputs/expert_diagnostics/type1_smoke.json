@@ -1,0 +1,40 @@
+{
+  "mean_served": 1.0,
+  "feasibility_rate": 1.0,
+  "gate_pass": true,
+  "per_instance": [
+    {
+      "instance": "c101_21",
+      "m": 45,
+      "served_ratio": 1.0,
+      "feasible": true,
+      "unserved": 0,
+      "repair_served": 0,
+      "used_evs": 45,
+      "seconds": 72.4039542999817,
+      "objective": 56389.40523105705
+    },
+    {
+      "instance": "r101_21",
+      "m": 45,
+      "served_ratio": 1.0,
+      "feasible": true,
+      "unserved": 0,
+      "repair_served": 0,
+      "used_evs": 45,
+      "seconds": 76.61059789999854,
+      "objective": 49626.12578026629
+    },
+    {
+      "instance": "rc101_21",
+      "m": 45,
+      "served_ratio": 1.0,
+      "feasible": true,
+      "unserved": 0,
+      "repair_served": 0,
+      "used_evs": 45,
+      "seconds": 82.8590952999657,
+      "objective": 50516.84693629837
+    }
+  ]
+}

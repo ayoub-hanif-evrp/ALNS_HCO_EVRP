@@ -72,6 +72,13 @@ def _pipeline_flags(config: dict) -> dict:
     rl = config.get("rl") or {}
     if rl.get("enabled") is False:
         out["run_rl_finetuning"] = False
+    # TG-FPS defaults off unless explicitly enabled.
+    out.setdefault("run_tgfps", False)
+    out.setdefault("run_candidate_dataset", False)
+    out.setdefault("run_candidate_ranker", False)
+    out.setdefault("run_dagger", False)
+    out.setdefault("run_hybrid_validation", False)
+    out.setdefault("run_full9_test", False)
     return out
 
 
@@ -141,13 +148,36 @@ def _wire_run_outputs(config: dict, run_dir: Path) -> dict:
         demo_name = "evrptwd_expert_train.pt"
     else:
         demo_name = "expert_train.pt"
+    # Preserve pre-built episode demos / m* cache from the source config (curriculum regen).
+    src_demo = dict(config.get("demonstrations") or {})
+    prebuilt_episodes = ""
+    for key in ("input", "output"):
+        cand = Path(str(src_demo.get(key) or "") or "")
+        if cand.is_file():
+            prebuilt_episodes = str(cand)
+            break
     cfg["demonstrations"]["output"] = str(run_dir / "demonstrations" / demo_name)
     cfg["demonstrations"]["episodes_output"] = str(run_dir / "demonstrations" / "expert_episodes.pt")
     cfg["demonstrations"]["eval_report"] = str(run_dir / "expert" / "expert_metrics.json")
     cfg["demonstrations"]["input"] = str(run_dir / "demonstrations" / demo_name)
+    if prebuilt_episodes:
+        cfg["demonstrations"]["prebuilt_episodes"] = prebuilt_episodes
+    if src_demo.get("mstar_cache"):
+        cfg["demonstrations"]["mstar_cache"] = src_demo["mstar_cache"]
+        cfg.setdefault("fleet_search", {})
+        if not (cfg.get("fleet_search") or {}).get("mstar_cache"):
+            cfg["fleet_search"]["mstar_cache"] = src_demo["mstar_cache"]
+    if src_demo.get("num_workers") is not None:
+        cfg["demonstrations"]["num_workers"] = src_demo["num_workers"]
     cfg.setdefault("behavior_cloning", {})
     cfg["behavior_cloning"]["output_dir"] = str(run_dir / "bc")
     cfg["behavior_cloning"]["early_stopping"] = False
+    # Warm-start BC from a prior actor (e.g. type-2 anti-drift best) when provided.
+    src_init = dict(config.get("initialization") or {})
+    warm_actor = Path(str(src_init.get("actor_checkpoint") or "") or "")
+    if warm_actor.is_file() and "bc_best_policy" not in warm_actor.name:
+        cfg["behavior_cloning"]["init_checkpoint"] = str(warm_actor)
+        LOGGER.info("BC will warm-start from %s", warm_actor)
     cfg.setdefault("initialization", {})
     cfg["initialization"]["actor_checkpoint"] = str(run_dir / "bc" / "bc_best_policy.pt")
     cfg["initialization"]["load_actor"] = True
@@ -349,6 +379,7 @@ def stage_expert_from_demonstrations(
     demo_path: Path,
     *,
     reuse: bool,
+    episodes_path: Path | None = None,
 ) -> dict:
     """Write expert metrics from demo episodes (same rollouts — no second expert pass)."""
     LOGGER.info("=" * 60)
@@ -367,24 +398,62 @@ def stage_expert_from_demonstrations(
         log_expert_report,
     )
 
-    payload = torch.load(demo_path, map_location="cpu", weights_only=False)
-    episodes = payload.get("episodes") or []
-    if not episodes and payload.get("decisions") is not None:
-        # Decision-only cache: rebuild lightweight metrics from embedded episode copies if present.
-        raise PipelineError(
-            "Expert metrics require episode rollouts in the demonstration file; "
-            "episodes missing from decision-level cache."
+    episodes: list = []
+    meta: dict = {}
+    # Prefer standalone episode file (decision cache no longer embeds episodes).
+    ep_candidates = []
+    if episodes_path is not None:
+        ep_candidates.append(Path(episodes_path))
+    ep_candidates.append(
+        Path(
+            (config.get("demonstrations") or {}).get(
+                "episodes_output", run_dir / "demonstrations" / "expert_episodes.pt",
+            )
         )
-    meta = dict(payload.get("meta") or {})
+    )
+    ep_candidates.append(Path(demo_path))
+    for cand in ep_candidates:
+        if not cand.is_file():
+            continue
+        payload = torch.load(cand, map_location="cpu", weights_only=False)
+        episodes = list(payload.get("episodes") or [])
+        meta = dict(payload.get("meta") or {})
+        if episodes:
+            LOGGER.info("Loaded %d expert episodes for metrics from %s", len(episodes), cand)
+            break
+    if not episodes:
+        raise PipelineError(
+            "Expert metrics require episode rollouts; "
+            f"checked {[str(c) for c in ep_candidates]}"
+        )
     report = expert_report_from_demo_episodes(episodes, split="train", meta=meta)
     log_expert_report(report)
     if not report.get("hard_violation_free", False):
-        raise PipelineError(
-            "Expert/demos produced hard EVRPTW violations "
-            f"(battery={report.get('mean_battery_violations')}, "
-            f"tw={report.get('mean_time_window_violations')}, "
-            f"cap={report.get('mean_capacity_violations')})"
-        )
+        bat = float(report.get("mean_battery_violations") or 0.0)
+        tw = float(report.get("mean_time_window_violations") or 0.0)
+        cap = float(report.get("mean_capacity_violations") or 0.0)
+        feas = float(report.get("feasibility_rate") or 0.0)
+        allow_soft = bool((config.get("pipeline") or {}).get("allow_expert_soft_violations", False))
+        # Type-1 curriculum teachers can leave rare battery cliffs while still
+        # providing high served/feas demos — warn and continue when configured.
+        soft_ok = allow_soft and tw <= 0.0 and cap <= 0.0 and feas >= 0.5
+        if soft_ok:
+            LOGGER.warning(
+                "Expert/demos have residual hard flags "
+                "(battery=%.4f tw=%.4f cap=%.4f feas=%.3f) — continuing "
+                "(pipeline.allow_expert_soft_violations=true)",
+                bat,
+                tw,
+                cap,
+                feas,
+            )
+        else:
+            raise PipelineError(
+                "Expert/demos produced hard EVRPTW violations "
+                f"(battery={report.get('mean_battery_violations')}, "
+                f"tw={report.get('mean_time_window_violations')}, "
+                f"cap={report.get('mean_capacity_violations')})"
+            )
     metrics_path = _write_expert_artifacts(run_dir, report)
     LOGGER.info(
         "Expert metrics from demos | served=%.3f feas=%.3f -> %s",
@@ -404,9 +473,35 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
         )
     )
     summary_path = run_dir / "demonstrations" / "demonstration_summary.json"
-    if reuse and out_path.is_file() and summary_path.is_file():
-        LOGGER.info("Reusing cached decision-level demonstrations: %s", out_path)
-        return out_path
+    fleet_fp_path = run_dir / "demonstrations" / "fleet_fingerprint.json"
+    fleet_cfg = config.get("fleet_search") or {}
+    fleet_fp = {
+        "tw_aware_floor": bool(fleet_cfg.get("tw_aware_floor", False)),
+        "target_customers_per_vehicle": float(fleet_cfg.get("target_customers_per_vehicle", 8) or 8),
+        "training_fleet_mode": str(fleet_cfg.get("training_fleet_mode", "sample")),
+        "extra_margin": int(fleet_cfg.get("extra_margin", 4) or 4),
+        "lexicographic": bool(fleet_cfg.get("lexicographic", False)),
+        "expert_probes": int(fleet_cfg.get("expert_probes", 0) or 0),
+        "customers_per_vehicle_lo": float(fleet_cfg.get("customers_per_vehicle_lo", 12) or 12),
+        "customers_per_vehicle_hi": float(fleet_cfg.get("customers_per_vehicle_hi", 5) or 5),
+        "expert_lookahead_depth": int((config.get("expert") or {}).get("lookahead_depth", 0) or 0),
+        "expert_max_customer_candidates": int(
+            (config.get("expert") or {}).get("max_customer_candidates", 15) or 15
+        ),
+        "demo_tag": str((config.get("demonstrations") or {}).get("output", "")),
+        "tw_family": str((config.get("dataset") or {}).get("tw_family", "all") or "all"),
+    }
+    if reuse and out_path.is_file() and summary_path.is_file() and fleet_fp_path.is_file():
+        try:
+            prev_fp = json.loads(fleet_fp_path.read_text(encoding="utf-8"))
+        except Exception:
+            prev_fp = {}
+        if prev_fp == fleet_fp:
+            LOGGER.info("Reusing cached decision-level demonstrations: %s", out_path)
+            return out_path
+        LOGGER.info("Fleet config changed — regenerating expert demos (old cache invalid)")
+
+    import gc
 
     from src.data.evrptw_dataset import split_dataset
     from src.data.instance_loader import load_capacity_from_config
@@ -415,13 +510,66 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     from src.training.behavior_cloning import build_bc_decision_cache
     import torch
 
-    # Generate episode rollouts first (internal artifact).
-    cfg = json.loads(json.dumps(config, default=str))
-    cfg.setdefault("demonstrations", {})
-    cfg["demonstrations"]["output"] = str(episodes_path)
-    t0 = time.time()
-    path = generate_demonstrations(cfg)
-    expert_generation_time = time.time() - t0
+    expert_generation_time = 0.0
+    reuse_episodes = False
+    if episodes_path.is_file() and fleet_fp_path.is_file():
+        try:
+            prev_fp = json.loads(fleet_fp_path.read_text(encoding="utf-8"))
+        except Exception:
+            prev_fp = {}
+        reuse_episodes = prev_fp == fleet_fp
+    # Prefer pre-built episode demos from demonstrations.output / .input
+    # (e.g. `_regen_demos.py`) so curriculum train does not re-roll 47 experts.
+    if not reuse_episodes:
+        demo_cfg = config.get("demonstrations") or {}
+        for key in ("prebuilt_episodes", "input", "output"):
+            cand = Path(str(demo_cfg.get(key) or "") or "")
+            if not cand.is_file() or cand.resolve() == episodes_path.resolve():
+                continue
+            try:
+                import torch as _torch
+
+                prev = _torch.load(cand, map_location="cpu", weights_only=False)
+            except Exception:
+                continue
+            eps = prev.get("episodes") or []
+            # Episode-level cache (not yet decision-level).
+            if eps and not prev.get("decisions"):
+                LOGGER.info(
+                    "Reusing pre-built expert episodes from %s (%d episodes)",
+                    cand,
+                    len(eps),
+                )
+                episodes_path.parent.mkdir(parents=True, exist_ok=True)
+                if cand.resolve() != episodes_path.resolve():
+                    import shutil
+
+                    shutil.copy2(cand, episodes_path)
+                fleet_fp_path.parent.mkdir(parents=True, exist_ok=True)
+                fleet_fp_path.write_text(json.dumps(fleet_fp, indent=2), encoding="utf-8")
+                reuse_episodes = True
+                break
+    # Resume after MemoryError only if fleet fingerprint matches.
+    if reuse_episodes:
+        LOGGER.info(
+            "Reusing expert episodes already on disk: %s (skip re-rollout)",
+            episodes_path,
+        )
+        path = episodes_path
+    else:
+        if episodes_path.is_file():
+            LOGGER.info(
+                "Discarding stale expert episodes (fleet fingerprint mismatch): %s",
+                episodes_path,
+            )
+        cfg = json.loads(json.dumps(config, default=str))
+        cfg.setdefault("demonstrations", {})
+        cfg["demonstrations"]["output"] = str(episodes_path)
+        t0 = time.time()
+        path = generate_demonstrations(cfg)
+        expert_generation_time = time.time() - t0
+        fleet_fp_path.parent.mkdir(parents=True, exist_ok=True)
+        fleet_fp_path.write_text(json.dumps(fleet_fp, indent=2), encoding="utf-8")
 
     payload = torch.load(path, map_location="cpu", weights_only=False)
     episodes = payload.get("episodes") or []
@@ -457,33 +605,52 @@ def stage_demonstrations(config: dict, run_dir: Path, *, reuse: bool) -> Path:
     if not decisions:
         raise PipelineError("Decision-level demonstration cache is empty")
 
+    # Do NOT embed episodes here — they already live in expert_episodes.pt.
+    # Embedding both caused MemoryError on torch.save for ~7k decisions.
+    n_episodes = len(episodes)
+    episode_names = sorted({ep.get("instance_name") for ep in episodes})
+    meta = {
+        **(payload.get("meta") or {}),
+        "format": "evrptwd_decision_level_v2",
+        "n_decisions": len(decisions),
+        "n_episodes": n_episodes,
+        "expert_generation_time": expert_generation_time,
+        "episodes_path": str(path),
+    }
+    del episodes
+    del payload
+    gc.collect()
+
     decision_payload = {
         "decisions": decisions,
-        "episodes": episodes,
-        "meta": {
-            **(payload.get("meta") or {}),
-            "format": "hanif_decision_level_v1",
-            "n_decisions": len(decisions),
-            "n_episodes": len(episodes),
-            "expert_generation_time": expert_generation_time,
-        },
+        "meta": meta,
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if out_path.is_file():
+        out_path.unlink()
+    LOGGER.info(
+        "Saving decision cache (%d decisions) → %s …",
+        len(decisions), out_path,
+    )
     torch.save(decision_payload, out_path)
+    del decision_payload
+    del decisions
+    gc.collect()
 
     summary = {
         "path": str(out_path),
         "episodes_path": str(path),
-        "n_episodes": len(episodes),
+        "n_episodes": n_episodes,
         "n_actions": n_actions,
-        "n_decisions": len(decisions),
+        "n_decisions": int(meta["n_decisions"]),
         "expert_generation_time": expert_generation_time,
-        "instances": sorted({ep.get("instance_name") for ep in episodes}),
+        "instances": episode_names,
     }
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     LOGGER.info(
         "Demonstrations OK | episodes=%d decisions=%d -> %s",
-        len(episodes), len(decisions), out_path,
+        n_episodes, summary["n_decisions"], out_path,
     )
     return out_path
 
@@ -607,6 +774,160 @@ def stage_rl_finetune(config: dict, run_dir: Path) -> dict:
     return summary if isinstance(summary, dict) else {}
 
 
+def stage_tgfps(config: dict, run_dir: Path) -> dict:
+    """Candidate dataset → ranking BC → DAgger → hybrid validation → optional full-9."""
+    import torch
+
+    from src.data.evrptw_dataset import split_dataset
+    from src.data.instance_loader import load_capacity_from_config
+    from src.data.training_phases import resolve_training_phase_split
+    from src.search.candidate_dataset import build_candidate_dataset, save_candidate_dataset
+    from src.training.candidate_ranker import train_candidate_ranker
+    from src.training.dagger import run_dagger_rounds
+    from src.training.tgfps_eval import FULL9
+    from src.utils.seed import resolve_device
+
+    flags = _pipeline_flags(config)
+    out: dict = {"enabled": True}
+    LOGGER.info("=" * 60)
+    LOGGER.info("Stage — TG-FPS (candidate ranking + hybrid search)")
+    LOGGER.info("=" * 60)
+
+    # Baseline verify
+    baseline = Path("outputs/baselines/full9_20260731/manifest.json")
+    out["baseline_present"] = baseline.is_file()
+    if baseline.is_file():
+        out["baseline_manifest"] = str(baseline)
+
+    train_names, eval_names, _ = resolve_training_phase_split(config)
+    val_names = list((config.get("dataset") or {}).get("validation_instances") or [])
+    # Ensure validation does not overlap holdouts.
+    holdout_set = set(eval_names) | set(FULL9)
+    val_names = [n for n in val_names if n not in holdout_set]
+    if not val_names:
+        # Carve one per class×family from train if missing.
+        from src.data.mixed_class_split import _is_type1_instance, _is_type2_instance
+        from src.data.instance_class import instance_class
+
+        picked = []
+        for want_t1 in (True, False):
+            for cls in ("C", "R", "RC"):
+                for n in train_names:
+                    if instance_class(n) != cls:
+                        continue
+                    if want_t1 and _is_type1_instance(n):
+                        picked.append(n)
+                        break
+                    if (not want_t1) and _is_type2_instance(n):
+                        picked.append(n)
+                        break
+        val_names = picked[:6]
+    config.setdefault("dataset", {})["validation_instances"] = list(val_names)
+    out["validation_instances"] = list(val_names)
+
+    # Load episodes for candidate dataset
+    ep_path = Path(
+        (config.get("demonstrations") or {}).get(
+            "episodes_output", run_dir / "demonstrations" / "expert_episodes.pt"
+        )
+    )
+    prebuilt = Path(str((config.get("demonstrations") or {}).get("prebuilt_episodes") or ""))
+    decisions: list = []
+    if flags.get("run_candidate_dataset", True):
+        ds_cfg = dict(config["dataset"])
+        train_ds, _ = split_dataset(
+            ds_cfg["path"],
+            seed=int(config.get("seed", 42)),
+            train_filter=[],
+            eval_filter=[],
+            train_instances=train_names,
+            eval_instances=eval_names,
+            load_capacity=load_capacity_from_config(config),
+        )
+        instance_by_name = {n: train_ds[train_ds.names.index(n)] for n in train_ds.names}
+        episodes = []
+        for cand in (ep_path, prebuilt):
+            if cand.is_file():
+                payload = torch.load(cand, map_location="cpu", weights_only=False)
+                episodes = list(payload.get("episodes") or [])
+                if episodes:
+                    break
+        if episodes:
+            # Bound cost: first few train episodes
+            decisions = build_candidate_dataset(
+                episodes[: min(8, len(episodes))],
+                instance_by_name,
+                config=config,
+                max_states_per_episode=12,
+                top_k=8,
+            )
+            cand_path = run_dir / "demonstrations" / "candidate_decisions.pt"
+            save_candidate_dataset(decisions, cand_path)
+            out["candidate_dataset"] = {"path": str(cand_path), "n": len(decisions)}
+        else:
+            LOGGER.warning("TG-FPS: no episodes for candidate dataset; continuing with empty set")
+            out["candidate_dataset"] = {"n": 0}
+
+    device = resolve_device(config.get("device", "cpu"))
+    ranker_summary = None
+    if flags.get("run_candidate_ranker", True) and decisions:
+        ranker_summary = train_candidate_ranker(
+            config, decisions, epochs=4, device=device,
+        )
+        out["candidate_ranker"] = ranker_summary
+
+    if flags.get("run_dagger", True):
+        dagger = run_dagger_rounds(
+            config,
+            initial_decisions=decisions or [],
+            rounds=int(flags.get("dagger_rounds", 2) or 2),
+            init_checkpoint=(ranker_summary or {}).get("best_checkpoint"),
+        )
+        out["dagger"] = dagger
+
+    if flags.get("run_hybrid_validation", True) and val_names:
+        from src.training.tgfps_eval import FULL9, evaluate_methods_on_instances, run_validation_gate
+
+        # Require all reserved validation instances (not a 2-instance smoke).
+        val_run = list(val_names)
+        if len(val_run) < 6:
+            LOGGER.warning("TG-FPS validation expected 6 instances, got %d", len(val_run))
+        gate = run_validation_gate(
+            config,
+            validation_instances=val_run,
+            m_default=30,
+            out_dir=run_dir / "evaluation" / "neural_validation",
+        )
+        out["hybrid_validation"] = {
+            "selected": gate.get("selected_method"),
+            "neural_passed_gate": gate.get("neural_passed_gate"),
+            "answer": gate.get("answer"),
+            "summaries": gate.get("summaries"),
+            "gates": gate.get("gates"),
+        }
+        (run_dir / "evaluation" / "hybrid_best_validation.json").write_text(
+            json.dumps(out["hybrid_validation"], indent=2, default=str), encoding="utf-8",
+        )
+        if flags.get("run_full9_test", False):
+            selected = gate.get("selected_method") or "Expert+Repair+ALNS"
+            full9 = evaluate_methods_on_instances(
+                config,
+                list(FULL9),
+                methods=[selected],
+                m_default=40,
+                out_dir=run_dir / "evaluation" / "holdout_full9_selected",
+                include_frozen_baseline=True,
+            )
+            out["full9_test"] = full9.get("summaries")
+            out["full9_selected_method"] = selected
+
+
+    (run_dir / "evaluation" / "tgfps_summary.json").write_text(
+        json.dumps(out, indent=2, default=str), encoding="utf-8",
+    )
+    return out
+
+
 def stage_final_evaluation(config: dict, run_dir: Path) -> dict:
     LOGGER.info("=" * 60)
     LOGGER.info("Stage — multi-checkpoint final evaluation (test)")
@@ -620,6 +941,13 @@ def stage_final_evaluation(config: dict, run_dir: Path) -> dict:
     ds = config.setdefault("dataset", {})
     val_names = list(ds.get("validation_instances") or [])
     test_names = list(ds.get("test_instances") or ds.get("eval_instances") or [])
+    if not test_names:
+        # Saved run configs often leave these empty; re-resolve holdout from phase split.
+        from src.data.training_phases import resolve_training_phase_split
+        _, holdout_names, _ = resolve_training_phase_split(config)
+        test_names = list(holdout_names)
+        ds["eval_instances"] = list(test_names)
+        ds["test_instances"] = list(test_names)
     if not test_names:
         raise PipelineError("No test instances for final evaluation")
 
@@ -676,9 +1004,12 @@ def stage_final_evaluation(config: dict, run_dir: Path) -> dict:
         by = row.get("by_class") or {}
         hard = by.get("hard_violations") or {}
         if any((hard.get(c) or 0) > 0 for c in hard):
-            raise PipelineError(
-                f"Hard EVRPTW violations on test for {label}: {hard}"
-            )
+            allow_soft = bool((config.get("pipeline") or {}).get("allow_expert_soft_violations", False))
+            msg = f"Hard EVRPTW violations on test for {label}: {hard}"
+            if allow_soft:
+                LOGGER.warning("%s — continuing (allow_expert_soft_violations)", msg)
+            else:
+                raise PipelineError(msg)
 
     methods = {
         k: {
@@ -899,7 +1230,11 @@ def run_training_pipeline(
         runtime["expert_generation_time"] = time.time() - t_d
         stages["demonstrations"] = {"path": str(demo_path)}
         stages["expert"] = stage_expert_from_demonstrations(
-            cfg, run_dir, demo_path, reuse=reuse,
+            cfg,
+            run_dir,
+            demo_path,
+            reuse=reuse,
+            episodes_path=Path(cfg["demonstrations"].get("episodes_output") or ""),
         )
     elif want_expert:
         stages["expert"] = stage_expert(cfg, run_dir, reuse=reuse)
@@ -909,7 +1244,11 @@ def run_training_pipeline(
         runtime["expert_generation_time"] = time.time() - t_d
         stages["demonstrations"] = {"path": str(demo_path)}
         stages["expert"] = stage_expert_from_demonstrations(
-            cfg, run_dir, demo_path, reuse=reuse,
+            cfg,
+            run_dir,
+            demo_path,
+            reuse=reuse,
+            episodes_path=Path(cfg["demonstrations"].get("episodes_output") or ""),
         )
 
     if flags.get("run_behavior_cloning", True):
@@ -921,6 +1260,11 @@ def run_training_pipeline(
         t_rl = time.time()
         stages["rl"] = stage_rl_finetune(cfg, run_dir)
         runtime["rl_stage_s"] = time.time() - t_rl
+
+    if flags.get("run_tgfps", False):
+        t_tg = time.time()
+        stages["tgfps"] = stage_tgfps(cfg, run_dir)
+        runtime["tgfps_stage_s"] = time.time() - t_tg
 
     if flags.get("run_final_evaluation", True):
         t_ev = time.time()

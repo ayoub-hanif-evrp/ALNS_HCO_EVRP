@@ -118,6 +118,8 @@ def main() -> None:
             )
             raise SystemExit(1)
         resume_run = str(latest)
+    # Do NOT auto-resume incomplete Stage-1 runs for --stage all:
+    # fleet / dataset changes invalidate old expert_episodes.
 
     if args.rl_only:
         from src.training.train_rl import train

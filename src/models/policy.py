@@ -296,6 +296,8 @@ class TransformerEVRPTWPolicy(nn.Module):
         mask_result,
         state: DecisionState,
         mode: str = "sampling",
+        *,
+        logit_bias: tuple[float, float, float] | None = None,
     ) -> ActionOutput:
         device = node_embeddings.device
         decoder_context = state.decoder_context
@@ -305,6 +307,21 @@ class TransformerEVRPTWPolicy(nn.Module):
             state.candidate_embeddings,
             state.dynamic_candidate_embeddings,
         )
+        # Optional training inductive bias: (customer_bonus, station_penalty, depot_penalty).
+        if logit_bias is not None:
+            cust_b, st_pen, dep_pen = logit_bias
+            if cust_b or st_pen or dep_pen:
+                inst = env.instance
+                bias = torch.zeros_like(scores)
+                if cust_b:
+                    for j in inst.customer_indices:
+                        bias[int(j)] = float(cust_b)
+                if st_pen:
+                    for s in inst.charging_station_indices:
+                        bias[int(s)] = -float(st_pen)
+                if dep_pen:
+                    bias[int(inst.depot_index)] = -float(dep_pen)
+                scores = scores + bias
         mask_t = torch.tensor(state.feasible_mask, dtype=torch.bool, device=device)
         masked_scores = safe_mask_logits(scores, mask_t)
         log_probs = torch.log_softmax(masked_scores, dim=-1)
@@ -401,6 +418,29 @@ class TransformerEVRPTWPolicy(nn.Module):
             depot_mode_finish_prob=depot_mode_finish_prob,
             depot_mode_recharge_prob=depot_mode_recharge_prob,
         )
+
+    def score_candidates(
+        self,
+        env,
+        ev,
+        node_embeddings: torch.Tensor,
+        candidate_nodes: list[int],
+        *,
+        mask_result=None,
+    ) -> torch.Tensor:
+        """Score a bounded exact candidate set; returns logits shaped [K]."""
+        analysis = env.analyze_decision(ev) if mask_result is None else None
+        mr = mask_result if mask_result is not None else (analysis.mask_result if analysis else None)
+        if mr is None:
+            return torch.full((len(candidate_nodes),), NEG_INF, device=node_embeddings.device)
+        state = self.build_decision_state(env, ev, node_embeddings, mr)
+        scores = self.pointer.node_scores(
+            state.decoder_context,
+            state.candidate_embeddings,
+            state.dynamic_candidate_embeddings,
+        )
+        idx = torch.tensor(candidate_nodes, dtype=torch.long, device=scores.device)
+        return scores[idx]
 
     def _select_charge(self, env, ev, station, state: DecisionState, mode: str):
         from src.env.mask_errors import InvalidActionMaskError

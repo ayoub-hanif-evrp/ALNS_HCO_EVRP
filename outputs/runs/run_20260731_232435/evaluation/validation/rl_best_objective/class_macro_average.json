@@ -1,0 +1,37 @@
+{
+  "method": "model_greedy",
+  "per_class": {
+    "C": {
+      "objective_value": 159796.98333333334,
+      "feasible": 0.6666666666666666,
+      "served_ratio": 0.9166666666666666,
+      "total_distance": 3306.617333333333,
+      "used_EVs": 31.0,
+      "n_instances": 3
+    },
+    "R": {
+      "objective_value": 314164.1407666667,
+      "feasible": 0.3333333333333333,
+      "served_ratio": 0.7833333333333333,
+      "total_distance": 2372.3299666666667,
+      "used_EVs": 27.0,
+      "n_instances": 3
+    },
+    "RC": {
+      "objective_value": 194897.30753333334,
+      "feasible": 0.3333333333333333,
+      "served_ratio": 0.9066666666666666,
+      "total_distance": 3425.0473333333334,
+      "used_EVs": 30.0,
+      "n_instances": 3
+    }
+  },
+  "macro_average": {
+    "objective_value": 222952.81054444445,
+    "feasible": 0.4444444444444444,
+    "served_ratio": 0.8688888888888888,
+    "total_distance": 3034.6648777777777,
+    "used_EVs": 29.333333333333332,
+    "n_classes": 3
+  }
+}

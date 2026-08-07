@@ -260,31 +260,52 @@ def load_metrics_df(log_path: Path) -> pd.DataFrame:
     """Primary source: live JSONL; fall back to run/results CSVs if JSONL is empty."""
     rows = read_log(log_path)
     if rows:
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+    else:
+        df = pd.DataFrame()
+        log_path = Path(log_path)
+        candidates = [
+            log_path.parent.parent / "results" / "training_metrics.csv",
+            log_path.parent.parent / "metrics" / "rl_metrics.csv",
+            log_path.parent.parent / "rl" / "rl_metrics.csv",
+            log_path.parent / "rl_metrics.csv",
+            log_path.with_name("metrics.csv"),
+        ]
+        run_dir = log_path.parent.parent if log_path.parent.name == "logs" else None
+        if run_dir is not None:
+            candidates.extend([
+                run_dir / "metrics" / "rl_metrics.csv",
+                run_dir / "rl" / "rl_metrics.csv",
+                run_dir / "metrics.csv",
+            ])
+        for csv_path in candidates:
+            if csv_path.exists() and csv_path.stat().st_size > 0:
+                try:
+                    df = pd.read_csv(csv_path)
+                    break
+                except Exception:
+                    continue
+    if df.empty:
+        return df
+    # Paper enrichments for live charts (gap vs expert, m*).
+    try:
+        from src.training.training_dashboard import (
+            enrich_dataframe_paper_metrics,
+            load_expert_objective_map,
+        )
+        from src.evaluation.mstar_cache import load_mstar_map
 
-    log_path = Path(log_path)
-    candidates = [
-        log_path.parent.parent / "results" / "training_metrics.csv",
-        log_path.parent.parent / "metrics" / "rl_metrics.csv",
-        log_path.parent.parent / "rl" / "rl_metrics.csv",
-        log_path.parent / "rl_metrics.csv",
-        log_path.with_name("metrics.csv"),
-    ]
-    # If log lives under outputs/runs/run_*/logs/, also try sibling metrics.
-    run_dir = log_path.parent.parent if log_path.parent.name == "logs" else None
-    if run_dir is not None:
-        candidates.extend([
-            run_dir / "metrics" / "rl_metrics.csv",
-            run_dir / "rl" / "rl_metrics.csv",
-            run_dir / "metrics.csv",
-        ])
-    for csv_path in candidates:
-        if csv_path.exists() and csv_path.stat().st_size > 0:
-            try:
-                return pd.read_csv(csv_path)
-            except Exception:
-                continue
-    return pd.DataFrame()
+        run_dir = Path(log_path).parent.parent if Path(log_path).parent.name == "logs" else None
+        cfg: dict = {}
+        if run_dir is not None and (run_dir / "config.yaml").is_file():
+            from src.utils.config import load_config
+            cfg = load_config(str(run_dir / "config.yaml"))
+        expert_j = load_expert_objective_map(cfg, run_dir=run_dir)
+        mstar = load_mstar_map(cfg) if cfg else {}
+        df = enrich_dataframe_paper_metrics(df, expert_j=expert_j, mstar=mstar)
+    except Exception:
+        pass
+    return df
 
 
 def _latest_run_dir(outputs_root: Path) -> Path | None:

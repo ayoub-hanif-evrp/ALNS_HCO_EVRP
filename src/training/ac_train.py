@@ -95,6 +95,7 @@ def actor_critic_train_step(
     bc_regularization_cfg: dict | None = None,
     bc_decision_cache: list | None = None,
     bc_instance_embeddings: dict | None = None,
+    fleet_cfg: dict | None = None,
 ) -> dict:
     """One actor-critic update: separate critic passes then actor pass."""
     policy.train()
@@ -173,7 +174,9 @@ def actor_critic_train_step(
 
     for idx in batch_idx:
         instance = train_ds[idx]
-        m = sample_fleet_size(instance, extra_margin, rng)
+        m = sample_fleet_size(
+            instance, extra_margin, rng, fleet_cfg=fleet_cfg, mstar_map=(fleet_cfg or {}).get("_mstar_map_cache"),
+        )
 
         rollouts, _ = run_multi_sample_rollout_baseline(
             instance, policy, m, weights, rl_cfg,
@@ -371,6 +374,12 @@ def actor_critic_train_step(
                                 bc_regularization_cfg.get("batch_decisions", 32)
                             ),
                             rng=rng,
+                            loss_mode=str(
+                                bc_regularization_cfg.get("loss_mode", "ce")
+                            ),
+                            label_smoothing=float(
+                                bc_regularization_cfg.get("label_smoothing", 0.05)
+                            ),
                         )
                     elif bc_episodes and bc_instance_by_name:
                         bc_loss, _bc_m = bc_loss_on_demo_batch(

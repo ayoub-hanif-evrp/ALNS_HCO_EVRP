@@ -1,0 +1,8 @@
+{
+  "num_episodes": 100,
+  "mean_served_ratio": 0.9947999999999998,
+  "feasibility_rate": 0.81,
+  "mean_objective": 41133.051905661436,
+  "path": "outputs\\runs\\run_20260727_140451\\demonstrations\\expert_episodes.pt",
+  "num_workers": 23
+}

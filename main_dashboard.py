@@ -23,6 +23,12 @@ from src.webapp.dashboard_data import _latest_run_dir
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Training / warm-start pipeline dashboard.")
     parser.add_argument("--config", type=str, default="configs/train.yaml", help="Fallback config path.")
+    parser.add_argument(
+        "--run",
+        type=str,
+        default=None,
+        help="Run directory to load (e.g. outputs/runs/run_20260729_140606). Default: latest by mtime.",
+    )
     parser.add_argument("--port", type=int, default=8080, help="Port to serve the dashboard on.")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host/interface to bind.")
     return parser.parse_args()
@@ -32,8 +38,9 @@ args = parse_args()
 config = load_config(args.config)
 outputs_root = Path(config["outputs"]["root"])
 
-run_dir = _latest_run_dir(outputs_root)
+run_dir = Path(args.run) if args.run else _latest_run_dir(outputs_root)
 if run_dir is not None:
+    run_dir = Path(run_dir)
     # Prefer the run's own config when present.
     run_cfg = run_dir / "config.yaml"
     if run_cfg.is_file():
@@ -47,8 +54,10 @@ if run_dir is not None:
         run_dir / "rl" / "train_log.jsonl",
         outputs_root / "logs" / "train_log.jsonl",
     ]
-    log_path = next((p for p in candidates if p.is_file()), candidates[0])
-    print(f"Dashboard loading latest run: {run_dir}")
+    log_path = next((p for p in candidates if p.is_file() and p.stat().st_size > 0), None)
+    if log_path is None:
+        log_path = next((p for p in candidates if p.is_file()), candidates[0])
+    print(f"Dashboard loading run: {run_dir}")
     print(f"Metrics log: {log_path}")
 else:
     log_path = outputs_root / "logs" / "train_log.jsonl"
@@ -61,7 +70,7 @@ create_dashboard(
 )
 
 ui.run(
-    title="Transformer MARL · EVRP-TW-D Dashboard",
+    title="Transformer MARL · Schneider EVRPTW Dashboard",
     host=args.host,
     port=args.port,
     reload=False,

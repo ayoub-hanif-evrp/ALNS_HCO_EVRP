@@ -24,6 +24,41 @@ CURRICULUM_STAGES = (
 )
 
 
+def _is_type2_instance(name: str) -> bool:
+    """Solomon/Schneider type-2 (loose TW): c2xx / r2xx / rc2xx."""
+    n = str(name).lower()
+    if n.startswith("rc"):
+        return len(n) >= 3 and n[2] == "2"
+    if n.startswith("c") or n.startswith("r"):
+        return len(n) >= 2 and n[1] == "2"
+    return False
+
+
+def _is_type1_instance(name: str) -> bool:
+    n = str(name).lower()
+    if n.startswith("rc"):
+        return len(n) >= 3 and n[2] == "1"
+    if n.startswith("c") or n.startswith("r"):
+        return len(n) >= 2 and n[1] == "1"
+    return False
+
+
+def _apply_tw_family_filter(names: list[str], tw_family: str) -> list[str]:
+    fam = str(tw_family or "all").strip().lower()
+    if fam in {"", "all", "both", "type1+type2", "mix", "mixed"}:
+        return list(names)
+    if fam in {"type2", "t2", "loose", "2xx"}:
+        return [n for n in names if _is_type2_instance(n)]
+    if fam in {"type1", "t1", "tight", "1xx"}:
+        return [n for n in names if _is_type1_instance(n)]
+    # Curriculum alias: start from type-2 pool when explicitly requested.
+    if fam in {"curriculum", "type2_then_all", "type2_then_mix"}:
+        return list(names)
+    raise ValueError(
+        f"Unknown dataset.tw_family '{tw_family}'. Use all | type1 | type2 | mix."
+    )
+
+
 def _full_size_instances(dataset_path: str | Path, cls: str) -> list[str]:
     """Return ``_21`` instances of class C, R, or RC."""
     root = Path(dataset_path)
@@ -52,18 +87,22 @@ def resolve_mixed_c_r_rc_split(config: dict) -> dict:
     ds = config.get("dataset") or {}
     path = ds["path"]
     holdout_cfg = ds.get("holdout_by_class") or {}
+    tw_family = str(ds.get("tw_family", "all") or "all")
     train_by_class: dict[str, list[str]] = {}
     holdout_by_class: dict[str, list[str]] = {}
 
     for cls in ("C", "R", "RC"):
-        all_cls = _full_size_instances(path, cls)
-        holdout = list(holdout_cfg.get(cls) or [])
-        for name in holdout:
-            if name not in all_cls:
-                raise ValueError(f"Holdout '{name}' not found among {cls} _21 instances")
+        all_cls = _apply_tw_family_filter(_full_size_instances(path, cls), tw_family)
+        holdout = [n for n in list(holdout_cfg.get(cls) or []) if n in set(all_cls)]
+        missing = [n for n in list(holdout_cfg.get(cls) or []) if n not in set(all_cls)]
+        if missing and tw_family.lower() in {"all", "", "both"}:
+            raise ValueError(f"Holdout '{missing}' not found among {cls} _21 instances")
         train = sorted(n for n in all_cls if n not in set(holdout))
         if not train:
-            raise ValueError(f"No training instances left for class {cls}")
+            raise ValueError(
+                f"No training instances left for class {cls} "
+                f"(tw_family={tw_family})"
+            )
         train_by_class[cls] = train
         holdout_by_class[cls] = sorted(holdout)
 
@@ -75,11 +114,13 @@ def resolve_mixed_c_r_rc_split(config: dict) -> dict:
 
     meta = {
         "curriculum_stage": "mixed_c_r_rc",
+        "tw_family": tw_family,
         "train_counts": {k: len(v) for k, v in train_by_class.items()},
         "holdout_counts": {k: len(v) for k, v in holdout_by_class.items()},
     }
     LOGGER.info(
-        "Mixed C/R/RC split | train C=%d R=%d RC=%d | holdout C=%d R=%d RC=%d",
+        "Mixed C/R/RC split | tw_family=%s | train C=%d R=%d RC=%d | holdout C=%d R=%d RC=%d",
+        tw_family,
         meta["train_counts"]["C"], meta["train_counts"]["R"], meta["train_counts"]["RC"],
         meta["holdout_counts"]["C"], meta["holdout_counts"]["R"], meta["holdout_counts"]["RC"],
     )

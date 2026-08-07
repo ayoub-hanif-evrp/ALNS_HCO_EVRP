@@ -1,0 +1,1995 @@
+{
+  "instance_name": "c104_21",
+  "feasible": true,
+  "num_used_evs": 31,
+  "num_served_customers": 100,
+  "routes": [
+    {
+      "ev_id": 0,
+      "route_nodes": [
+        0,
+        48,
+        67,
+        58,
+        13,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C27",
+        "C46",
+        "C37",
+        "S12",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        17.1172,
+        374.1896,
+        493.3101,
+        590.5902,
+        890.4208
+      ],
+      "departure_times": [
+        0.0,
+        353.0,
+        464.1896,
+        583.3101,
+        843.8483,
+        890.4208
+      ],
+      "battery_levels": [
+        79.69,
+        62.5728,
+        41.3831,
+        12.2627,
+        79.69,
+        33.1175
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        60.0,
+        40.0,
+        40.0,
+        40.0
+      ],
+      "charging_actions": [
+        {
+          "node": 13,
+          "portion": 1.0,
+          "charged_energy": 74.70741319656372,
+          "charging_time": 253.258130736351,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 121.2799,
+      "duration": 890.4208,
+      "waiting_time": 245.8828,
+      "charging_time": 253.2581,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 1,
+      "route_nodes": [
+        0,
+        95,
+        83,
+        85,
+        65,
+        16,
+        111,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C74",
+        "C62",
+        "C64",
+        "C44",
+        "S15",
+        "C90",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        19.8494,
+        171.0,
+        266.3852,
+        372.3852,
+        469.4562,
+        675.2729,
+        785.8884
+      ],
+      "departure_times": [
+        0.0,
+        168.0,
+        261.0,
+        356.3852,
+        462.3852,
+        643.3824,
+        765.2729,
+        785.8884
+      ],
+      "battery_levels": [
+        79.69,
+        59.8406,
+        56.8406,
+        51.4554,
+        35.4554,
+        79.69,
+        47.7996,
+        27.184
+      ],
+      "remaining_capacities": [
+        100.0,
+        50.0,
+        30.0,
+        20.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [
+        {
+          "node": 16,
+          "portion": 1.0,
+          "charged_energy": 51.30566644668579,
+          "charging_time": 173.92620925426485,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 103.8116,
+      "duration": 785.8884,
+      "waiting_time": 58.1506,
+      "charging_time": 173.9262,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 2,
+      "route_nodes": [
+        0,
+        25,
+        27,
+        109,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C4",
+        "C6",
+        "C88",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        18.1108,
+        676.2361,
+        792.8067,
+        909.7326
+      ],
+      "departure_times": [
+        0.0,
+        674.0,
+        766.2361,
+        882.8067,
+        909.7326
+      ],
+      "battery_levels": [
+        79.69,
+        61.5792,
+        59.3432,
+        32.7725,
+        5.8467
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        70.0,
+        40.0,
+        40.0
+      ],
+      "charging_actions": [],
+      "distance": 73.8433,
+      "duration": 909.7326,
+      "waiting_time": 565.8892,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 3,
+      "route_nodes": [
+        0,
+        64,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C43",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        16.5529,
+        895.5529
+      ],
+      "departure_times": [
+        0.0,
+        879.0,
+        895.5529
+      ],
+      "battery_levels": [
+        79.69,
+        63.1371,
+        46.5841
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 33.1059,
+      "duration": 895.5529,
+      "waiting_time": 772.4471,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 4,
+      "route_nodes": [
+        0,
+        31,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C10",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        16.7631,
+        885.7631
+      ],
+      "departure_times": [
+        0.0,
+        869.0,
+        885.7631
+      ],
+      "battery_levels": [
+        79.69,
+        62.9269,
+        46.1639
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 33.5261,
+      "duration": 885.7631,
+      "waiting_time": 762.2369,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 5,
+      "route_nodes": [
+        0,
+        70,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C49",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        19.2094,
+        1120.2094
+      ],
+      "departure_times": [
+        0.0,
+        1101.0,
+        1120.2094
+      ],
+      "battery_levels": [
+        79.69,
+        60.4806,
+        41.2713
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 38.4187,
+      "duration": 1120.2094,
+      "waiting_time": 991.7906,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 6,
+      "route_nodes": [
+        0,
+        29,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C8",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        18.1108,
+        1165.1108
+      ],
+      "departure_times": [
+        0.0,
+        1147.0,
+        1165.1108
+      ],
+      "battery_levels": [
+        79.69,
+        61.5792,
+        43.4685
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        80.0
+      ],
+      "charging_actions": [],
+      "distance": 36.2215,
+      "duration": 1165.1108,
+      "waiting_time": 1038.8892,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 7,
+      "route_nodes": [
+        0,
+        82,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C61",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        22.3607,
+        1092.3607
+      ],
+      "departure_times": [
+        0.0,
+        1070.0,
+        1092.3607
+      ],
+      "battery_levels": [
+        79.69,
+        57.3293,
+        34.9686
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 44.7214,
+      "duration": 1092.3607,
+      "waiting_time": 957.6393,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 8,
+      "route_nodes": [
+        0,
+        80,
+        78,
+        61,
+        63,
+        16,
+        112,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C59",
+        "C57",
+        "C40",
+        "C42",
+        "S15",
+        "C91",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        35.0571,
+        158.0,
+        263.8114,
+        356.6398,
+        452.7226,
+        697.9607,
+        810.3214
+      ],
+      "departure_times": [
+        0.0,
+        156.0,
+        248.0,
+        353.8114,
+        446.6398,
+        662.1557,
+        787.9607,
+        810.3214
+      ],
+      "battery_levels": [
+        79.69,
+        44.6329,
+        42.6329,
+        26.8215,
+        23.9931,
+        79.69,
+        43.885,
+        21.5243
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        50.0,
+        40.0,
+        20.0,
+        20.0,
+        10.0,
+        10.0
+      ],
+      "charging_actions": [
+        {
+          "node": 16,
+          "portion": 1.0,
+          "charged_energy": 61.779672384262085,
+          "charging_time": 209.43308938264846,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 119.9454,
+      "duration": 810.3214,
+      "waiting_time": 30.9429,
+      "charging_time": 209.4331,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 9,
+      "route_nodes": [
+        0,
+        76,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C55",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        35.0571,
+        1030.0571
+      ],
+      "departure_times": [
+        0.0,
+        995.0,
+        1030.0571
+      ],
+      "battery_levels": [
+        79.69,
+        44.6329,
+        9.5758
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 70.1142,
+      "duration": 1030.0571,
+      "waiting_time": 869.9429,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 10,
+      "route_nodes": [
+        0,
+        33,
+        34,
+        38,
+        39,
+        40,
+        8,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C12",
+        "C13",
+        "C17",
+        "C18",
+        "C19",
+        "S7",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        38.0789,
+        276.4403,
+        370.4403,
+        463.4403,
+        558.4403,
+        656.4403,
+        923.2022
+      ],
+      "departure_times": [
+        0.0,
+        266.0,
+        366.4403,
+        460.4403,
+        553.4403,
+        648.4403,
+        888.7203,
+        923.2022
+      ],
+      "battery_levels": [
+        79.69,
+        41.6111,
+        31.1708,
+        27.1708,
+        24.1708,
+        19.1708,
+        79.69,
+        45.2081
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        50.0,
+        30.0,
+        10.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [
+        {
+          "node": 8,
+          "portion": 1.0,
+          "charged_energy": 68.51917171478271,
+          "charging_time": 232.2799921131134,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 103.0011,
+      "duration": 923.2022,
+      "waiting_time": 137.9211,
+      "charging_time": 232.28,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 11,
+      "route_nodes": [
+        0,
+        120,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C99",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        33.541,
+        959.541
+      ],
+      "departure_times": [
+        0.0,
+        926.0,
+        959.541
+      ],
+      "battery_levels": [
+        79.69,
+        46.149,
+        12.608
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [],
+      "distance": 67.082,
+      "duration": 959.541,
+      "waiting_time": 802.459,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 12,
+      "route_nodes": [
+        0,
+        117,
+        116,
+        119,
+        22,
+        30,
+        6,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C96",
+        "C95",
+        "C98",
+        "C1",
+        "C9",
+        "S5",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        36.0555,
+        269.0,
+        365.4031,
+        470.1679,
+        567.4481,
+        669.11,
+        965.1393
+      ],
+      "departure_times": [
+        0.0,
+        267.0,
+        359.0,
+        455.4031,
+        560.1679,
+        657.4481,
+        934.0909,
+        965.1393
+      ],
+      "battery_levels": [
+        79.69,
+        43.6345,
+        41.6345,
+        35.2314,
+        20.4665,
+        13.1864,
+        79.69,
+        48.6417
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        60.0,
+        40.0,
+        30.0,
+        20.0,
+        20.0,
+        20.0
+      ],
+      "charging_actions": [
+        {
+          "node": 6,
+          "portion": 1.0,
+          "charged_energy": 78.16547203063965,
+          "charging_time": 264.9809501838684,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 109.2138,
+      "duration": 965.1393,
+      "waiting_time": 140.9445,
+      "charging_time": 264.981,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 13,
+      "route_nodes": [
+        0,
+        54,
+        52,
+        12,
+        81,
+        17,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C33",
+        "C31",
+        "S11",
+        "C60",
+        "S16",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        33.5261,
+        450.3852,
+        545.3852,
+        728.3032,
+        832.621,
+        954.4314
+      ],
+      "departure_times": [
+        0.0,
+        445.0,
+        540.3852,
+        694.2444,
+        818.3032,
+        914.6193,
+        954.4314
+      ],
+      "battery_levels": [
+        79.69,
+        46.1639,
+        40.7787,
+        79.69,
+        45.6312,
+        55.5017,
+        15.6896
+      ],
+      "remaining_capacities": [
+        100.0,
+        60.0,
+        40.0,
+        40.0,
+        20.0,
+        20.0,
+        20.0
+      ],
+      "charging_actions": [
+        {
+          "node": 12,
+          "portion": 1.0,
+          "charged_energy": 43.91127252578735,
+          "charging_time": 148.85921386241913,
+          "charging_price": 0.0
+        },
+        {
+          "node": 17,
+          "portion": 0.5,
+          "charged_energy": 24.188297271728516,
+          "charging_time": 81.99832775115966,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 132.0999,
+      "duration": 954.4314,
+      "waiting_time": 321.4739,
+      "charging_time": 230.8575,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 14,
+      "route_nodes": [
+        0,
+        75,
+        17,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C54",
+        "S16",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        40.05,
+        906.0828,
+        984.9923
+      ],
+      "departure_times": [
+        0.0,
+        900.0,
+        945.1803,
+        984.9923
+      ],
+      "battery_levels": [
+        79.69,
+        39.64,
+        45.0905,
+        5.2784
+      ],
+      "remaining_capacities": [
+        100.0,
+        60.0,
+        60.0,
+        60.0
+      ],
+      "charging_actions": [
+        {
+          "node": 17,
+          "portion": 0.25,
+          "charged_energy": 11.533182859420776,
+          "charging_time": 39.09748989343643,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 85.9448,
+      "duration": 984.9923,
+      "waiting_time": 769.95,
+      "charging_time": 39.0975,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 15,
+      "route_nodes": [
+        0,
+        37,
+        35,
+        36,
+        8,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C16",
+        "C14",
+        "C15",
+        "S7",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        40.3113,
+        450.0,
+        545.3852,
+        638.3852,
+        844.728
+      ],
+      "departure_times": [
+        0.0,
+        448.0,
+        540.0,
+        635.3852,
+        810.2461,
+        844.728
+      ],
+      "battery_levels": [
+        79.69,
+        39.3787,
+        37.3787,
+        31.9935,
+        79.69,
+        45.2081
+      ],
+      "remaining_capacities": [
+        100.0,
+        60.0,
+        50.0,
+        10.0,
+        10.0,
+        10.0
+      ],
+      "charging_actions": [
+        {
+          "node": 8,
+          "portion": 1.0,
+          "charged_energy": 50.69645166397095,
+          "charging_time": 171.86097114086152,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 85.1783,
+      "duration": 844.728,
+      "waiting_time": 317.6887,
+      "charging_time": 171.861,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 16,
+      "route_nodes": [
+        0,
+        121,
+        106,
+        2,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C100",
+        "C85",
+        "S1",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        38.0789,
+        862.178,
+        961.612,
+        1122.9685
+      ],
+      "departure_times": [
+        0.0,
+        834.0,
+        952.178,
+        1089.908,
+        1122.9685
+      ],
+      "battery_levels": [
+        79.69,
+        41.6111,
+        13.4331,
+        41.8446,
+        8.784
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        50.0,
+        50.0,
+        50.0
+      ],
+      "charging_actions": [
+        {
+          "node": 2,
+          "portion": 0.5,
+          "charged_energy": 37.845425605773926,
+          "charging_time": 128.2959928035736,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 108.7514,
+      "duration": 1122.9685,
+      "waiting_time": 705.9211,
+      "charging_time": 128.296,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 17,
+      "route_nodes": [
+        0,
+        56,
+        14,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C35",
+        "S13",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        38.0789,
+        766.095,
+        935.6496
+      ],
+      "departure_times": [
+        0.0,
+        745.0,
+        916.5446,
+        935.6496
+      ],
+      "battery_levels": [
+        79.69,
+        41.6111,
+        64.8965,
+        45.7916
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        90.0,
+        90.0
+      ],
+      "charging_actions": [
+        {
+          "node": 14,
+          "portion": 0.75,
+          "charged_energy": 44.38041543960571,
+          "charging_time": 150.44960834026338,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 78.2789,
+      "duration": 935.6496,
+      "waiting_time": 616.9211,
+      "charging_time": 150.4496,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 18,
+      "route_nodes": [
+        0,
+        59,
+        13,
+        77,
+        17,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C38",
+        "S12",
+        "C56",
+        "S16",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        41.2311,
+        567.3852,
+        781.2174,
+        881.2174,
+        1032.5659
+      ],
+      "departure_times": [
+        0.0,
+        562.0,
+        725.4142,
+        871.2174,
+        992.7538,
+        1032.5659
+      ],
+      "battery_levels": [
+        79.69,
+        38.4589,
+        79.69,
+        23.8868,
+        46.7884,
+        6.9763
+      ],
+      "remaining_capacities": [
+        100.0,
+        70.0,
+        70.0,
+        40.0,
+        40.0,
+        40.0
+      ],
+      "charging_actions": [
+        {
+          "node": 13,
+          "portion": 1.0,
+          "charged_energy": 46.61622095108032,
+          "charging_time": 158.02898902416229,
+          "charging_price": 0.0
+        },
+        {
+          "node": 17,
+          "portion": 0.5,
+          "charged_energy": 32.90161323547363,
+          "charging_time": 111.53646886825561,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 152.2315,
+      "duration": 1032.5659,
+      "waiting_time": 430.7689,
+      "charging_time": 269.5655,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 19,
+      "route_nodes": [
+        0,
+        118,
+        23,
+        4,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C97",
+        "C2",
+        "S3",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        40.3113,
+        756.2132,
+        859.6668,
+        1019.4044
+      ],
+      "departure_times": [
+        0.0,
+        735.0,
+        846.2132,
+        986.7547,
+        1019.4044
+      ],
+      "battery_levels": [
+        79.69,
+        39.3787,
+        18.1655,
+        42.2009,
+        9.5513
+      ],
+      "remaining_capacities": [
+        100.0,
+        70.0,
+        40.0,
+        40.0,
+        40.0
+      ],
+      "charging_actions": [
+        {
+          "node": 4,
+          "portion": 0.5,
+          "charged_energy": 37.4890570640564,
+          "charging_time": 127.08790344715119,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 107.6278,
+      "duration": 1019.4044,
+      "waiting_time": 604.6887,
+      "charging_time": 127.0879,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 20,
+      "route_nodes": [
+        0,
+        103,
+        104,
+        105,
+        107,
+        108,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C82",
+        "C83",
+        "C84",
+        "C86",
+        "C87",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        35.3553,
+        552.0,
+        645.6056,
+        740.6056,
+        831.6056,
+        947.1006
+      ],
+      "departure_times": [
+        0.0,
+        549.0,
+        642.0,
+        735.6056,
+        830.6056,
+        921.6056,
+        947.1006
+      ],
+      "battery_levels": [
+        79.69,
+        44.3347,
+        41.3347,
+        37.7291,
+        32.7291,
+        31.7291,
+        6.234
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        70.0,
+        50.0,
+        40.0,
+        20.0,
+        20.0
+      ],
+      "charging_actions": [],
+      "distance": 73.456,
+      "duration": 947.1006,
+      "waiting_time": 423.6447,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 21,
+      "route_nodes": [
+        0,
+        113,
+        114,
+        115,
+        5,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C92",
+        "C93",
+        "C94",
+        "S4",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        44.2041,
+        551.0,
+        644.0,
+        742.0623,
+        887.7291
+      ],
+      "departure_times": [
+        0.0,
+        549.0,
+        641.0,
+        734.0,
+        839.1287,
+        887.7291
+      ],
+      "battery_levels": [
+        79.69,
+        35.4859,
+        33.4859,
+        30.4859,
+        51.0568,
+        2.4564
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        40.0,
+        30.0,
+        30.0,
+        30.0
+      ],
+      "charging_actions": [
+        {
+          "node": 5,
+          "portion": 0.5,
+          "charged_energy": 28.633164405822754,
+          "charging_time": 97.06642733573914,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 105.8667,
+      "duration": 887.7291,
+      "waiting_time": 414.7959,
+      "charging_time": 97.0664,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 22,
+      "route_nodes": [
+        0,
+        102,
+        21,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C81",
+        "S20",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        47.4342,
+        861.2956,
+        1009.5064
+      ],
+      "departure_times": [
+        0.0,
+        851.0,
+        959.1476,
+        1009.5064
+      ],
+      "battery_levels": [
+        79.69,
+        32.2558,
+        50.8251,
+        0.4664
+      ],
+      "remaining_capacities": [
+        100.0,
+        70.0,
+        70.0,
+        70.0
+      ],
+      "charging_actions": [
+        {
+          "node": 21,
+          "portion": 0.5,
+          "charged_energy": 28.864898204803467,
+          "charging_time": 97.85200491428375,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 108.0885,
+      "duration": 1009.5064,
+      "waiting_time": 713.5658,
+      "charging_time": 97.852,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 23,
+      "route_nodes": [
+        0,
+        97,
+        99,
+        92,
+        21,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C76",
+        "C78",
+        "C71",
+        "S20",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        52.2015,
+        667.0,
+        764.0,
+        864.2956,
+        1096.4359
+      ],
+      "departure_times": [
+        0.0,
+        665.0,
+        757.0,
+        854.0,
+        1046.0772,
+        1096.4359
+      ],
+      "battery_levels": [
+        79.69,
+        27.4885,
+        25.4885,
+        18.4885,
+        61.8157,
+        11.457
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        70.0,
+        50.0,
+        50.0,
+        50.0
+      ],
+      "charging_actions": [
+        {
+          "node": 21,
+          "portion": 0.75,
+          "charged_energy": 53.62287354469299,
+          "charging_time": 181.78154131650925,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 121.8559,
+      "duration": 1096.4359,
+      "waiting_time": 522.7985,
+      "charging_time": 181.7815,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 24,
+      "route_nodes": [
+        0,
+        91,
+        94,
+        98,
+        100,
+        20,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C70",
+        "C73",
+        "C77",
+        "C79",
+        "S19",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        58.5235,
+        483.0,
+        577.0,
+        668.0,
+        771.1529,
+        944.6753
+      ],
+      "departure_times": [
+        0.0,
+        480.0,
+        573.0,
+        667.0,
+        758.0,
+        906.2045,
+        944.6753
+      ],
+      "battery_levels": [
+        79.69,
+        21.1665,
+        18.1665,
+        14.1665,
+        13.1665,
+        39.8518,
+        1.381
+      ],
+      "remaining_capacities": [
+        100.0,
+        70.0,
+        60.0,
+        50.0,
+        40.0,
+        40.0,
+        40.0
+      ],
+      "charging_actions": [
+        {
+          "node": 20,
+          "portion": 0.5,
+          "charged_energy": 39.83822250366211,
+          "charging_time": 135.05157428741455,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 118.1472,
+      "duration": 944.6753,
+      "waiting_time": 331.4765,
+      "charging_time": 135.0516,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 25,
+      "route_nodes": [
+        0,
+        41,
+        45,
+        50,
+        53,
+        71,
+        14,
+        79,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C20",
+        "C24",
+        "C29",
+        "C32",
+        "C50",
+        "S13",
+        "C58",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        10.0,
+        105.0,
+        200.0,
+        304.1421,
+        412.0307,
+        507.0307,
+        734.5407,
+        869.5851
+      ],
+      "departure_times": [
+        0.0,
+        100.0,
+        195.0,
+        290.0,
+        394.1421,
+        502.0307,
+        700.3647,
+        824.5407,
+        869.5851
+      ],
+      "battery_levels": [
+        79.69,
+        69.69,
+        64.69,
+        59.69,
+        45.5479,
+        27.6593,
+        79.69,
+        45.514,
+        0.4696
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        80.0,
+        70.0,
+        40.0,
+        30.0,
+        30.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [
+        {
+          "node": 14,
+          "portion": 1.0,
+          "charged_energy": 57.03067970275879,
+          "charging_time": 193.3340041923523,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 136.2511,
+      "duration": 869.5851,
+      "waiting_time": 0.0,
+      "charging_time": 193.334,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 26,
+      "route_nodes": [
+        0,
+        84,
+        87,
+        89,
+        93,
+        69,
+        14,
+        101,
+        19,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C63",
+        "C66",
+        "C68",
+        "C72",
+        "C48",
+        "S13",
+        "C80",
+        "S18",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        14.1421,
+        109.9731,
+        205.3583,
+        303.3583,
+        418.3583,
+        515.6384,
+        798.3604,
+        900.5259,
+        1065.837
+      ],
+      "departure_times": [
+        0.0,
+        104.1421,
+        199.9731,
+        295.3583,
+        393.3583,
+        508.3583,
+        738.1524,
+        888.3604,
+        1023.199,
+        1065.837
+      ],
+      "battery_levels": [
+        79.69,
+        65.5479,
+        59.7169,
+        54.3317,
+        46.3317,
+        21.3317,
+        79.69,
+        19.482,
+        43.5033,
+        0.8652
+      ],
+      "remaining_capacities": [
+        100.0,
+        50.0,
+        40.0,
+        30.0,
+        20.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [
+        {
+          "node": 14,
+          "portion": 1.0,
+          "charged_energy": 65.63836193084717,
+          "charging_time": 222.5140469455719,
+          "charging_price": 0.0
+        },
+        {
+          "node": 19,
+          "portion": 0.5,
+          "charged_energy": 36.18674945831299,
+          "charging_time": 122.67308066368103,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 180.6499,
+      "duration": 1065.837,
+      "waiting_time": 0.0,
+      "charging_time": 345.1871,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 27,
+      "route_nodes": [
+        0,
+        46,
+        49,
+        73,
+        68,
+        72,
+        14,
+        110,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C25",
+        "C28",
+        "C52",
+        "C47",
+        "C51",
+        "S13",
+        "C89",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        15.1327,
+        108.7383,
+        218.838,
+        313.838,
+        410.9091,
+        507.9802,
+        747.0771,
+        861.4287
+      ],
+      "departure_times": [
+        0.0,
+        105.1327,
+        198.7383,
+        308.838,
+        403.838,
+        500.9091,
+        704.533,
+        837.0771,
+        861.4287
+      ],
+      "battery_levels": [
+        79.69,
+        64.5573,
+        60.9517,
+        40.852,
+        35.852,
+        28.7809,
+        79.69,
+        37.1459,
+        12.7943
+      ],
+      "remaining_capacities": [
+        100.0,
+        60.0,
+        40.0,
+        30.0,
+        20.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [
+        {
+          "node": 14,
+          "portion": 1.0,
+          "charged_energy": 57.980183124542236,
+          "charging_time": 196.5528207921982,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 124.8759,
+      "duration": 861.4287,
+      "waiting_time": 0.0,
+      "charging_time": 196.5528,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 28,
+      "route_nodes": [
+        0,
+        42,
+        44,
+        51,
+        55,
+        57,
+        16,
+        74,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C21",
+        "C23",
+        "C30",
+        "C34",
+        "C36",
+        "S15",
+        "C53",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        10.198,
+        103.8036,
+        201.8036,
+        307.4241,
+        400.4241,
+        527.1936,
+        815.3565,
+        950.5339
+      ],
+      "departure_times": [
+        0.0,
+        100.198,
+        193.8036,
+        291.8036,
+        397.4241,
+        490.4241,
+        788.8801,
+        905.3565,
+        950.5339
+      ],
+      "battery_levels": [
+        79.69,
+        69.492,
+        65.8864,
+        57.8864,
+        42.2659,
+        39.2659,
+        79.69,
+        53.2136,
+        8.0362
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        70.0,
+        60.0,
+        40.0,
+        30.0,
+        30.0,
+        10.0,
+        10.0
+      ],
+      "charging_actions": [
+        {
+          "node": 16,
+          "portion": 1.0,
+          "charged_energy": 77.19364404678345,
+          "charging_time": 261.6864533185959,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 148.8475,
+      "duration": 950.5339,
+      "waiting_time": 0.0,
+      "charging_time": 261.6865,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 29,
+      "route_nodes": [
+        0,
+        43,
+        47,
+        28,
+        26,
+        24,
+        96,
+        32,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C22",
+        "C26",
+        "C7",
+        "C5",
+        "C3",
+        "C75",
+        "C11",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        12.1655,
+        106.4082,
+        215.0092,
+        307.2453,
+        398.2453,
+        491.4076,
+        592.1779,
+        701.8248
+      ],
+      "departure_times": [
+        0.0,
+        102.1655,
+        196.4082,
+        305.0092,
+        397.2453,
+        488.2453,
+        581.4076,
+        682.1779,
+        701.8248
+      ],
+      "battery_levels": [
+        79.69,
+        67.5245,
+        63.2818,
+        44.6808,
+        42.4447,
+        41.4447,
+        38.2824,
+        27.5121,
+        7.8652
+      ],
+      "remaining_capacities": [
+        100.0,
+        80.0,
+        70.0,
+        50.0,
+        40.0,
+        30.0,
+        10.0,
+        0.0,
+        0.0
+      ],
+      "charging_actions": [],
+      "distance": 71.8248,
+      "duration": 701.8248,
+      "waiting_time": 0.0,
+      "charging_time": 0.0,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    },
+    {
+      "ev_id": 30,
+      "route_nodes": [
+        0,
+        88,
+        86,
+        90,
+        62,
+        66,
+        60,
+        13,
+        0
+      ],
+      "route_string_ids": [
+        "D0",
+        "C67",
+        "C65",
+        "C69",
+        "C41",
+        "C45",
+        "C39",
+        "S12",
+        "D0"
+      ],
+      "arrival_times": [
+        0.0,
+        12.2066,
+        103.2066,
+        199.0375,
+        299.4778,
+        394.863,
+        518.404,
+        617.0063,
+        924.6303
+      ],
+      "departure_times": [
+        0.0,
+        102.2066,
+        193.2066,
+        289.0375,
+        389.4778,
+        484.863,
+        608.404,
+        878.0578,
+        924.6303
+      ],
+      "battery_levels": [
+        79.69,
+        67.4834,
+        66.4834,
+        60.6525,
+        50.2122,
+        44.827,
+        11.286,
+        79.69,
+        33.1175
+      ],
+      "remaining_capacities": [
+        100.0,
+        90.0,
+        80.0,
+        70.0,
+        60.0,
+        50.0,
+        30.0,
+        30.0,
+        30.0
+      ],
+      "charging_actions": [
+        {
+          "node": 13,
+          "portion": 1.0,
+          "charged_energy": 77.00632333755493,
+          "charging_time": 261.05143611431123,
+          "charging_price": 0.0
+        }
+      ],
+      "distance": 123.5788,
+      "duration": 924.6303,
+      "waiting_time": 0.0,
+      "charging_time": 261.0514,
+      "charging_price": 0.0,
+      "finished_at_depot": true
+    }
+  ]
+}

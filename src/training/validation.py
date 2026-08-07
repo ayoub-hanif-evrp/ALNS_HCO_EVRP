@@ -104,7 +104,10 @@ def validate_class(
     with torch.no_grad():
         for idx in indices:
             instance = eval_ds[idx]
-            best, _ = fleet_search(instance, runner, extra_margin, selection_mode)
+            best, _ = fleet_search(
+                instance, runner, extra_margin, selection_mode,
+                fleet_cfg=config.get("fleet_search") or {},
+            )
             s = best.summary
             n_c = max(instance.num_customers, 1)
             costs.append(best.objective)

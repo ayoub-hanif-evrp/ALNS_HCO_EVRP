@@ -1,0 +1,27 @@
+instance,method,customer,ready_time,due_time,demand,service_time,recoverable_by_insertion,insertion_route,insertion_position,needs_station_before,needs_station_after,current_unserved,current_feasible,hard_violations
+c103_21,Neural-Guided Expert+Repair,113,459.0,519.0,20.0,90.0,True,8,2,,,1,False,0
+c103_21,Neural-Guided Expert+Repair+ALNS,113,459.0,519.0,20.0,90.0,True,8,2,,,1,False,0
+r103_21,Neural-Guided Expert+Repair,38,73.0,83.0,2.0,10.0,True,16,1,,12,4,False,0
+r103_21,Neural-Guided Expert+Repair,87,66.0,76.0,25.0,10.0,True,29,1,,,4,False,0
+r103_21,Neural-Guided Expert+Repair,107,99.0,109.0,35.0,10.0,True,27,4,,12,4,False,0
+r103_21,Neural-Guided Expert+Repair,111,69.0,79.0,3.0,10.0,True,29,1,,,4,False,0
+r103_21,Neural-Guided Expert+Repair+ALNS,38,73.0,83.0,2.0,10.0,True,14,3,,12,4,False,0
+r103_21,Neural-Guided Expert+Repair+ALNS,87,66.0,76.0,25.0,10.0,True,29,1,,,4,False,0
+r103_21,Neural-Guided Expert+Repair+ALNS,107,99.0,109.0,35.0,10.0,True,27,4,,12,4,False,0
+r103_21,Neural-Guided Expert+Repair+ALNS,111,69.0,79.0,3.0,10.0,True,29,1,,,4,False,0
+rc103_21,Expert+Repair+ALNS,43,0.0,195.0,40.0,10.0,True,12,2,,16,6,False,0
+rc103_21,Expert+Repair+ALNS,54,0.0,178.0,10.0,10.0,True,16,1,,,6,False,0
+rc103_21,Expert+Repair+ALNS,69,0.0,184.0,10.0,10.0,True,3,2,16,,6,False,0
+rc103_21,Expert+Repair+ALNS,70,0.0,191.0,10.0,10.0,True,3,2,16,,6,False,0
+rc103_21,Expert+Repair+ALNS,96,0.0,158.0,16.0,10.0,True,18,1,14,14,6,False,0
+rc103_21,Expert+Repair+ALNS,114,0.0,208.0,3.0,10.0,True,6,1,,,6,False,0
+rc103_21,Neural-Guided Expert+Repair,47,0.0,171.0,30.0,10.0,True,25,1,,20,5,False,0
+rc103_21,Neural-Guided Expert+Repair,57,57.0,87.0,40.0,10.0,True,11,2,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair,72,0.0,196.0,19.0,10.0,True,10,1,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair,115,0.0,212.0,23.0,10.0,True,12,2,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair,116,0.0,209.0,6.0,10.0,True,17,1,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair+ALNS,47,0.0,171.0,30.0,10.0,True,25,1,,20,5,False,0
+rc103_21,Neural-Guided Expert+Repair+ALNS,57,57.0,87.0,40.0,10.0,True,11,2,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair+ALNS,72,0.0,196.0,19.0,10.0,True,10,1,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair+ALNS,115,0.0,212.0,23.0,10.0,True,12,2,,,5,False,0
+rc103_21,Neural-Guided Expert+Repair+ALNS,116,0.0,209.0,6.0,10.0,True,17,1,,,5,False,0

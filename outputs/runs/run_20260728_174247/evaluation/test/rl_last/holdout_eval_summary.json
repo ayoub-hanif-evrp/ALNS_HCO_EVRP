@@ -1,0 +1,22 @@
+{
+  "num_instances": 9,
+  "instances": [
+    "c101_21",
+    "c104_21",
+    "c208_21",
+    "r101_21",
+    "r104_21",
+    "r211_21",
+    "rc101_21",
+    "rc104_21",
+    "rc208_21"
+  ],
+  "served_ratio": 0.772222,
+  "feasibility_rate": 0.222222,
+  "original_objective": 1081396.9776,
+  "station_action_fraction": 0.051927,
+  "depot_lateness": 4.2222,
+  "battery_violations": 4.2222,
+  "max_step_terminations": 0.0,
+  "objective_reconstruction_mismatch": 0.0
+}

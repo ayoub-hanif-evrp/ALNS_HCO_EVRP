@@ -1,12 +1,12 @@
-# Commands
+﻿# Commands
 
 Run from the **project root**.
 
-Study: **EVRP-TW-D** · Cus_100 · **100 easiest RC wide** train · **10 test** (5 wide + 5 narrow) · **1000** RL updates.
+Study: **Schneider type-2** · anti-drift RL (strong BC-reg every step, early-stop patience 2, low entropy).
 
 ---
 
-## Train
+## Train (full Expert → BC → RL → eval)
 
 ```powershell
 python main_train.py --config configs/train.yaml --device cuda
@@ -14,7 +14,15 @@ python main_train.py --config configs/train.yaml --device cuda
 
 ---
 
-## Test
+## Resume RL only (after BC is done)
+
+```powershell
+python main_train.py --config configs/train.yaml --device cuda --stage rl
+```
+
+---
+
+## Test (holdout)
 
 ```powershell
 python main_train.py --config configs/train.yaml --device cuda --stage eval

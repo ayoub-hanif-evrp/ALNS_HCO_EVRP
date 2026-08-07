@@ -22,13 +22,78 @@ REQUIRED_RC21_TRAIN_COUNT = 20
 DASHBOARD_SECTIONS = [
     "1. Learning progress",
     "2. Customer service and feasibility",
-    "3. Reward and penalty diagnosis",
-    "4. Action behavior",
-    "5. Critic and actor health",
-    "6. Per-instance learning",
-    "7. EVRP operational metrics",
-    "8. Solution behavior diagnostics",
+    "3. Paper metrics (gap / fleet / class)",
+    "4. Reward and penalty diagnosis",
+    "5. Action behavior",
+    "6. Critic and actor health",
+    "7. Per-instance learning",
+    "8. EVRP operational metrics",
+    "9. Solution behavior diagnostics",
 ]
+
+
+def load_expert_objective_map(config: dict, run_dir: Path | None = None) -> dict[str, float]:
+    """Map instance_name → expert objective J from expert_metrics / demo eval."""
+    candidates: list[Path] = []
+    demo = config.get("demonstrations") or {}
+    out = config.get("outputs") or {}
+    if run_dir is not None:
+        candidates.append(Path(run_dir) / "expert" / "expert_metrics.json")
+    if demo.get("eval_report"):
+        candidates.append(Path(str(demo["eval_report"])))
+    root = Path(out.get("root", "outputs"))
+    candidates.append(root / "expert" / "expert_metrics.json")
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rows = raw.get("per_instance") if isinstance(raw, dict) else None
+        if not isinstance(rows, list):
+            continue
+        out_map: dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("instance_name") or row.get("instance")
+            if name is None:
+                continue
+            try:
+                out_map[str(name)] = float(row.get("objective", row.get("J", 0.0)))
+            except (TypeError, ValueError):
+                continue
+        if out_map:
+            return out_map
+    return {}
+
+
+def enrich_dataframe_paper_metrics(
+    df: pd.DataFrame,
+    *,
+    expert_j: dict[str, float] | None = None,
+    mstar: dict[str, int] | None = None,
+) -> pd.DataFrame:
+    """Attach expert gap and m* columns used by paper figures."""
+    if df.empty:
+        return df
+    work = df.copy()
+    expert_j = expert_j or {}
+    mstar = mstar or {}
+    if "instance_name" in work.columns and expert_j:
+        ej = work["instance_name"].map(lambda n: expert_j.get(str(n)))
+        work["expert_objective"] = pd.to_numeric(ej, errors="coerce")
+        jcol = _pick(work, "final_objective", "cost", "cost_raw")
+        if jcol:
+            j = work[jcol].astype(float)
+            denom = work["expert_objective"].abs().clip(lower=1e-6)
+            work["gap_vs_expert"] = (j - work["expert_objective"]) / denom
+    if "instance_name" in work.columns and mstar:
+        work["m_star"] = work["instance_name"].map(
+            lambda n: float(mstar[str(n)]) if str(n) in mstar else np.nan
+        )
+    return work
 
 
 @dataclass
@@ -367,8 +432,8 @@ def generate_training_dashboard(
         _try(
             "Raw objective return vs shaped training return", "02_raw_vs_shaped_return.png", cols,
             DASHBOARD_SECTIONS[0],
-            "Compares the true objective signal (-J/scale) with the shaped return used for policy updates.",
-            True,
+            "APPENDIX: shaped training return ≠ paper J. Prefer feas/served/J for main paper figures.",
+            False,
             lambda: _plot_multi_ma(
                 df, list(zip(cols, labels)), "Raw objective return vs shaped training return",
                 "return", out_dir, "02_raw_vs_shaped_return.png", ma_window=ma, save_svg=save_svg,
@@ -424,7 +489,111 @@ def generate_training_dashboard(
             ),
         )
 
-    # --- 3. Reward and penalty diagnosis ---
+    # Paper primary panel: feas + served (dual axis)
+    if served_col and "feasibility_rate" in df.columns:
+        def _paper_quality():
+            x = _epoch_x(df)
+            fig, ax1 = plt.subplots(figsize=(9, 4))
+            y_s = _moving_avg(df[served_col].astype(float), ma)
+            y_f = _moving_avg(df["feasibility_rate"].astype(float), ma)
+            ax1.plot(x, y_s, color="#16a34a", lw=2, label="served ratio (MA)")
+            ax1.set_ylabel("served ratio", color="#16a34a")
+            ax1.set_ylim(0.0, 1.05)
+            ax2 = ax1.twinx()
+            ax2.plot(x, y_f, color="#2563eb", lw=2, label="feasibility (MA)")
+            ax2.set_ylabel("feasibility", color="#2563eb")
+            ax2.set_ylim(0.0, 1.05)
+            ax1.set_title("Paper quality panel: served & feasibility")
+            ax1.set_xlabel("training epoch")
+            lines = ax1.get_lines() + ax2.get_lines()
+            ax1.legend(lines, [ln.get_label() for ln in lines], loc="lower right", fontsize=8)
+            fig.tight_layout()
+            return _save_fig(fig, out_dir, "20_paper_served_feas.png", save_svg=save_svg)
+        _try(
+            "Paper served & feasibility", "20_paper_served_feas.png",
+            [served_col, "feasibility_rate"],
+            DASHBOARD_SECTIONS[2],
+            "Primary paper learning curve for multi-agent EVRP (not shaped reward).",
+            True, _paper_quality,
+        )
+
+    # Gap vs expert
+    if "gap_vs_expert" in df.columns and df["gap_vs_expert"].notna().any():
+        _try(
+            "Optimality gap vs expert", "21_gap_vs_expert.png", ["gap_vs_expert"],
+            DASHBOARD_SECTIONS[2],
+            "(J − J_expert) / |J_expert|. Negative means better than expert.",
+            True,
+            lambda: _plot_series_ma(
+                df, "gap_vs_expert", "Optimality gap vs expert", "relative gap",
+                out_dir, "21_gap_vs_expert.png", ma_window=ma, save_svg=save_svg, hline=0.0,
+            ),
+        )
+
+    # Fleet vs m*
+    if "avg_used_evs" in df.columns and "m_star" in df.columns and df["m_star"].notna().any():
+        _try(
+            "Used EVs vs expert m*", "22_fleet_vs_mstar.png", ["avg_used_evs", "m_star"],
+            DASHBOARD_SECTIONS[2],
+            "Deployed fleet vs lexicographic expert m* (lower used EVs better when feasible).",
+            True,
+            lambda: _plot_multi_ma(
+                df,
+                [("avg_used_evs", "used EVs"), ("m_star", "expert m*")],
+                "Used EVs vs expert m*",
+                "fleet size",
+                out_dir, "22_fleet_vs_mstar.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    # Class-wise C/R/RC
+    class_obj = [(c, l) for c, l in [
+        ("objective_C", "C"), ("objective_R", "R"), ("objective_RC", "RC"),
+        ("macro_objective", "macro"),
+    ] if c in df.columns]
+    if len(class_obj) >= 3:
+        _try(
+            "Objective by class C/R/RC", "23_objective_by_class.png", [c for c, _ in class_obj],
+            DASHBOARD_SECTIONS[2],
+            "Per-class paper objective — detects cross-class interference.",
+            True,
+            lambda: _plot_multi_ma(
+                df, class_obj, "Objective by class (C/R/RC)", "objective J",
+                out_dir, "23_objective_by_class.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+    class_feas = [(c, l) for c, l in [
+        ("feasibility_C", "C"), ("feasibility_R", "R"), ("feasibility_RC", "RC"),
+        ("macro_feasibility", "macro"),
+    ] if c in df.columns]
+    if len(class_feas) >= 3:
+        _try(
+            "Feasibility by class C/R/RC", "24_feasibility_by_class.png", [c for c, _ in class_feas],
+            DASHBOARD_SECTIONS[2],
+            "Per-class feasibility rates over training.",
+            True,
+            lambda: _plot_multi_ma(
+                df, class_feas, "Feasibility by class (C/R/RC)", "feasibility",
+                out_dir, "24_feasibility_by_class.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+    class_served = [(c, l) for c, l in [
+        ("served_rate_C", "C"), ("served_rate_R", "R"), ("served_rate_RC", "RC"),
+        ("macro_served_rate", "macro"),
+    ] if c in df.columns]
+    if len(class_served) >= 3:
+        _try(
+            "Served rate by class C/R/RC", "25_served_by_class.png", [c for c, _ in class_served],
+            DASHBOARD_SECTIONS[2],
+            "Per-class served-customer ratios over training.",
+            True,
+            lambda: _plot_multi_ma(
+                df, class_served, "Served rate by class (C/R/RC)", "served rate",
+                out_dir, "25_served_by_class.png", ma_window=ma, save_svg=save_svg,
+            ),
+        )
+
+    # --- 4. Reward and penalty diagnosis ---
     decomp: list[tuple[str, str]] = []
     for col, label in [
         ("served_bonus_total", "served bonus"),
@@ -439,7 +608,7 @@ def generate_training_dashboard(
     if decomp:
         _try(
             "Reward decomposition", "07_reward_decomposition.png", [c for c, _ in decomp],
-            DASHBOARD_SECTIONS[2],
+            DASHBOARD_SECTIONS[3],
             "Training reward components — check whether terminal penalties still dominate.", True,
             lambda: _plot_multi_ma(
                 df, decomp[:5], "Reward and penalty decomposition", "magnitude",
@@ -460,13 +629,13 @@ def generate_training_dashboard(
             return _save_fig(fig, out_dir, "08_terminal_penalty_schedule.png", save_svg=save_svg)
         _try(
             "Terminal penalty schedule", "08_terminal_penalty_schedule.png", ["terminal_penalty_coef"],
-            DASHBOARD_SECTIONS[2], "Ramp of terminal unserved penalty during training.", False, _tpc,
+            DASHBOARD_SECTIONS[3], "Ramp of terminal unserved penalty during training.", False, _tpc,
         )
 
     if "relative_objective_mismatch" in df.columns:
         _try(
             "Objective mismatch", "09_objective_mismatch.png", ["relative_objective_mismatch"],
-            DASHBOARD_SECTIONS[2],
+            DASHBOARD_SECTIONS[3],
             "Relative |J - reconstructed J| / |J|. Values > 0.05 mean reward misalignment.", True,
             lambda: _plot_series_ma(
                 df, "relative_objective_mismatch", "Relative objective mismatch", "relative mismatch",
@@ -474,7 +643,7 @@ def generate_training_dashboard(
             ),
         )
 
-    # --- 4. Action behavior ---
+    # --- 5. Action behavior ---
     action_cols = [(c, l) for c, l in [
         ("fraction_customer_actions", "customer"),
         ("fraction_station_actions", "station"),
@@ -483,7 +652,7 @@ def generate_training_dashboard(
     if len(action_cols) >= 2:
         _try(
             "Action type fractions", "10_action_type_fractions.png", [c for c, _ in action_cols],
-            DASHBOARD_SECTIONS[3],
+            DASHBOARD_SECTIONS[4],
             "Policy action mix — rising customer fraction and falling early depot use indicate progress.", True,
             lambda: _plot_multi_ma(
                 df, action_cols, "Action type fractions", "fraction",
@@ -494,7 +663,7 @@ def generate_training_dashboard(
     if "early_depot_returns" in df.columns:
         _try(
             "Early depot returns", "11_early_depot_returns.png", ["early_depot_returns"],
-            DASHBOARD_SECTIONS[3],
+            DASHBOARD_SECTIONS[4],
             "Depot returns while customers remain unserved (should decrease).", True,
             lambda: _plot_series_ma(
                 df, "early_depot_returns", "Early depot returns per episode", "count",
@@ -507,7 +676,7 @@ def generate_training_dashboard(
     if loss_cols:
         _try(
             "Actor and critic loss", "12_actor_critic_loss.png", [c for c, _ in loss_cols],
-            DASHBOARD_SECTIONS[4], "Actor-critic optimization stability.", True,
+            DASHBOARD_SECTIONS[5], "Actor-critic optimization stability.", True,
             lambda: _plot_multi_ma(
                 df, loss_cols, "Actor and critic loss", "loss",
                 out_dir, "12_actor_critic_loss.png", ma_window=ma, save_svg=save_svg,
@@ -528,14 +697,14 @@ def generate_training_dashboard(
             return _save_fig(fig, out_dir, "13_explained_variance.png", save_svg=save_svg)
         _try(
             "Critic explained variance", "13_explained_variance.png", ["critic_explained_variance"],
-            DASHBOARD_SECTIONS[4], "Near zero means the critic is not learning useful values.", True, _ev,
+            DASHBOARD_SECTIONS[5], "Near zero means the critic is not learning useful values.", True, _ev,
         )
 
     adv_cols = [(c, l) for c, l in [("advantage", "mean"), ("advantage_std", "std")] if c in df.columns]
     if adv_cols:
         _try(
             "Advantage statistics", "14_advantage_stats.png", [c for c, _ in adv_cols],
-            DASHBOARD_SECTIONS[4], "Scale and spread of GAE advantages.", False,
+            DASHBOARD_SECTIONS[5], "Scale and spread of GAE advantages.", False,
             lambda: _plot_multi_ma(
                 df, adv_cols, "Advantage statistics", "advantage",
                 out_dir, "14_advantage_stats.png", ma_window=ma, save_svg=save_svg,
@@ -552,7 +721,7 @@ def generate_training_dashboard(
     if len(grad_cols) >= 2:
         _try(
             "Gradient and parameter update norms", "15_gradient_param_norms.png", [c for c, _ in grad_cols],
-            DASHBOARD_SECTIONS[4],
+            DASHBOARD_SECTIONS[5],
             "Confirms the actor and critic weights are actually changing each update.", True,
             lambda: _plot_multi_ma(
                 df, grad_cols[:4], "Gradient and parameter update norms", "norm",
@@ -560,12 +729,12 @@ def generate_training_dashboard(
             ),
         )
 
-    # --- 6. Per-instance learning ---
+    # --- 7. Per-instance learning ---
     heat_obj = obj_col or "cost"
     if heat_obj and "instance_name" in df.columns:
         _try(
             "Per-instance objective heatmap", "16_instance_objective_heatmap.png", [heat_obj],
-            DASHBOARD_SECTIONS[5],
+            DASHBOARD_SECTIONS[6],
             f"Objective per RC _21 instance across cycles ({n_inst} rows).", True,
             lambda: _heatmap_instance_cycle(
                 df, heat_obj, "Per-instance objective heatmap",
@@ -575,7 +744,7 @@ def generate_training_dashboard(
     if served_col and "instance_name" in df.columns:
         _try(
             "Per-instance served-ratio heatmap", "17_instance_served_ratio_heatmap.png", [served_col],
-            DASHBOARD_SECTIONS[5],
+            DASHBOARD_SECTIONS[6],
             "Served ratio per instance across cycles — detects repeating bad patterns.", True,
             lambda: _heatmap_instance_cycle(
                 df, served_col, "Per-instance served-ratio heatmap",
@@ -583,11 +752,11 @@ def generate_training_dashboard(
             ),
         )
 
-    # --- 7. EVRP operational metrics (minimal) ---
+    # --- 8. EVRP operational metrics (minimal) ---
     if "avg_used_evs" in df.columns:
         _try(
             "Used EVs", "18_used_evs.png", ["avg_used_evs"],
-            DASHBOARD_SECTIONS[6], "Fleet size used per episode.", False,
+            DASHBOARD_SECTIONS[7], "Fleet size used per episode.", False,
             lambda: _plot_series_ma(
                 df, "avg_used_evs", "Used EVs", "count",
                 out_dir, "18_used_evs.png", ma_window=ma, save_svg=save_svg,
@@ -602,7 +771,7 @@ def generate_training_dashboard(
     if len(op_cols) >= 2:
         _try(
             "Distance and charging behavior", "19_distance_charging.png", [c for c, _ in op_cols],
-            DASHBOARD_SECTIONS[6], "Minimal operational routing metrics.", False,
+            DASHBOARD_SECTIONS[7], "Minimal operational routing metrics.", False,
             lambda: _plot_multi_ma(
                 df, op_cols, "Distance and charging behavior", "value",
                 out_dir, "19_distance_charging.png", ma_window=ma, save_svg=save_svg,
@@ -737,6 +906,7 @@ def generate_training_dashboard_from_config(
     out_cfg = config.get("outputs") or {}
     figures_dir = Path(out_cfg.get("figures", "outputs/figures")) / "training"
     ds_cfg = config.get("dataset") or {}
+    run_dir = Path(out_cfg.get("run_dir") or out_cfg.get("root") or "outputs")
 
     holdout = list((holdout_meta or {}).get("eval_instances") or ds_cfg.get("eval_instances") or [])
     train_inst = list((holdout_meta or {}).get("train_instances") or ds_cfg.get("train_instances") or [])
@@ -754,6 +924,16 @@ def generate_training_dashboard_from_config(
             csv_path=csv_path, jsonl_path=jsonl_path,
             train_instances=train_inst or None, holdout_instances=holdout or None,
         )
+
+    # Paper enrichments: gap vs expert + m*
+    from src.evaluation.mstar_cache import load_mstar_map
+    expert_j = load_expert_objective_map(config, run_dir=run_dir)
+    # Prefer explicit run_dir if logs path implies a run folder.
+    logs = Path(out_cfg.get("logs", "outputs/logs"))
+    if (logs.parent / "expert" / "expert_metrics.json").is_file():
+        expert_j = load_expert_objective_map(config, run_dir=logs.parent) or expert_j
+    mstar = load_mstar_map(config)
+    df = enrich_dataframe_paper_metrics(df, expert_j=expert_j, mstar=mstar)
 
     if skip_train_count_check:
         ma = int(moving_avg_window or ds_cfg.get("expected_train_count") or REQUIRED_RC21_TRAIN_COUNT)

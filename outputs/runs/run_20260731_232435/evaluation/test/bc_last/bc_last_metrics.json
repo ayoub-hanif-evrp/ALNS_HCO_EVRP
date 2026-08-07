@@ -1,0 +1,123 @@
+{
+  "label": "bc_last",
+  "checkpoint": "outputs\\runs\\run_20260731_232435\\bc\\bc_last_policy.pt",
+  "elapsed_seconds": 17261.076191186905,
+  "summary": {
+    "results_path": "outputs\\runs\\run_20260731_232435\\evaluation\\test\\bc_last\\results.csv",
+    "num_rows": 36,
+    "class_macro_report": {
+      "method": "model_greedy",
+      "per_class": {
+        "C": {
+          "objective_value": 166065.97066666666,
+          "feasible": 0.6666666666666666,
+          "served_ratio": 0.91,
+          "total_distance": 3176.529666666667,
+          "used_EVs": 31.0,
+          "n_instances": 3
+        },
+        "R": {
+          "objective_value": 307537.3462,
+          "feasible": 0.3333333333333333,
+          "served_ratio": 0.79,
+          "total_distance": 2413.7162000000003,
+          "used_EVs": 27.0,
+          "n_instances": 3
+        },
+        "RC": {
+          "objective_value": 204965.3878,
+          "feasible": 0.3333333333333333,
+          "served_ratio": 0.8966666666666666,
+          "total_distance": 3509.3908666666666,
+          "used_EVs": 30.0,
+          "n_instances": 3
+        }
+      },
+      "macro_average": {
+        "objective_value": 226189.56822222224,
+        "feasible": 0.4444444444444444,
+        "served_ratio": 0.8655555555555555,
+        "total_distance": 3033.2122444444444,
+        "used_EVs": 29.333333333333332,
+        "n_classes": 3
+      }
+    },
+    "holdout_report": {
+      "num_instances": 9,
+      "instances": [
+        "c101_21",
+        "c104_21",
+        "c208_21",
+        "r101_21",
+        "r104_21",
+        "r211_21",
+        "rc101_21",
+        "rc104_21",
+        "rc208_21"
+      ],
+      "served_ratio": 0.865556,
+      "feasibility_rate": 0.444444,
+      "original_objective": 226189.5682,
+      "station_action_fraction": 0.127894,
+      "depot_lateness": 0.0,
+      "battery_violations": 0.0,
+      "max_step_terminations": 0.0,
+      "objective_reconstruction_mismatch": 0.0
+    }
+  },
+  "by_class": {
+    "served": {
+      "C": null,
+      "R": null,
+      "RC": null
+    },
+    "feasibility": {
+      "C": null,
+      "R": null,
+      "RC": null
+    },
+    "objective": {
+      "C": null,
+      "R": null,
+      "RC": null
+    },
+    "unserved": {
+      "C": null,
+      "R": null,
+      "RC": null
+    },
+    "hard_violations": {
+      "C": null,
+      "R": null,
+      "RC": null
+    },
+    "macro_served": null,
+    "macro_feasibility": 0.444444,
+    "macro_objective": null,
+    "aggregate": {
+      "num_instances": 9,
+      "instances": [
+        "c101_21",
+        "c104_21",
+        "c208_21",
+        "r101_21",
+        "r104_21",
+        "r211_21",
+        "rc101_21",
+        "rc104_21",
+        "rc208_21"
+      ],
+      "served_ratio": 0.865556,
+      "feasibility_rate": 0.444444,
+      "original_objective": 226189.5682,
+      "station_action_fraction": 0.127894,
+      "depot_lateness": 0.0,
+      "battery_violations": 0.0,
+      "max_step_terminations": 0.0,
+      "objective_reconstruction_mismatch": 0.0
+    }
+  },
+  "macro_served": null,
+  "macro_feasibility": 0.444444,
+  "macro_objective": null
+}

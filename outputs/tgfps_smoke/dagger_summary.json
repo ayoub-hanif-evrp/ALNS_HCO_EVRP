@@ -1,0 +1,23 @@
+{
+  "history": [
+    {
+      "round": 1,
+      "beta": 1.0,
+      "n_decisions": 14,
+      "n_new": 5,
+      "checkpoint": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_smoke\\bc\\dagger_best.pt",
+      "candidate_cache": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_smoke\\bc\\dagger_round_1_candidates.pt"
+    },
+    {
+      "round": 2,
+      "beta": 0.7,
+      "n_decisions": 38,
+      "n_new": 5,
+      "checkpoint": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_smoke\\bc\\dagger_best.pt",
+      "candidate_cache": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_smoke\\bc\\dagger_round_2_candidates.pt"
+    }
+  ],
+  "best_checkpoint": "C:\\Users\\ayoub\\Desktop\\Transformer_MARL_EVRP-main\\outputs\\tgfps_smoke\\bc\\dagger_best.pt",
+  "n_decisions": 38,
+  "n_rounds": 2
+}
