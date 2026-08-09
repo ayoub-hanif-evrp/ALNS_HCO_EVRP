@@ -60,6 +60,11 @@ def capacity_lower_bound(instance) -> int:
 
 
 def tw_pressure_lower_bound(instance) -> int:
+    """Soft TW heuristic only — never used as a hard search floor.
+
+    Historical bug: treating this as a hard lo blocked type-2 BKS fleets (K≈2–4)
+    by forcing lo≈9. Kept for diagnostics / probe ordering.
+    """
     n = int(instance.num_customers)
     dues = [float(n.due_time) for n in instance.nodes if n.is_customer]
     if len(dues) < 3:
@@ -75,13 +80,63 @@ def tw_pressure_lower_bound(instance) -> int:
 
 
 def compute_fleet_bounds(instance, config: dict | None = None) -> tuple[int, int]:
+    """Hard floor = capacity (+ instance.m_min). TW pressure is annotation-only."""
     cfg = (config or {}).get("fleet_search") or {}
     lo_cap = capacity_lower_bound(instance)
-    lo_tw = tw_pressure_lower_bound(instance)
-    lo = max(lo_cap, lo_tw, int(getattr(instance, "m_min", 1) or 1))
+    lo = max(lo_cap, int(getattr(instance, "m_min", 1) or 1))
+    if bool(cfg.get("use_tw_pressure_as_hard_floor", False)):
+        lo = max(lo, tw_pressure_lower_bound(instance))
     _, hi = lexicographic_fleet_range(instance, cfg)
+    n = int(getattr(instance, "num_customers", 100) or 100)
+    # Type-1 (tight TW) needs a higher band than capacity alone suggests.
+    tw_soft = tw_pressure_lower_bound(instance)
+    type1_hi = int(math.ceil(n / 5.0))  # ~20 on n=100
+    hi_cap = int(cfg.get("max_upper_fleet", 0) or 0)
+    if hi_cap > 0:
+        hi = min(max(hi, type1_hi), hi_cap) if n >= 400 else min(hi, hi_cap)
+    else:
+        hi = min(hi, max(lo + 12, int(math.ceil(2.2 * lo)), type1_hi, tw_soft + 4))
+        if n >= 400:
+            # Do not crush Hanif upper bound below ~n/5.
+            hi = max(hi, type1_hi, int(math.ceil(n / 5.0)))
     hi = max(lo, int(hi))
     return lo, hi
+
+
+def adaptive_start_fleet(lo: int, hi: int, instance=None) -> int:
+    """First probe between capacity LB and hi — not the padded maximum."""
+    start = int(min(hi, max(lo + 2, int(math.ceil(1.55 * lo)) + 1)))
+    if instance is not None:
+        n = int(getattr(instance, "num_customers", 0) or 0)
+        if n >= 400:
+            # Hanif: enough for type-1 packing; type-2 still expands down via compact.
+            tw = tw_pressure_lower_bound(instance)
+            start = max(lo + 8, int(math.ceil(1.75 * lo)), int(math.ceil(n / 6.5)), tw)
+            return int(min(hi, start))
+        if n >= 80:
+            # Avoid starting too low on tight type-1 packs (R1/RC1 failure mode).
+            start = max(start, min(hi, int(math.ceil(n / 7.0))))
+    return int(min(hi, start))
+
+
+def _nonempty_route_count(instance, routes: list) -> int:
+    return sum(
+        1 for nodes, _ in routes
+        if any(instance.nodes[n].is_customer for n in nodes)
+    )
+
+
+def _compact_to_used(instance, routes: list) -> list:
+    """Drop empty routes so fleet slots match used vehicles."""
+    kept = [
+        (list(nodes), list(labels) if labels else [None] * len(nodes))
+        for nodes, labels in routes
+        if any(instance.nodes[n].is_customer for n in nodes)
+    ]
+    if not kept:
+        depot = instance.depot_index
+        return [([depot, depot], [None, None])]
+    return kept
 
 
 def construct_solution(
@@ -124,14 +179,20 @@ def construct_solution(
         )
         return routes, res.score or SearchScore.worst(), bool(res.feasible)
 
-    from src.search.fast_construct import matrix_construct
+    from src.search.fast_construct import dense_construct, matrix_construct
     from src.search.portfolio import run_variant_episode
 
-    prefer_expert = bool((cfg.get("fleet_search") or {}).get("prefer_expert_construct", True))
+    prefer_expert = bool((cfg.get("fleet_search") or {}).get("prefer_expert_construct", False))
+    backend = str((cfg.get("fleet_search") or {}).get("construction_backend", "dense") or "dense").lower()
     if use_expert is None:
-        use_expert = prefer_expert
+        use_expert = prefer_expert and backend == "expert"
 
-    if use_expert and (deadline is None or deadline.remaining() > 20):
+    if backend == "matrix":
+        return matrix_construct(
+            instance, fleet_size, seed=seed, config=cfg, weights=w,
+            deadline=deadline, variant=expert_variant,
+        )
+    if backend == "expert" and use_expert and (deadline is None or deadline.remaining() > 20):
         result = run_variant_episode(
             instance,
             fleet_size,
@@ -144,7 +205,8 @@ def construct_solution(
         )
         return result.routes, result.score, bool(result.feasible)
 
-    return matrix_construct(
+    # Default: dense sequential insertion (paper-oriented fleet packing, Hanif-fast).
+    return dense_construct(
         instance, fleet_size, seed=seed, config=cfg, weights=w,
         deadline=deadline, variant=expert_variant,
     )
@@ -202,13 +264,24 @@ def solve_with_fleet_search(
         "mathematical_lower_bound": int(capacity_lower_bound(instance)),
         "heuristic_lower_estimate": int(lo),
         "initial_upper_probe": int(hi0),
+        "tw_pressure_soft": int(tw_pressure_lower_bound(instance)),
+        "capacity_lower_bound": int(capacity_lower_bound(instance)),
     }
 
     attempt = 0
     best_routes = None
     best_score = SearchScore.worst()
     best_feasible = False
-    hi = hi0
+    large_n = int(getattr(instance, "num_customers", 0) or 0) >= 400
+    # Probe from an adaptive mid/low band — not the padded maximum.
+    hi = adaptive_start_fleet(lo, hi0, instance)
+    tw_variant = str((cfg.get("dataset") or {}).get("tw_variant") or "A").upper()
+    if large_n and tw_variant in ("B", "RELAXED", "RELAXED_TW", "VARIANT_B"):
+        # Relaxed TW: start near capacity band, not type-1 padded hi.
+        n = int(getattr(instance, "num_customers", 0) or 0)
+        hi = min(hi0, max(lo + 5, int(math.ceil(1.40 * lo)), int(math.ceil(n / 14.0))))
+    bound_ann["adaptive_start_m"] = int(hi)
+    bound_ann["tw_variant"] = tw_variant
 
     def _alive() -> bool:
         return parent_deadline.check()
@@ -218,24 +291,45 @@ def solve_with_fleet_search(
         attempt += 1
         traces.append(FleetAttemptTrace(attempt=attempt, **kwargs))
 
-    # --- Upper bound probes ---
-    # Always lead with a canonical (edf, seed=0) probe. Validation-seed offsets
-    # diversify descent; they must not erase the only reliable upper constructor.
+    fast_mode = bool(fleet_cfg.get("fast_mode", False))
+    if large_n:
+        # Hanif: feasibility first, then cold shrink. No elim / SP / multi-seed.
+        use_elim = False
+        use_sp = False
+        cold_after_warm = False
+        upper_retries = 0
+        retries_per = 1
+        failures_before_stop = 1
+        seeds = [0]
+        variants = ["edf"]
+    total_fleet = max(1.0, parent_deadline.remaining())
+    if fast_mode:
+        # Leave most of the budget for post-feasibility fleet shrink on Hanif.
+        upper_deadline = parent_deadline.child(
+            min(55.0 if large_n else 45.0, total_fleet * (0.35 if large_n else 0.30)),
+            stage="upper_phase",
+        )
+        upper_retries = min(upper_retries, 1)
+        retries_per = min(retries_per, 1)
+        failures_before_stop = max(failures_before_stop, 3)
+    else:
+        upper_deadline = parent_deadline.child(min(120.0, total_fleet * 0.32), stage="upper_phase")
+
+    # --- Upper probes with dense construction (expand upward if needed) ---
     upper_order: list[tuple[str, int]] = [("edf", 0)]
-    for v, s in _variant_seed_schedule(variants, seeds, max(len(variants), upper_retries)):
-        if (v, s) not in upper_order:
-            upper_order.append((v, s))
-    upper_order = upper_order[: max(2, min(upper_retries + 1, 5))]
+    if not fast_mode:
+        for v, s in _variant_seed_schedule(variants, seeds, max(len(variants), upper_retries)):
+            if (v, s) not in upper_order:
+                upper_order.append((v, s))
+    upper_order = upper_order[: max(1, min(upper_retries + 1, 2 if fast_mode else 3))]
     for ui, (v, s) in enumerate(upper_order):
-        if not _alive():
+        if not upper_deadline.check() or not _alive():
             break
         t0 = time.perf_counter()
-        # Canonical first probe may need several minutes on type-1 R; later
-        # diversified probes get shorter slices so a bad seed cannot burn the budget.
-        if ui == 0:
-            slice_s = min(380.0, max(60.0, parent_deadline.remaining() * 0.55))
-        else:
-            slice_s = min(150.0, max(40.0, parent_deadline.remaining() * 0.22))
+        slice_s = min(
+            70.0 if large_n else (40.0 if fast_mode else 70.0),
+            max(20.0 if large_n else 15.0, upper_deadline.remaining() * 0.90),
+        )
         if construct is not None:
             routes = construct(instance, hi)
             routes, res = repair_solution(instance, routes, config=cfg, weights=w, m=hi)
@@ -244,21 +338,9 @@ def solve_with_fleet_search(
         else:
             routes, score, feas = construct_solution(
                 instance, hi, expert_variant=v, seed=s, config=cfg, weights=w,
-                deadline=parent_deadline.child(slice_s, stage="upper_construct"),
-                use_expert=True,
+                deadline=upper_deadline.child(slice_s, stage="upper_dense"),
+                use_expert=False,
             )
-            # If expert with a non-canonical seed collapses, try fast construct once.
-            if (not feas) and (v, s) != ("edf", 0) and parent_deadline.remaining() > 25:
-                alt_routes, alt_score, alt_feas = construct_solution(
-                    instance, hi, expert_variant=v, seed=s, config=cfg, weights=w,
-                    deadline=parent_deadline.child(
-                        min(90.0, parent_deadline.remaining()), stage="upper_matrix"
-                    ),
-                    use_expert=False,
-                )
-                if alt_feas or alt_score.dominates(score):
-                    routes, score, feas = alt_routes, alt_score, alt_feas
-                    v = f"{v}+matrix"
         n_cust = int(instance.num_customers)
         served = n_cust - int(score.unserved_customer_count)
         _record(
@@ -280,21 +362,46 @@ def solve_with_fleet_search(
         depot = instance.depot_index
         best_routes = [([depot, depot], [None, None]) for _ in range(hi)]
 
-    # Expand upper if needed
-    expand_step = int(fleet_cfg.get("upper_expand_step", 4))
-    expand_max = min(int(instance.num_customers), int(fleet_cfg.get("upper_expand_max", max(hi + 20, 45))))
+    # Expand upward with dense construct until feasible (type-1 often needs this).
+    expand_step = int(fleet_cfg.get("upper_expand_step", 2))
+    expand_max = min(
+        int(instance.num_customers),
+        max(int(hi0), int(fleet_cfg.get("upper_expand_max", hi0)), adaptive_start_fleet(lo, hi0, instance) + 10),
+    )
     expand_hi = hi
-    while (not best_feasible) and expand_hi + expand_step <= expand_max and _alive():
+    while (not best_feasible) and expand_hi < expand_max and _alive() and parent_deadline.remaining() > 8:
         expand_hi = min(expand_max, expand_hi + expand_step)
         v, s = variants[attempt % len(variants)], seeds[attempt % len(seeds)] + attempt
         t0 = time.perf_counter()
-        routes, score, feas = construct_solution(
-            instance, expand_hi, expert_variant=v, seed=s, config=cfg, weights=w,
-            deadline=parent_deadline.child(
-                min(350.0, parent_deadline.remaining()), stage="upper_expand"
-            ),
-            use_expert=True,
+        # Near-miss packs: spend more time repairing at the next fleet size.
+        rem = parent_deadline.remaining()
+        near = best_score is not None and int(best_score.unserved_customer_count) <= 5
+        expand_slice = min(
+            55.0 if near else (40.0 if fast_mode else 55.0),
+            max(18.0, rem * (0.28 if near else 0.18)),
         )
+        routes, score, feas = construct_solution(
+            instance, expand_hi, expert_variant="edf", seed=s % 3, config=cfg, weights=w,
+            deadline=parent_deadline.child(expand_slice, stage="upper_expand"),
+            use_expert=False,
+        )
+        # If almost complete, one dedicated repair burst at this m (small-n only).
+        if (
+            (not large_n)
+            and (not feas)
+            and score is not None
+            and int(score.unserved_customer_count) <= 3
+            and rem > 20
+        ):
+            routes2, res2 = repair_solution(
+                instance, routes, config=cfg, weights=w, m=expand_hi,
+                max_rounds=20, mode="regret", regret_k=3, station_candidates=2,
+                deadline=parent_deadline.child(min(25.0, rem * 0.2), stage="upper_expand_repair"),
+            )
+            if res2.score is not None and (
+                res2.feasible or res2.score.dominates(score)
+            ):
+                routes, score, feas = routes2, res2.score, bool(res2.feasible)
         n_cust = int(instance.num_customers)
         served = n_cust - int(score.unserved_customer_count)
         _record(
@@ -329,40 +436,43 @@ def solve_with_fleet_search(
         local_best = None
         local_routes = None
         schedule = _variant_seed_schedule(variants, seeds, max(retries_per, len(variants)))
-        # Shrink retries when time is tight
+        # Shrink retries when time is tight; stop after first success (budget killer was
+        # re-proving the same m with every variant).
         rem = parent_deadline.remaining()
         if rem < 45:
-            schedule = schedule[:2]
+            schedule = schedule[:1]
         elif rem < 90:
-            schedule = schedule[:4]
-        elif rem < 150:
-            schedule = schedule[:6]
+            schedule = schedule[:2]
+        elif rem < 180:
+            schedule = schedule[:3]
+        else:
+            schedule = schedule[: max(2, min(3, len(schedule)))]
+        stop_on_first = bool(fleet_cfg.get("stop_target_on_first_feasible", True))
         for trial, (v, s) in enumerate(schedule):
             if not _alive() or parent_deadline.remaining() < 3:
                 break
             t0 = time.perf_counter()
             attempt_deadline = parent_deadline.child(
-                min(30.0, max(3.0, parent_deadline.remaining() - 5.0)), stage=f"{mode}_attempt",
+                min(45.0, max(5.0, parent_deadline.remaining() - 5.0)), stage=f"{mode}_attempt",
             )
-            warm_routes = star_routes if (warm and best_feasible and mode == "warm") else None
+            warm_routes = star_routes if (warm and best_feasible and mode in ("warm", "elim")) else None
             warm_src = f"warm_from_m={m_star}" if warm_routes is not None else "cold_construct"
             bound_kind = "known_feasible" if warm_routes is not None else (
-                "independent_probe" if mode == "independent" else "heuristic_estimate"
+                "independent_probe" if mode in ("independent", "jump", "binary") else "heuristic_estimate"
             )
-            if warm_routes is not None and use_elim and parent_deadline.remaining() > 90:
+            if warm_routes is not None and use_elim and parent_deadline.remaining() > 25:
+                elim_budget = min(35.0, max(8.0, parent_deadline.remaining() * 0.22))
                 routes, score, atts = eliminate_one_route(
                     instance, warm_routes, config=cfg, weights=w, m=m_star,
-                    deadline=parent_deadline.child(
-                        min(15.0, parent_deadline.remaining() * 0.15), stage="route_elim"
-                    ),
-                    top_k=2,
-                    focused_alns=False,
+                    deadline=parent_deadline.child(elim_budget, stage="route_elim"),
+                    top_k=int(fleet_cfg.get("elim_top_k", 6)),
+                    focused_alns=bool(fleet_cfg.get("elim_focused_alns", True)),
                 )
                 elim_count += len(atts)
                 feas = score is not None and bool(
                     replay_solution(instance, routes, config=cfg, weights=w, m=target).feasible
                 )
-                used = sum(1 for nodes, _ in routes if any(instance.nodes[n].is_customer for n in nodes))
+                used = _nonempty_route_count(instance, routes)
                 if used > target or not feas:
                     routes, score, feas = construct_solution(
                         instance, target, expert_variant=v, seed=s, config=cfg, weights=w,
@@ -375,7 +485,7 @@ def solve_with_fleet_search(
                     warm_start=warm_routes, deadline=attempt_deadline,
                 )
 
-            if (not feas) and cold_after_warm and warm_routes is not None and parent_deadline.remaining() > 20:
+            if (not feas) and cold_after_warm and warm_routes is not None and parent_deadline.remaining() > 15:
                 routes2, score2, feas2 = construct_solution(
                     instance, target, expert_variant=v, seed=s + 17, config=cfg, weights=w,
                     warm_start=None, deadline=attempt_deadline, use_expert=False,
@@ -385,7 +495,6 @@ def solve_with_fleet_search(
                     warm_src = "cold_construct_after_warm_fail"
                     bound_kind = "independent_probe"
 
-            # Route-pool add is exact-replay heavy; only archive feasible attempts.
             if feas:
                 pool.add_from_solution(
                     instance, routes, score=score, source_method=f"{mode}_{v}",
@@ -402,8 +511,9 @@ def solve_with_fleet_search(
             )
             if feas and (local_best is None or score.dominates(local_best)):
                 local_best, local_routes, found = score, routes, True
+                if stop_on_first:
+                    break
 
-        # Route-pool recombination at this target
         if use_sp and _alive() and len(pool) > 0 and parent_deadline.remaining() > 15:
             rebuilt, pool_score, meta = solve_set_partitioning(
                 instance, pool, config=cfg, weights=w, m=target,
@@ -421,40 +531,237 @@ def solve_with_fleet_search(
                     )
 
         if found and local_routes is not None and local_best is not None:
-            star_routes, star_score = local_routes, local_best
-            m_star = target
+            star_routes = _compact_to_used(instance, local_routes)
+            # Prefer actual used count when solution compacted below target slots.
+            used_now = _nonempty_route_count(instance, star_routes)
+            star_score = local_best
+            m_star = min(int(target), int(used_now)) if used_now > 0 else int(target)
             best_feasible = True
             successful_at_mstar = 1
             bound_ann["known_feasible_incumbent"] = int(m_star)
             return True
         return False
 
-    # Warm descending mode
-    while m - 1 >= lo and _alive():
-        target = m - 1
-        ok = _try_target(target, mode="warm")
-        if ok:
-            m = target
-            consecutive_failures = 0
-            continue
-        consecutive_failures += 1
-        if consecutive_failures >= failures_before_stop:
-            break
-        m = target
+    # Compact first feasible upper to used vehicles (avoid descending from padded hi).
+    if best_feasible:
+        used0 = max(lo, _nonempty_route_count(instance, best_routes))
+        if used0 < m:
+            star_routes = _compact_to_used(instance, star_routes)
+            final0 = replay_solution(instance, star_routes, config=cfg, weights=w, m=used0)
+            if final0.feasible and final0.score is not None:
+                star_score = final0.score
+                m = used0
+                m_star = used0
+                hi = used0
+                bound_ann["compacted_upper_used"] = int(used0)
+                _record(
+                    fleet_size=used0, variant="compact_used", seed=0, feasible=True,
+                    served=int(instance.num_customers) - int(star_score.unserved_customer_count),
+                    used_vehicles=int(star_score.used_evs), distance=float(star_score.total_distance),
+                    runtime=0.0, score=star_score,
+                    warm_start_source="compact_empty_routes", bound_kind="known_feasible",
+                )
 
-    # Independent target probes (heuristic feasibility is not monotonic)
-    if best_feasible and _alive() and parent_deadline.remaining() > 60:
+    # Hanif fleet shrink: cold dense construct at lower m (no expensive elimination).
+    if large_n and best_feasible and _alive() and parent_deadline.remaining() > 25:
+        # Big jump first (helps type-2 / relaxed TW where start fleet is padded).
+        jump = max(lo, (lo + m_star) // 2)
+        if jump < m_star - 3 and parent_deadline.remaining() > 20:
+            t0 = time.perf_counter()
+            slice_s = min(45.0, max(15.0, parent_deadline.remaining() * 0.35))
+            routes, score, feas = construct_solution(
+                instance, jump, expert_variant="edf", seed=0,
+                config=cfg, weights=w,
+                deadline=parent_deadline.child(slice_s, stage="hanif_jump"),
+                use_expert=False,
+            )
+            used = 0
+            if feas and score is not None:
+                routes = _compact_to_used(instance, routes)
+                used = _nonempty_route_count(instance, routes) or jump
+                final_s = replay_solution(instance, routes, config=cfg, weights=w, m=used)
+                feas = bool(final_s.feasible)
+                if feas and final_s.score is not None:
+                    score = final_s.score
+            _record(
+                fleet_size=jump, variant="hanif_jump", seed=0, feasible=bool(feas),
+                served=int(instance.num_customers) - int((score or star_score).unserved_customer_count),
+                used_vehicles=int(used if feas else (score.used_evs if score else 0)),
+                distance=float((score or star_score).total_distance),
+                runtime=time.perf_counter() - t0, score=score,
+                warm_start_source="cold_dense_jump", bound_kind="known_feasible",
+                failure_reason=None if feas else "hanif_jump_infeasible",
+            )
+            if feas and score is not None:
+                star_routes = routes
+                star_score = score
+                m_star = min(int(jump), int(used)) if used > 0 else int(jump)
+                m = m_star
+                bound_ann["known_feasible_incumbent"] = int(m_star)
+
+        shrink_failures = 0
+        step = max(4, (m_star - lo) // 6)
+        shrink_rounds = 0
+        while (
+            m_star > lo
+            and shrink_failures < 3
+            and shrink_rounds < 8
+            and parent_deadline.remaining() > 18
+        ):
+            target = max(lo, m_star - step)
+            if target >= m_star:
+                target = m_star - 1
+            if target < lo:
+                break
+            shrink_rounds += 1
+            t0 = time.perf_counter()
+            slice_s = min(40.0, max(12.0, parent_deadline.remaining() * 0.30))
+            routes, score, feas = construct_solution(
+                instance, target, expert_variant="edf", seed=shrink_rounds,
+                config=cfg, weights=w,
+                deadline=parent_deadline.child(slice_s, stage="hanif_shrink"),
+                use_expert=False,
+            )
+            used = _nonempty_route_count(instance, routes) if feas else 0
+            if feas and score is not None:
+                routes = _compact_to_used(instance, routes)
+                used = _nonempty_route_count(instance, routes) or target
+                final_s = replay_solution(instance, routes, config=cfg, weights=w, m=used)
+                feas = bool(final_s.feasible)
+                if feas and final_s.score is not None:
+                    score = final_s.score
+            _record(
+                fleet_size=target, variant="hanif_shrink", seed=shrink_rounds,
+                feasible=bool(feas),
+                served=int(instance.num_customers) - int((score or star_score).unserved_customer_count),
+                used_vehicles=int(used if feas else (score.used_evs if score else 0)),
+                distance=float((score or star_score).total_distance),
+                runtime=time.perf_counter() - t0, score=score,
+                warm_start_source="cold_dense_shrink", bound_kind="known_feasible",
+                failure_reason=None if feas else "hanif_shrink_infeasible",
+            )
+            if feas and score is not None:
+                star_routes = routes
+                star_score = score
+                m_star = min(int(target), int(used)) if used > 0 else int(target)
+                m = m_star
+                best_feasible = True
+                bound_ann["known_feasible_incumbent"] = int(m_star)
+                shrink_failures = 0
+                step = max(2, step // 2) if m_star - lo < 2 * step else step
+            else:
+                shrink_failures += 1
+                step = max(2, step // 2)
+
+    # Jump probe: try mid-band before slow linear descent burns the budget.
+    if best_feasible and (not large_n) and _alive() and parent_deadline.remaining() > 40:
+        jump_targets = sorted({
+            max(lo, int(round(0.55 * m_star + 0.45 * lo))),
+            max(lo, (lo + m_star) // 2),
+            max(lo, m_star - max(3, m_star // 5)),
+        }, reverse=True)
+        for target in jump_targets:
+            if target >= m_star or not _alive():
+                continue
+            if _try_target(target, mode="jump"):
+                m = m_star
+
+    # Warm / elimination descending mode — only after a feasible incumbent exists.
+    if best_feasible and not large_n:
+        while m - 1 >= lo and _alive():
+            target = m - 1
+            ok = _try_target(target, mode="warm")
+            if ok:
+                m = m_star
+                consecutive_failures = 0
+                continue
+            consecutive_failures += 1
+            if consecutive_failures >= failures_before_stop:
+                break
+            m = target
+
+    # Intensive elimination loop while time remains
+    elim_rounds = 0 if large_n else int(fleet_cfg.get("intensive_elim_rounds", 8))
+    for _ in range(elim_rounds):
+        if not (best_feasible and m_star > lo and _alive() and parent_deadline.remaining() > 35):
+            break
+        t0 = time.perf_counter()
+        routes, score, atts = eliminate_one_route(
+            instance, star_routes, config=cfg, weights=w, m=m_star,
+            deadline=parent_deadline.child(
+                min(40.0, parent_deadline.remaining() * 0.25), stage="intensive_elim"
+            ),
+            top_k=int(fleet_cfg.get("elim_top_k", 8)),
+            focused_alns=True,
+        )
+        elim_count += len(atts)
+        feas = score is not None and bool(
+            replay_solution(instance, routes, config=cfg, weights=w, m=m_star - 1).feasible
+        )
+        used = _nonempty_route_count(instance, routes)
+        _record(
+            fleet_size=m_star - 1, variant="intensive_elim", seed=0, feasible=feas,
+            served=int(instance.num_customers) - int((score or star_score).unserved_customer_count),
+            used_vehicles=used, distance=float((score or star_score).total_distance),
+            runtime=time.perf_counter() - t0, score=score,
+            warm_start_source=f"elim_from_m={m_star}", bound_kind="known_feasible",
+            failure_reason=None if feas else "intensive_elim_failed",
+        )
+        if feas and score is not None:
+            star_routes = _compact_to_used(instance, routes)
+            star_score = score
+            m_star = min(m_star - 1, used) if used > 0 else m_star - 1
+            m = m_star
+            bound_ann["known_feasible_incumbent"] = int(m_star)
+        else:
+            break
+
+    # Hanif: light leftover recovery only (never full station regret on 1000 nodes).
+    if large_n and (not best_feasible) and _alive() and parent_deadline.remaining() > 5:
+        from src.search.fast_construct import _recover_unserved_fast
+        t0 = time.perf_counter()
+        final0 = replay_solution(instance, star_routes, config=cfg, weights=w, m=m_star)
+        unserved = [
+            i for i, n in enumerate(instance.nodes)
+            if n.is_customer and i not in set(final0.served_customers)
+        ]
+        if unserved:
+            star_routes, unserved = _recover_unserved_fast(
+                instance, star_routes, unserved, m=m_star, config=cfg, weights=w,
+                deadline=parent_deadline.child(
+                    min(parent_deadline.remaining() * 0.85, 45.0), stage="hanif_recover"
+                ),
+            )
+            final1 = replay_solution(instance, star_routes, config=cfg, weights=w, m=m_star)
+            if final1.score is not None:
+                star_score = final1.score
+                best_feasible = bool(final1.feasible)
+                if best_feasible:
+                    bound_ann["known_feasible_incumbent"] = int(m_star)
+        _record(
+            fleet_size=m_star, variant="hanif_recover", seed=0,
+            feasible=bool(best_feasible),
+            served=int(instance.num_customers) - int(star_score.unserved_customer_count),
+            used_vehicles=int(star_score.used_evs), distance=float(star_score.total_distance),
+            runtime=time.perf_counter() - t0, score=star_score,
+            warm_start_source="station_recover", bound_kind="expanded_upper",
+        )
+
+    # Independent target probes (feasibility is not monotonic)
+    if best_feasible and (not large_n) and _alive() and parent_deadline.remaining() > 25:
         probes = sorted({
             max(lo, (lo + m_star) // 2),
             max(lo, m_star - 2),
             max(lo, m_star - 4),
             max(lo, m_star - 1),
+            max(lo, int(round(1.15 * lo))),
+            max(lo, int(round(1.35 * lo))),
         })
         for target in probes:
-            if target >= m_star or not _alive() or parent_deadline.remaining() < 30:
+            if target >= m_star or not _alive() or parent_deadline.remaining() < 15:
                 continue
             if _try_target(target, mode="independent"):
-                pass
+                m = m_star
 
     if _alive() and best_feasible:
         routes, res = repair_solution(
@@ -463,10 +770,15 @@ def solve_with_fleet_search(
         if res.score is not None and res.score.dominates(star_score):
             star_routes, star_score = routes, res.score
 
+    star_routes = _compact_to_used(instance, star_routes)
     final = replay_solution(instance, star_routes, config=cfg, weights=w, m=m_star)
     if final.score is not None:
         star_score = final.score
+        used_final = _nonempty_route_count(instance, star_routes)
+        if final.feasible and used_final > 0:
+            m_star = min(int(m_star), int(used_final))
 
+    bound_ann["remaining_after_search"] = float(parent_deadline.remaining())
     return FleetSearchResult(
         m_star=int(m_star),
         best_routes=star_routes,

@@ -17,3 +17,18 @@ dataset/EVRPTWD/unanchored/
 dataset/EVRPTWD/anchored/
 dataset/EVRPTWD/converted/
 dataset/EVRPTWD/Downloads/
+
+# Local clutter / regenerated artifacts (paper freezes live under outputs/baselines/*_pass or dated folders)
+logs/
+outputs/runs/
+outputs/tgfps_smoke/
+outputs/tgfps_neural_validation/
+outputs/tgfps_full9/
+outputs/evaluation/
+outputs/expert_diagnostics/
+# Working copies superseded by immutable freezes
+outputs/baselines/deterministic_fps/
+outputs/baselines/deterministic_fps_p10_partial/
+outputs/baselines/deterministic_fps_p105/
+outputs/baselines/transformer_search_guide_p11/
+outputs/baselines/paper_full9_holdout/

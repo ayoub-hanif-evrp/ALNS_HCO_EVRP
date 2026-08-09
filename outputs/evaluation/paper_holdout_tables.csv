@@ -1,8 +1,0 @@
-method,family,served,feas,J,n
-bc_best,type2,1.0,1.0,40183.79113964089,3
-rl_best,type2,1.0,1.0,40183.79113964089,3
-rl_best_feasibility,type2,1.0,1.0,40242.62188257125,3
-rl_best_objective,type2,1.0,1.0,40242.62188257125,3
-checkpoints_best,type2,1.0,1.0,39858.13713312554,3
-final_best,type2,1.0,1.0,39743.55008637651,3
-expert_pending,full9,0.0,0.0,0.0,9

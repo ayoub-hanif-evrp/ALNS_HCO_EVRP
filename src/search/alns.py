@@ -70,19 +70,25 @@ def run_alns(
     config: dict | None = None,
     weights: CostWeights | None = None,
     m: int | None = None,
-    iterations: int = 100,
-    time_limit_seconds: float = 30.0,
+    iterations: int | None = None,
+    time_limit_seconds: float | None = None,
     seed: int = 0,
     destroy_k: int = 4,
     regret_k: int = 2,
     guide=None,
     move_logger=None,
 ) -> ALNSResult:
-    """Run exact-replay ALNS; rejected moves roll back. Optional neural guidance."""
+    """Run exact-replay ALNS; rejected moves roll back. Optional neural guidance.
+
+    Explicit ``iterations`` / ``time_limit_seconds`` always override config when
+    provided (None → fall back to hybrid_search.alns.*).
+    """
     cfg = config or {}
     hs = (cfg.get("hybrid_search") or {}).get("alns") or {}
-    iterations = int(hs.get("iterations", iterations))
-    time_limit_seconds = float(hs.get("time_limit_seconds", time_limit_seconds))
+    iterations = int(hs.get("iterations", 100) if iterations is None else iterations)
+    time_limit_seconds = float(
+        hs.get("time_limit_seconds", 30.0) if time_limit_seconds is None else time_limit_seconds
+    )
     rng = random.Random(int(seed))
 
     current = _clone_routes(routes)

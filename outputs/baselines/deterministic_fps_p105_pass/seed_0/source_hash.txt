@@ -1,4 +1,0 @@
-git=fe59f84e5095f6f034d6cc22e619ea5e26a4caca
-config_sha256=1ecc64c8a8435caffd4017ba1c2a89e4507c4c8180a7783fb7a7956fd7447458
-budget_seconds_per_instance=900.0
-seed=0

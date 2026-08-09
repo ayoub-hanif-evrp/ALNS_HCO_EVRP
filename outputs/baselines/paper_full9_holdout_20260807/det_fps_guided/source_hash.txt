@@ -1,6 +1,0 @@
-git=fe59f84e5095f6f034d6cc22e619ea5e26a4caca
-config_sha256=f4f10741c4f0c40118825550a2353df89a96a8cf415441a74e1c952f5fd86e7a
-budget=900.0
-seed=0
-guide=True
-guide_ckpt=C:\Users\ayoub\Desktop\Transformer_MARL_EVRP-main\outputs\tgfps_p11\transformer_search_guide.pt

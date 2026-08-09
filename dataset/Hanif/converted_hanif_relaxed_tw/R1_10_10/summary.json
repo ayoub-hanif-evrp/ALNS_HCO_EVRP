@@ -1,0 +1,20 @@
+{
+  "instance_name": "R1_10_10",
+  "variant": "variant_B_relaxed_TW",
+  "time_windows_modified": true,
+  "num_customers": 1000,
+  "num_stations": 333,
+  "num_nodes": 1334,
+  "planning_horizon": 1925.0,
+  "load_capacity": 200.0,
+  "battery_capacity": 600.0,
+  "energy_consumption_rate": 1.0,
+  "charging_rate_min": 0.5,
+  "charging_rate_max": 2.0,
+  "charging_rate_median": 1.3102,
+  "price_per_energy_min": 0.09999870930773405,
+  "price_per_energy_max": 1.000002000002,
+  "price_per_energy_median": 0.586139185318268,
+  "station_wait_model": "expected_wait_mu",
+  "source_ev_specs": "dataset/Hanif/EVRPTW_ChargingStations_Dataset/ev_specs.json"
+}

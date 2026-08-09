@@ -1,6 +1,0 @@
-{
-  "tw_aware_floor": true,
-  "target_customers_per_vehicle": 8.0,
-  "training_fleet_mode": "fixed_tw_aware",
-  "extra_margin": 4
-}

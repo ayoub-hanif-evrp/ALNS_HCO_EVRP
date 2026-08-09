@@ -1,8 +1,0 @@
-{
-  "baseline_id": "expert_repair_alns_20260801",
-  "method": "Expert+Repair+ALNS",
-  "immutable": true,
-  "note": "Deterministic Expert+Repair+ALNS milestone. NOT Transformer-guided. Do not overwrite.",
-  "summary_sha256": "6327f3678060b1a90c80b35c19a4a71acf15ceec931b9f209dd56933949cbc21",
-  "source": "outputs/tgfps_full9"
-}

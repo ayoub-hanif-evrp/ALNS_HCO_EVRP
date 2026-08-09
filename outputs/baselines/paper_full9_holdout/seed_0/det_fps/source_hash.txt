@@ -1,6 +1,0 @@
-git=fe59f84e5095f6f034d6cc22e619ea5e26a4caca
-config_sha256=38a67414aa77b7a0fec8256f2ebcc4376e853c41fa6db40a28d476ab0b1a5a9c
-budget=900.0
-seed=0
-guide=False
-guide_ckpt=

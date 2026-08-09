@@ -1,0 +1,52 @@
+{
+  "method": "HanifFleetIntensification",
+  "result_root": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/CurrentBestDeterministicHanif",
+  "A": {
+    "mean_k": 80.06666666666666,
+    "baseline_mean_k": 96.71666666666667,
+    "reduction_pct": 17.215233499913843,
+    "mean_distance": 55455.49497779608,
+    "mean_runtime_s": 96.14454730332751,
+    "feasible": "60/60",
+    "hanif_reference_mean_k": 74.2
+  },
+  "B": {
+    "mean_k": 65.15,
+    "baseline_mean_k": 80.35,
+    "reduction_pct": 18.91723708774112,
+    "mean_distance": 51017.4745310843,
+    "mean_runtime_s": 70.02604621331751,
+    "feasible": "60/60",
+    "hanif_reference_mean_k": 63.7
+  },
+  "families_A": {
+    "C1": 118.0,
+    "C2": 48.9,
+    "R1": 119.0,
+    "R2": 44.6,
+    "RC1": 102.9,
+    "RC2": 47.0
+  },
+  "families_B": {
+    "C1": 102.4,
+    "C2": 42.3,
+    "R1": 96.8,
+    "R2": 29.6,
+    "RC1": 92.2,
+    "RC2": 27.6
+  },
+  "representative_instances": [
+    "C1_10_1",
+    "C2_10_1",
+    "R1_10_1",
+    "R2_10_1",
+    "RC1_10_1",
+    "RC2_10_1"
+  ],
+  "semantics": {
+    "wait_mu": "deterministic expected wait",
+    "wait_sigma": false,
+    "charging_price_in_objective": false,
+    "charging_rate_heterogeneous": true
+  }
+}

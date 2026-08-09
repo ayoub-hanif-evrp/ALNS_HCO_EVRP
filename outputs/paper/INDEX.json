@@ -1,0 +1,12 @@
+{
+  "tables": {
+    "main": "tables/main_results.csv",
+    "family": "tables/family_results.csv",
+    "per_instance": "tables/per_instance_results.csv",
+    "ablation": "tables/ablation_results.csv"
+  },
+  "figures_dir": "figures/",
+  "routes_dir": "routes/",
+  "best_result": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/CurrentBestDeterministicHanif",
+  "note": "SVG + 300 DPI PNG. Representative instances fixed: C1_10_1, C2_10_1, R1_10_1, R2_10_1, RC1_10_1, RC2_10_1"
+}

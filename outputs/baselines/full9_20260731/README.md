@@ -1,1 +1,0 @@
-# Frozen full-9 baseline (2026-07-31)\n\n**Do not overwrite.**\n\nSource run: outputs/runs/run_20260731_232435.\n\nMetrics in manifest.json and evaluation/holdout_full9/.\n

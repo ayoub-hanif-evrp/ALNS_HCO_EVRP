@@ -1,39 +1,20 @@
-﻿# Commands
+﻿# Commands — Hanif Fleet Intensification
 
-Run from the **project root**.
+Frozen FastFeasibleBaseline: `outputs/hanif_fps/fast_feasible_baseline/` (do not overwrite).
 
-Study: **Schneider type-2** · anti-drift RL (strong BC-reg every step, early-stop patience 2, low entropy).
-
----
-
-## Train (full Expert → BC → RL → eval)
+## Intensified A + B (A→B warm starts)
 
 ```powershell
-python main_train.py --config configs/train.yaml --device cuda
+python scripts/run_hanif_fps.py --all --variant both --budget 180 --out outputs/hanif_fps_intensify
 ```
 
----
-
-## Resume RL only (after BC is done)
+## Pilot
 
 ```powershell
-python main_train.py --config configs/train.yaml --device cuda --stage rl
+python scripts/run_hanif_fps.py --pilot --variant both --budget 180 --out outputs/hanif_fps_intensify_pilot
 ```
 
----
-
-## Test (holdout)
-
-```powershell
-python main_train.py --config configs/train.yaml --device cuda --stage eval
-```
-
----
-
-## Dashboard
-
-```powershell
-python main_dashboard.py
-```
-
-Open **http://127.0.0.1:8080**
+Milestone engineering targets (not paper claims):
+- A mean K ≤ 80, 60/60 feasible
+- B mean K ≤ 70, 60/60 feasible
+- no B instance worse than its A incumbent

@@ -1,7 +1,6 @@
-"""Convert Hanif variant_A_original_TW Solomon .txt files to EVRPTW folders.
+"""Convert Hanif Solomon .txt variants (A original TW / B relaxed TW) to EVRPTW folders.
 
 Writes a NEW output tree only. Never modifies source .txt / station CSVs.
-Rejects variant_B (relaxed TW) as a conversion source.
 """
 from __future__ import annotations
 
@@ -17,14 +16,39 @@ from src.utils.logging_utils import get_logger
 
 LOGGER = get_logger()
 
-DEFAULT_SOURCE = Path(
+DEFAULT_SOURCE_A = Path(
     "dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_A_original_TW"
+)
+DEFAULT_SOURCE_B = Path(
+    "dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_B_relaxed_TW"
 )
 DEFAULT_EV_SPECS = Path(
     "dataset/Hanif/EVRPTW_ChargingStations_Dataset/ev_specs.json"
 )
-DEFAULT_OUTPUT = Path("dataset/Hanif/converted_hanif_original_tw")
+DEFAULT_OUTPUT_A = Path("dataset/Hanif/converted_hanif_original_tw")
+DEFAULT_OUTPUT_B = Path("dataset/Hanif/converted_hanif_relaxed_tw")
+
+# Back-compat aliases
+DEFAULT_SOURCE = DEFAULT_SOURCE_A
+DEFAULT_OUTPUT = DEFAULT_OUTPUT_A
 SOURCE_VARIANT = "variant_A_original_TW"
+
+VARIANT_SPECS = {
+    "A": {
+        "key": "variant_A_original_TW",
+        "source": DEFAULT_SOURCE_A,
+        "output": DEFAULT_OUTPUT_A,
+        "time_windows_modified": False,
+        "label": "original-TW",
+    },
+    "B": {
+        "key": "variant_B_relaxed_TW",
+        "source": DEFAULT_SOURCE_B,
+        "output": DEFAULT_OUTPUT_B,
+        "time_windows_modified": True,
+        "label": "relaxed-TW",
+    },
+}
 
 
 def _parse_solomon_txt(path: Path) -> dict:
@@ -37,7 +61,6 @@ def _parse_solomon_txt(path: Path) -> dict:
     fleet_size = int(vehicle_line[0])
     load_capacity = float(vehicle_line[1])
 
-    # Homberger/Hanif convention: depot id 0, customers 1..1000, stations >= 1001.
     depot = None
     customers: list[tuple] = []
     stations: list[tuple] = []
@@ -61,11 +84,8 @@ def _parse_solomon_txt(path: Path) -> dict:
             customers.append(row)
         else:
             stations.append(row)
-
     if depot is None:
         raise ValueError(f"No depot in {path}")
-    customers.sort(key=lambda r: r[0])
-    stations.sort(key=lambda r: r[0])
     return {
         "fleet_size": fleet_size,
         "load_capacity": load_capacity,
@@ -75,25 +95,23 @@ def _parse_solomon_txt(path: Path) -> dict:
     }
 
 
-def _load_station_attrs(csv_path: Path) -> dict[int, dict]:
-    if not csv_path.is_file():
-        raise FileNotFoundError(
-            f"Hanif station attributes CSV missing: {csv_path}. "
-            "Station charging_rate/price/wait/density are required."
-        )
-    out: dict[int, dict] = {}
-    with csv_path.open(newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            sid = int(row["station_id"])
-            out[sid] = {
+def _load_station_attrs(path: Path) -> dict[int, dict]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing stations CSV: {path}")
+    attrs: dict[int, dict] = {}
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            sid = int(float(row.get("station_id") or row.get("id") or row.get("node_id")))
+            attrs[sid] = {
                 "charging_rate": float(row["charging_rate"]),
                 "price_mu": float(row["price_mu"]),
                 "price_sigma": float(row["price_sigma"]),
                 "wait_mu": float(row["wait_mu"]),
                 "wait_sigma": float(row["wait_sigma"]),
-                "density_score": float(row["density_score"]),
+                "density_score": float(row.get("density_score", 0.0) or 0.0),
             }
-    return out
+    return attrs
 
 
 def _euclidean_matrices(
@@ -114,6 +132,8 @@ def convert_one_instance(
     battery_capacity: float,
     energy_consumption_rate: float,
     speed: float = 1.0,
+    source_variant: str = SOURCE_VARIANT,
+    time_windows_modified: bool = False,
 ) -> dict:
     name = txt_path.stem
     stations_csv = txt_path.with_name(f"{name}_stations.csv")
@@ -139,7 +159,6 @@ def convert_one_instance(
     horizon = float(depot[5])
     load_cap = float(parsed["load_capacity"])
 
-    # Contiguous indices: depot=0, customers=1..Nc, stations=Nc+1..
     id_to_idx = {int(r[0]): i for i, r in enumerate(nodes_raw)}
     customer_indices = [id_to_idx[int(r[0])] for r in customers]
     station_indices = [id_to_idx[int(r[0])] for r in stations]
@@ -235,9 +254,9 @@ def convert_one_instance(
         "instance_name": name,
         "problem_type": "E-VRPTW",
         "source_dataset": "Hanif EVRPTW Charging Stations Dataset",
-        "source_variant": SOURCE_VARIANT,
+        "source_variant": source_variant,
         "source_doi": "10.3390/data11040083",
-        "time_windows_modified": False,
+        "time_windows_modified": bool(time_windows_modified),
         "num_depots": 1,
         "num_customers": len(customers),
         "num_charging_stations": len(stations),
@@ -275,8 +294,8 @@ def convert_one_instance(
 
     summary = {
         "instance_name": name,
-        "variant": SOURCE_VARIANT,
-        "time_windows_modified": False,
+        "variant": source_variant,
+        "time_windows_modified": bool(time_windows_modified),
         "num_customers": len(customers),
         "num_stations": len(stations),
         "num_nodes": n,
@@ -297,61 +316,61 @@ def convert_one_instance(
     return summary
 
 
-def ensure_hanif_original_tw_converted(
+def ensure_hanif_variant_converted(
+    variant: str = "A",
     *,
-    source_dir: str | Path = DEFAULT_SOURCE,
-    output_dir: str | Path = DEFAULT_OUTPUT,
+    source_dir: str | Path | None = None,
+    output_dir: str | Path | None = None,
     ev_specs_path: str | Path = DEFAULT_EV_SPECS,
     force: bool = False,
 ) -> Path:
-    """Convert all variant_A instances if the output tree is missing or incomplete."""
-    source_dir = Path(source_dir)
-    output_dir = Path(output_dir)
-    if "relaxed" in str(source_dir).lower() or "variant_b" in str(source_dir).lower():
-        raise ValueError(
-            f"Refusing relaxed-TW source: {source_dir}. "
-            "Use variant_A_original_TW only (Decision A1)."
-        )
+    """Convert all instances for variant A (original TW) or B (relaxed TW)."""
+    key = str(variant).strip().upper()
+    if key in ("ORIGINAL", "ORIGINAL_TW", "VARIANT_A"):
+        key = "A"
+    if key in ("RELAXED", "RELAXED_TW", "VARIANT_B"):
+        key = "B"
+    if key not in VARIANT_SPECS:
+        raise ValueError(f"Unknown Hanif variant {variant!r}; use A or B")
+    spec = VARIANT_SPECS[key]
+    source_dir = Path(source_dir or spec["source"])
+    output_dir = Path(output_dir or spec["output"])
     if not source_dir.is_dir():
-        raise FileNotFoundError(f"Hanif variant_A source not found: {source_dir}")
+        raise FileNotFoundError(f"Hanif {spec['key']} source not found: {source_dir}")
 
     specs = json.loads(Path(ev_specs_path).read_text(encoding="utf-8"))
     battery = float(specs["battery_capacity"])
     rate = float(specs["energy_consumption_rate"])
 
-    txts = sorted(source_dir.glob("*.txt"))
-    txts = [p for p in txts if not p.name.startswith(".")]
+    txts = sorted(p for p in source_dir.glob("*.txt") if not p.name.startswith("."))
     if not txts:
         raise FileNotFoundError(f"No .txt instances under {source_dir}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = output_dir / "conversion_manifest.json"
     need = []
     for txt in txts:
-        inst_dir = output_dir / txt.stem
-        marker = inst_dir / "evrp_instance.json"
+        marker = output_dir / txt.stem / "evrp_instance.json"
         if force or not marker.is_file():
             need.append(txt)
-        else:
-            meta = json.loads(marker.read_text(encoding="utf-8")).get("metadata") or {}
-            if str(meta.get("source_variant", "")).lower().find("relaxed") >= 0:
-                need.append(txt)
-            elif bool(meta.get("time_windows_modified", False)):
-                need.append(txt)
+            continue
+        meta = json.loads(marker.read_text(encoding="utf-8")).get("metadata") or {}
+        if str(meta.get("source_variant", "")) != spec["key"]:
+            need.append(txt)
 
     t0 = time.time()
-    summaries = []
     for i, txt in enumerate(need):
-        LOGGER.info("Converting Hanif original-TW [%d/%d] %s", i + 1, len(need), txt.stem)
-        summaries.append(
-            convert_one_instance(
-                txt, output_dir,
-                battery_capacity=battery,
-                energy_consumption_rate=rate,
-            )
+        LOGGER.info(
+            "Converting Hanif %s [%d/%d] %s",
+            spec["label"], i + 1, len(need), txt.stem,
+        )
+        convert_one_instance(
+            txt, output_dir,
+            battery_capacity=battery,
+            energy_consumption_rate=rate,
+            source_variant=spec["key"],
+            time_windows_modified=bool(spec["time_windows_modified"]),
         )
 
-    # Always refresh manifest for full set presence.
     names = sorted(p.stem for p in txts)
     missing = [n for n in names if not (output_dir / n / "evrp_instance.json").is_file()]
     if missing:
@@ -360,25 +379,66 @@ def ensure_hanif_original_tw_converted(
     manifest = {
         "source": str(source_dir).replace("\\", "/"),
         "output": str(output_dir).replace("\\", "/"),
-        "variant": SOURCE_VARIANT,
-        "time_windows_modified": False,
+        "variant": spec["key"],
+        "time_windows_modified": bool(spec["time_windows_modified"]),
         "num_instances": len(names),
         "converted_this_call": len(need),
         "elapsed_seconds": round(time.time() - t0, 3),
         "instances": names,
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (output_dir / "conversion_manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8",
+    )
     LOGGER.info(
-        "Hanif original-TW ready | %d instances under %s (converted_now=%d)",
-        len(names), output_dir, len(need),
+        "Hanif %s ready | %d instances under %s (converted_now=%d)",
+        spec["label"], len(names), output_dir, len(need),
     )
     return output_dir
 
 
+def ensure_hanif_original_tw_converted(
+    *,
+    source_dir: str | Path = DEFAULT_SOURCE_A,
+    output_dir: str | Path = DEFAULT_OUTPUT_A,
+    ev_specs_path: str | Path = DEFAULT_EV_SPECS,
+    force: bool = False,
+) -> Path:
+    source_dir = Path(source_dir)
+    if "relaxed" in str(source_dir).lower() or "variant_b" in str(source_dir).lower():
+        raise ValueError(
+            f"Refusing relaxed-TW source: {source_dir}. "
+            "Use variant_A_original_TW only, or call ensure_hanif_relaxed_tw_converted."
+        )
+    return ensure_hanif_variant_converted(
+        "A", source_dir=source_dir, output_dir=output_dir,
+        ev_specs_path=ev_specs_path, force=force,
+    )
+
+
+def ensure_hanif_relaxed_tw_converted(
+    *,
+    source_dir: str | Path = DEFAULT_SOURCE_B,
+    output_dir: str | Path = DEFAULT_OUTPUT_B,
+    ev_specs_path: str | Path = DEFAULT_EV_SPECS,
+    force: bool = False,
+) -> Path:
+    return ensure_hanif_variant_converted(
+        "B", source_dir=source_dir, output_dir=output_dir,
+        ev_specs_path=ev_specs_path, force=force,
+    )
+
+
 __all__ = [
     "DEFAULT_OUTPUT",
+    "DEFAULT_OUTPUT_A",
+    "DEFAULT_OUTPUT_B",
     "DEFAULT_SOURCE",
+    "DEFAULT_SOURCE_A",
+    "DEFAULT_SOURCE_B",
     "SOURCE_VARIANT",
+    "VARIANT_SPECS",
     "convert_one_instance",
     "ensure_hanif_original_tw_converted",
+    "ensure_hanif_relaxed_tw_converted",
+    "ensure_hanif_variant_converted",
 ]

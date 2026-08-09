@@ -1,0 +1,62 @@
+{
+  "n_variants": 2,
+  "budget_s": 180.0,
+  "method": "HanifFleetIntensification",
+  "milestone_targets": {
+    "A_mean_k_max": 80,
+    "B_mean_k_max": 70,
+    "B_le_A": true
+  },
+  "b_worse_than_a": [],
+  "b_worse_than_a_count": 0,
+  "variants": {
+    "A": {
+      "variant": "variant_A_original_TW",
+      "tw_variant": "A",
+      "label": "original-TW",
+      "method": "HanifFleetIntensification",
+      "n": 6,
+      "budget_s": 180.0,
+      "wall_s": 520.4094697998371,
+      "feasibility_rate": 1.0,
+      "mean_served_ratio": 1.0,
+      "mean_k": 95.5,
+      "mean_runtime_s": 86.47158596672428,
+      "mean_eliminations": 19.0,
+      "hanif_reference_mean_k": 74.2,
+      "attributes_used": {
+        "battery_Q": 600,
+        "energy_h": 1.0,
+        "charging_rate": true,
+        "wait_mu_deterministic": true,
+        "wait_sigma": false,
+        "charging_price_in_objective": false,
+        "density_score": false
+      }
+    },
+    "B": {
+      "variant": "variant_B_relaxed_TW",
+      "tw_variant": "B",
+      "label": "relaxed-TW",
+      "method": "HanifFleetIntensification",
+      "n": 6,
+      "budget_s": 180.0,
+      "wall_s": 449.5367777000647,
+      "feasibility_rate": 1.0,
+      "mean_served_ratio": 1.0,
+      "mean_k": 70.16666666666667,
+      "mean_runtime_s": 74.64610366666845,
+      "mean_eliminations": 25.333333333333332,
+      "hanif_reference_mean_k": 63.7,
+      "attributes_used": {
+        "battery_Q": 600,
+        "energy_h": 1.0,
+        "charging_rate": true,
+        "wait_mu_deterministic": true,
+        "wait_sigma": false,
+        "charging_price_in_objective": false,
+        "density_score": false
+      }
+    }
+  }
+}

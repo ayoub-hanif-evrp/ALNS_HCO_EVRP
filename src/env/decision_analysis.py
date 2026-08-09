@@ -204,13 +204,12 @@ def _build_analysis_from_mask(
     active_ev_analysis: Any = None,
     cache_stats: dict | None = None,
 ) -> DecisionStateAnalysis:
-    from src.models.dynamic_candidate import compute_dynamic_candidate_features
-    from src.models.state_features import global_state_features, mask_summary_features
-
+    # Neural feature builders removed — keep zero placeholders for env analysis.
+    n_nodes = int(getattr(env.instance, "num_nodes", len(env.instance.nodes)))
     t_dyn0 = time.perf_counter()
     if dyn is None:
         _CALL_COUNTS["dynamic_feature_builder"] += 1
-        dyn = compute_dynamic_candidate_features(env, ev, mask)
+        dyn = np.zeros((n_nodes, 1), dtype=np.float32)
     timing.dynamic_feature_ms = (time.perf_counter() - t_dyn0) * 1000.0
     timing.dynamic_features_ms = timing.dynamic_feature_ms
 
@@ -239,8 +238,8 @@ def _build_analysis_from_mask(
         ev_analyses=dict(ev_analyses or {}),
         active_ev_analysis=active_ev_analysis,
         dynamic_candidate_features=dyn,
-        global_features=np.asarray(global_state_features(env, mask), dtype=np.float32),
-        mask_summary_features=np.asarray(mask_summary_features(env, mask), dtype=np.float32),
+        global_features=np.zeros(8, dtype=np.float32),
+        mask_summary_features=np.zeros(8, dtype=np.float32),
         mask_result=mask,
         mask_reason_counts=reason_counts,
         reason_counts=reason_counts,

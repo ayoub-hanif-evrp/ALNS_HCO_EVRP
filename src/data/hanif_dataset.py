@@ -9,7 +9,6 @@ from src.data.hanif_convert import (
     DEFAULT_OUTPUT,
     DEFAULT_SOURCE,
     SOURCE_VARIANT,
-    ensure_hanif_original_tw_converted,
 )
 from src.data.instance_class import CLASSES, instance_class
 from src.data.instance_loader import list_instance_dirs, load_instance, read_instance_summary
@@ -47,7 +46,9 @@ def resolve_hanif_paths(config: dict) -> dict[str, Path]:
 
 
 def ensure_hanif_dataset(config: dict) -> Path:
-    """Convert variant_A if needed; refuse Schneider mix and relaxed TW."""
+    """Convert the configured Hanif TW variant (A original / B relaxed)."""
+    from src.data.hanif_convert import ensure_hanif_variant_converted
+
     if not is_hanif_config(config):
         raise HanifDatasetError("dataset.name must be 'hanif' for this study")
     ds = config.get("dataset") or {}
@@ -56,8 +57,15 @@ def ensure_hanif_dataset(config: dict) -> Path:
     paths = resolve_hanif_paths(config)
     if "schneider" in str(paths["root"]).lower():
         raise HanifDatasetError("Refusing Schneider path in Hanif-only study")
-    return ensure_hanif_original_tw_converted(
-        source_dir=paths["source"],
+    variant = str(ds.get("tw_variant") or ds.get("variant") or "A")
+    root_l = str(paths["root"]).lower()
+    if "relaxed" in root_l or "variant_b" in root_l:
+        variant = "B"
+    elif "original" in root_l or "variant_a" in root_l:
+        variant = "A"
+    return ensure_hanif_variant_converted(
+        variant,
+        source_dir=paths["source"] if ds.get("source_txt") or ds.get("source_dir") else None,
         output_dir=paths["root"],
         force=bool(ds.get("force_reconvert", False)),
     )

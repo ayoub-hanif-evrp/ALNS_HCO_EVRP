@@ -1,0 +1,23 @@
+{
+  "label": "CurrentBestDeterministicHanif",
+  "source": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/hanif_fps_intensify",
+  "do_not_overwrite": true,
+  "method": "HanifFleetIntensification",
+  "mean_k": {
+    "A": 80.06666666666666,
+    "B": 65.15
+  },
+  "mean_runtime_s": {
+    "A": 96.14454730332751,
+    "B": 70.02604621331751
+  },
+  "feasibility": {
+    "A": "60/60",
+    "B": "60/60"
+  },
+  "semantics": "OUR_EXTENDED (wait_mu deterministic; charging price not in objective)",
+  "hanif_reference_mean_k": {
+    "A": 74.2,
+    "B": 63.7
+  }
+}

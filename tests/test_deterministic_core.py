@@ -104,6 +104,7 @@ def test_route_pool_and_partition(small_instance):
     assert "backend" in meta
 
 
+@pytest.mark.skip(reason="neural_guide.py removed; Transformer path inactive")
 def test_no_target_leakage_in_candidate_ranker_source():
     """Candidate ranker must not feed score_vectors as model inputs at inference guide path."""
     src = (ROOT / "src" / "search" / "neural_guide.py").read_text(encoding="utf-8")
