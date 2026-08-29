@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from src.data.instance_loader import load_instance
+from src.evaluation.literature_competitors import competitor_table_rows
 from src.search.route_replay import replay_route
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,7 +43,10 @@ C_STATION = "#b45309"
 class PaperPaths:
     best_dir: Path
     baseline_dir: Path
+    control_dir: Path | None
     out_dir: Path
+    ablation_dir: Path | None = None
+    replay_report: Path | None = None
 
     @property
     def tables(self) -> Path:
@@ -59,6 +63,80 @@ class PaperPaths:
 
 def _family(name: str) -> str:
     return name.split("_")[0]
+
+
+def _load_matched_ablation(ablation_dir: Path | None) -> dict[str, Any] | None:
+    if ablation_dir is None or not ablation_dir.is_dir():
+        return None
+    completeness_path = ablation_dir / "completeness.json"
+    complete = True
+    completeness = None
+    if completeness_path.is_file():
+        completeness = json.loads(completeness_path.read_text(encoding="utf-8"))
+        complete = bool(completeness.get("complete"))
+    a_path = ablation_dir / "original_tw" / "results.csv"
+    b_path = ablation_dir / "relaxed_tw" / "results.csv"
+    if not a_path.is_file() or not b_path.is_file():
+        return {
+            "complete": False,
+            "reason": "missing_results_csv",
+            "dir": ablation_dir.as_posix(),
+            "completeness": completeness,
+        }
+    rows_a = _read_csv(a_path)
+    rows_b = _read_csv(b_path)
+    complete = complete and len(rows_a) == 60 and len(rows_b) == 60
+    summary = {
+        "complete": complete,
+        "dir": ablation_dir.as_posix(),
+        "completeness": completeness,
+        "n_a": len(rows_a),
+        "n_b": len(rows_b),
+        "rows_a": rows_a,
+        "rows_b": rows_b,
+        "method": "Deterministic-FPS-NoIntensification",
+        "budget_s": 180,
+    }
+    if complete:
+        summary["A_mean_k"] = sum(r["used_k"] for r in rows_a) / len(rows_a)
+        summary["B_mean_k"] = sum(r["used_k"] for r in rows_b) / len(rows_b)
+        summary["A_feasible"] = f"{sum(1 for r in rows_a if r['feasible'])}/{len(rows_a)}"
+        summary["B_feasible"] = f"{sum(1 for r in rows_b if r['feasible'])}/{len(rows_b)}"
+        summary["A_mean_runtime_s"] = sum(r["runtime_s"] for r in rows_a) / len(rows_a)
+        summary["B_mean_runtime_s"] = sum(r["runtime_s"] for r in rows_b) / len(rows_b)
+    else:
+        summary["reason"] = "incomplete_do_not_cite_means"
+    return summary
+
+
+def _write_semantic_replay_table(paths: PaperPaths) -> Path | None:
+    if paths.replay_report is None or not Path(paths.replay_report).is_file():
+        return None
+    report = json.loads(Path(paths.replay_report).read_text(encoding="utf-8"))
+    protocols = report.get("protocols") or {}
+    rows = []
+    for protocol, payload in protocols.items():
+        variants = payload.get("variants") or {}
+        for variant, stats in variants.items():
+            rows.append({
+                "protocol": protocol,
+                "variant": variant,
+                "n": stats.get("n"),
+                "n_valid": stats.get("n_valid"),
+                "n_feasible": stats.get("n_feasible"),
+                "mean_k": stats.get("mean_k"),
+                "mean_distance": stats.get("mean_distance"),
+                "mean_duration": stats.get("mean_duration"),
+                "mean_waiting_time": stats.get("mean_waiting_time"),
+            })
+    if not rows:
+        return None
+    path = paths.tables / "semantic_replay.csv"
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    return path
 
 
 def _save_fig(fig: plt.Figure, path_stem: Path) -> list[Path]:
@@ -80,7 +158,8 @@ def _coerce_value(key: str, val: Any) -> Any:
     # Keep identifiers / labels as strings.
     if key in {
         "instance", "variant", "family", "class", "stage", "tw_variant",
-        "label", "method",
+        "label", "method", "source", "scope", "feasible_instances",
+        "protocol", "status",
     }:
         return s
     # Boolean feasibility flags (instance CSVs), not counts.
@@ -101,6 +180,7 @@ def _coerce_value(key: str, val: Any) -> Any:
         "used_k", "served", "n_customers", "capacity_lb", "n", "n_feasible",
         "A_baseline_k", "A_intensified_k", "A_delta_k",
         "B_baseline_k", "B_intensified_k", "B_delta_k", "B_minus_A_k",
+        "A_no_intensify_k", "B_no_intensify_k", "Q",
     }
     if key in int_keys and abs(f - round(f)) < 1e-9:
         return int(round(f))
@@ -181,8 +261,7 @@ def freeze_current_best(
         "mean_k": {"A": mean_a, "B": mean_b},
         "mean_runtime_s": {"A": rt_a, "B": rt_b},
         "feasibility": {"A": "60/60", "B": "60/60"},
-        "semantics": "OUR_EXTENDED (wait_mu deterministic; charging price not in objective)",
-        "hanif_reference_mean_k": {"A": 74.2, "B": 63.7},
+        "semantics": "OUR_EXTENDED (E[W]=exp(wait_mu+0.5 sigma^2); charging price not in classical objective)",
     }
     (dest / "NOTES.json").write_text(json.dumps(notes, indent=2), encoding="utf-8")
     (dest / "NOTES.md").write_text(
@@ -206,14 +285,26 @@ def write_tables(paths: PaperPaths) -> dict[str, Path]:
     base_b = _read_csv(paths.baseline_dir / "relaxed_tw" / "results.csv")
     base_a_m = {r["instance"]: r for r in base_a}
     base_b_m = {r["instance"]: r for r in base_b}
+    control_a = control_b = None
+    if paths.control_dir is not None and paths.control_dir.resolve() != paths.best_dir.resolve():
+        control_a = _read_csv(paths.control_dir / "original_tw" / "results.csv")
+        control_b = _read_csv(paths.control_dir / "relaxed_tw" / "results.csv")
+    control_maps = (
+        {r["instance"]: r for r in control_a} if control_a else None,
+        {r["instance"]: r for r in control_b} if control_b else None,
+    )
 
     main = []
-    for label, rows, base_m, ref in (
-        ("A_original_TW", best_a, base_a_m, 74.2),
-        ("B_relaxed_TW", best_b, base_b_m, 63.7),
+    for label, rows, base_m, control_m in (
+        ("A_original_TW", best_a, base_a_m, control_maps[0]),
+        ("B_relaxed_TW", best_b, base_b_m, control_maps[1]),
     ):
         mean_k = sum(r["used_k"] for r in rows) / len(rows)
         mean_base = sum(base_m[r["instance"]]["used_k"] for r in rows) / len(rows)
+        mean_control = (
+            sum(control_m[r["instance"]]["used_k"] for r in rows) / len(rows)
+            if control_m is not None else mean_k
+        )
         main.append({
             "variant": label,
             "n": len(rows),
@@ -224,8 +315,8 @@ def write_tables(paths: PaperPaths) -> dict[str, Path]:
             "mean_runtime_s": sum(r["runtime_s"] for r in rows) / len(rows),
             "fast_baseline_mean_k": mean_base,
             "fleet_reduction_pct": 100.0 * (mean_base - mean_k) / mean_base,
-            "hanif_reference_mean_k": ref,
-            "gap_vs_reference_k": mean_k - ref,
+            "frozen_control_mean_k": mean_control,
+            "improvement_vs_frozen_k": mean_control - mean_k,
         })
     main_path = paths.tables / "main_results.csv"
     with main_path.open("w", newline="", encoding="utf-8") as f:
@@ -287,41 +378,160 @@ def write_tables(paths: PaperPaths) -> dict[str, Path]:
         w.writeheader()
         w.writerows(per)
 
-    abl = [
-        {"stage": "FastFeasibleBaseline", "A_mean_k": sum(r["used_k"] for r in base_a) / 60,
-         "B_mean_k": sum(r["used_k"] for r in base_b) / 60},
-        {"stage": "HanifFleetIntensification", "A_mean_k": sum(r["used_k"] for r in best_a) / 60,
-         "B_mean_k": sum(r["used_k"] for r in best_b) / 60},
-        {"stage": "Hanif_paper_verifier_Q600", "A_mean_k": 74.2, "B_mean_k": 63.7},
-    ]
+    best_summary = json.loads((paths.best_dir / "summary_both.json").read_text(encoding="utf-8"))
+    matched = _load_matched_ablation(paths.ablation_dir)
+    abl = []
+    if matched is not None and matched.get("complete"):
+        abl.append({
+            "stage": "Deterministic-FPS-NoIntensification_180s",
+            "budget_s": 180,
+            "intensification_enabled": False,
+            "complete": True,
+            "A_mean_k": matched["A_mean_k"],
+            "B_mean_k": matched["B_mean_k"],
+            "A_feasible": matched["A_feasible"],
+            "B_feasible": matched["B_feasible"],
+        })
+        abl.append({
+            "stage": str(best_summary.get("method") or "HanifFleetIntensification"),
+            "budget_s": 180,
+            "intensification_enabled": True,
+            "complete": True,
+            "A_mean_k": sum(r["used_k"] for r in best_a) / len(best_a),
+            "B_mean_k": sum(r["used_k"] for r in best_b) / len(best_b),
+            "A_feasible": f"{sum(1 for r in best_a if r['feasible'])}/{len(best_a)}",
+            "B_feasible": f"{sum(1 for r in best_b if r['feasible'])}/{len(best_b)}",
+        })
+    elif matched is not None:
+        (paths.tables / "MATCHED_ABLATION_INCOMPLETE.md").write_text(
+            "# Matched ablation incomplete\n\n"
+            "The same-budget no-intensification run is not 60/60 complete. "
+            "Partial means are not cited. See the ablation archive completeness report.\n\n"
+            f"```json\n{json.dumps({k: v for k, v in matched.items() if k not in ('rows_a', 'rows_b')}, indent=2)}\n```\n",
+            encoding="utf-8",
+        )
+        abl.append({
+            "stage": "Deterministic-FPS-NoIntensification_180s",
+            "budget_s": 180,
+            "intensification_enabled": False,
+            "complete": False,
+            "A_mean_k": "",
+            "B_mean_k": "",
+            "A_feasible": f"{matched.get('n_a', 0)}/60_incomplete",
+            "B_feasible": f"{matched.get('n_b', 0)}/60_incomplete",
+        })
+        abl.append({
+            "stage": str(best_summary.get("method") or "HanifFleetIntensification"),
+            "budget_s": 180,
+            "intensification_enabled": True,
+            "complete": True,
+            "A_mean_k": sum(r["used_k"] for r in best_a) / len(best_a),
+            "B_mean_k": sum(r["used_k"] for r in best_b) / len(best_b),
+            "A_feasible": f"{sum(1 for r in best_a if r['feasible'])}/{len(best_a)}",
+            "B_feasible": f"{sum(1 for r in best_b if r['feasible'])}/{len(best_b)}",
+        })
+    else:
+        abl.append({
+            "stage": str(best_summary.get("method") or "HanifFleetIntensification"),
+            "budget_s": 180,
+            "intensification_enabled": True,
+            "complete": True,
+            "A_mean_k": sum(r["used_k"] for r in best_a) / len(best_a),
+            "B_mean_k": sum(r["used_k"] for r in best_b) / len(best_b),
+            "A_feasible": f"{sum(1 for r in best_a if r['feasible'])}/{len(best_a)}",
+            "B_feasible": f"{sum(1 for r in best_b if r['feasible'])}/{len(best_b)}",
+        })
     abl_path = paths.tables / "ablation_results.csv"
     with abl_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(abl[0].keys()))
         w.writeheader()
         w.writerows(abl)
 
-    return {"main": main_path, "family": fam_path, "per_instance": per_path, "ablation": abl_path}
+    per_abl_path = None
+    if matched is not None and matched.get("complete"):
+        a_m = {r["instance"]: r for r in matched["rows_a"]}
+        b_m = {r["instance"]: r for r in matched["rows_b"]}
+        per_abl = []
+        for r in best_a:
+            rb = next(x for x in best_b if x["instance"] == r["instance"])
+            na = a_m[r["instance"]]
+            nb = b_m[r["instance"]]
+            per_abl.append({
+                "instance": r["instance"],
+                "family": _family(r["instance"]),
+                "A_no_intensify_k": na["used_k"],
+                "A_intensified_k": r["used_k"],
+                "A_delta_k": int(na["used_k"]) - int(r["used_k"]),
+                "B_no_intensify_k": nb["used_k"],
+                "B_intensified_k": rb["used_k"],
+                "B_delta_k": int(nb["used_k"]) - int(rb["used_k"]),
+            })
+        per_abl_path = paths.tables / "matched_ablation_per_instance.csv"
+        with per_abl_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(per_abl[0].keys()))
+            w.writeheader()
+            w.writerows(per_abl)
+
+    context_rows = competitor_table_rows()
+    context_path = paths.tables / "literature_competitors.csv"
+    with context_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(context_rows[0].keys()))
+        w.writeheader()
+        w.writerows(context_rows)
+
+    out = {
+        "main": main_path,
+        "family": fam_path,
+        "per_instance": per_path,
+        "ablation": abl_path,
+        "literature_competitors": context_path,
+    }
+    if per_abl_path is not None:
+        out["matched_ablation_per_instance"] = per_abl_path
+    replay_path = _write_semantic_replay_table(paths)
+    if replay_path is not None:
+        out["semantic_replay"] = replay_path
+    return out
 
 
 def fig_fleet_reduction(paths: PaperPaths, main_rows: list[dict]) -> list[Path]:
     fig, ax = plt.subplots(figsize=(7.2, 4.2))
     x = np.arange(2)
-    width = 0.28
-    base = [main_rows[0]["fast_baseline_mean_k"], main_rows[1]["fast_baseline_mean_k"]]
-    cur = [main_rows[0]["mean_k"], main_rows[1]["mean_k"]]
-    ref = [main_rows[0]["hanif_reference_mean_k"], main_rows[1]["hanif_reference_mean_k"]]
-    ax.bar(x - width, base, width, label="Fast feasible baseline", color=C_BASE)
-    ax.bar(x, cur, width, label="Fleet intensification (ours)", color=C_CUR)
-    ax.bar(x + width, ref, width, label="Hanif Q=600 verifier (paper)", color="#9a3412", alpha=0.85)
+    matched = _load_matched_ablation(paths.ablation_dir)
+    if matched is not None and matched.get("complete"):
+        width = 0.36
+        no_int = [matched["A_mean_k"], matched["B_mean_k"]]
+        full = [main_rows[0]["mean_k"], main_rows[1]["mean_k"]]
+        ax.bar(x - width / 2, no_int, width, label="No intensification (180 s)", color=C_BASE)
+        ax.bar(x + width / 2, full, width, label="Fleet intensification (ours)", color=C_CUR)
+        ymax = max(no_int + full) * 1.15
+        for i, (b, c) in enumerate(zip(no_int, full)):
+            if b:
+                ax.annotate(
+                    f"-{(b - c) / b * 100:.1f}%",
+                    xy=(i, c), xytext=(0, 8), textcoords="offset points",
+                    ha="center", fontsize=8, color=C_CUR,
+                )
+        ax.set_title("Matched-budget ablation (180 s, EXTENDED protocol)")
+    else:
+        width = 0.36
+        base = [main_rows[0]["fast_baseline_mean_k"], main_rows[1]["fast_baseline_mean_k"]]
+        cur = [main_rows[0]["mean_k"], main_rows[1]["mean_k"]]
+        ax.bar(x - width / 2, base, width, label="Fast feasible baseline", color=C_BASE)
+        ax.bar(x + width / 2, cur, width, label="Fleet intensification (ours)", color=C_CUR)
+        ymax = max(base) * 1.15
+        for i, (b, c) in enumerate(zip(base, cur)):
+            ax.annotate(
+                f"-{(b - c) / b * 100:.1f}%",
+                xy=(i, c), xytext=(0, 8), textcoords="offset points",
+                ha="center", fontsize=8, color=C_CUR,
+            )
+        ax.set_title("Fleet compression on Hanif 1000-customer EVRPTW")
     ax.set_xticks(x)
     ax.set_xticklabels(["Variant A\n(original TW)", "Variant B\n(relaxed TW)"])
     ax.set_ylabel("Mean fleet size K")
-    ax.set_title("Fleet compression on Hanif 1000-customer EVRPTW")
     ax.legend(frameon=False, fontsize=8)
-    ax.set_ylim(0, max(base) * 1.15)
-    for i, (b, c) in enumerate(zip(base, cur)):
-        ax.annotate(f"-{(b - c) / b * 100:.1f}%", xy=(i, c), xytext=(0, 8),
-                    textcoords="offset points", ha="center", fontsize=8, color=C_CUR)
+    ax.set_ylim(0, ymax)
     return _save_fig(fig, paths.figures / "fig02_fleet_reduction")
 
 
@@ -734,9 +944,14 @@ def copy_representative_routes(paths: PaperPaths) -> None:
 
 
 def write_manuscript_values(paths: PaperPaths, main_rows: list[dict], family_rows: list[dict]) -> Path:
+    best_summary = json.loads((paths.best_dir / "summary_both.json").read_text(encoding="utf-8"))
+    matched = _load_matched_ablation(paths.ablation_dir)
     vals = {
-        "method": "HanifFleetIntensification",
+        "method": str(best_summary.get("method") or "HanifFleetIntensification"),
         "result_root": str(paths.best_dir).replace("\\", "/"),
+        "evaluation_protocol": "EXTENDED",
+        "replay_protocol": "NO_WAIT_REPLAY",
+        "care_fi": "six_family_pilot_only_not_headline",
         "A": {
             "mean_k": main_rows[0]["mean_k"],
             "baseline_mean_k": main_rows[0]["fast_baseline_mean_k"],
@@ -744,7 +959,6 @@ def write_manuscript_values(paths: PaperPaths, main_rows: list[dict], family_row
             "mean_distance": main_rows[0]["mean_distance"],
             "mean_runtime_s": main_rows[0]["mean_runtime_s"],
             "feasible": f"{int(main_rows[0]['n_feasible'])}/{int(main_rows[0]['n'])}",
-            "hanif_reference_mean_k": 74.2,
         },
         "B": {
             "mean_k": main_rows[1]["mean_k"],
@@ -753,13 +967,24 @@ def write_manuscript_values(paths: PaperPaths, main_rows: list[dict], family_row
             "mean_distance": main_rows[1]["mean_distance"],
             "mean_runtime_s": main_rows[1]["mean_runtime_s"],
             "feasible": f"{int(main_rows[1]['n_feasible'])}/{int(main_rows[1]['n'])}",
-            "hanif_reference_mean_k": 63.7,
         },
+        "matched_ablation": (
+            {
+                "complete": True,
+                "A_mean_k": matched["A_mean_k"],
+                "B_mean_k": matched["B_mean_k"],
+                "A_feasible": matched["A_feasible"],
+                "B_feasible": matched["B_feasible"],
+            }
+            if matched and matched.get("complete")
+            else {"complete": False, "cite_means": False}
+        ),
+        "literature_competitors": competitor_table_rows(),
         "families_A": {r["family"]: r["mean_k"] for r in family_rows if r["variant"] == "A"},
         "families_B": {r["family"]: r["mean_k"] for r in family_rows if r["variant"] == "B"},
         "representative_instances": REPRESENTATIVE,
         "semantics": {
-            "wait_mu": "deterministic expected wait",
+            "wait_mu": "lognormal parameter; expected wait = exp(mu+0.5 sigma^2)",
             "wait_sigma": False,
             "charging_price_in_objective": False,
             "charging_rate_heterogeneous": True,
@@ -774,10 +999,14 @@ def generate_paper_artifacts(
     *,
     best_dir: Path | None = None,
     baseline_dir: Path | None = None,
+    control_dir: Path | None = None,
+    ablation_dir: Path | None = None,
+    replay_report: Path | None = None,
     out_dir: Path | None = None,
+    skip_freeze_lookup: bool = False,
 ) -> Path:
     best_dir = best_dir or (ROOT / "outputs/CurrentBestDeterministicHanif")
-    if not (best_dir / "summary_both.json").is_file():
+    if not skip_freeze_lookup and not (best_dir / "summary_both.json").is_file():
         # Prefer explicit intensify archive if freeze folder is incomplete.
         alt = ROOT / "outputs/hanif_fps_intensify"
         if (alt / "summary_both.json").is_file():
@@ -785,8 +1014,16 @@ def generate_paper_artifacts(
         else:
             best_dir = freeze_current_best()
     baseline_dir = baseline_dir or (ROOT / "outputs/hanif_fps/fast_feasible_baseline")
+    control_dir = control_dir or (ROOT / "outputs/CurrentBestDeterministicHanif")
     out_dir = out_dir or (ROOT / "outputs/paper")
-    paths = PaperPaths(best_dir=best_dir, baseline_dir=baseline_dir, out_dir=out_dir)
+    paths = PaperPaths(
+        best_dir=best_dir,
+        baseline_dir=baseline_dir,
+        control_dir=control_dir,
+        out_dir=out_dir,
+        ablation_dir=ablation_dir,
+        replay_report=replay_report,
+    )
     paths.figures.mkdir(parents=True, exist_ok=True)
     paths.tables.mkdir(parents=True, exist_ok=True)
 
@@ -817,13 +1054,22 @@ def generate_paper_artifacts(
         "note": "SVG + 300 DPI PNG. Representative instances fixed: " + ", ".join(REPRESENTATIVE),
     }
     (out_dir / "INDEX.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+    result_label = str(json.loads(
+        (best_dir / "summary_both.json").read_text(encoding="utf-8")
+    ).get("method") or "DeterministicHanif")
     (out_dir / "README.md").write_text(
-        "# Paper artifacts — CurrentBestDeterministicHanif\n\n"
-        "Generated from frozen intensified results (not training logs).\n\n"
-        "- `tables/` — main / family / per-instance / ablation CSVs\n"
+        f"# Paper artifacts — {result_label}\n\n"
+        "Generated from saved exact routes (not training logs).\n\n"
+        "- `tables/` — main / family / per-instance / matched ablation CSVs\n"
+        "- `tables/literature_competitors.csv` — published EVRPTW metaheuristics re-run on this set\n"
+        "- `tables/semantic_replay.csv` — EXTENDED vs NO_WAIT_REPLAY (if generated)\n"
         "- `figures/` — SVG + 300 DPI PNG\n"
         "- `routes/` — representative solution JSONs\n"
-        "- `manuscript_values.json` — numbers for the text\n",
+        "- `manuscript_values.json` — numbers for the text\n\n"
+        "The primary ablation is same-budget no-intensification versus the frozen "
+        "full method. External comparison is ALNS and VNS/TS re-run on this "
+        "benchmark (literature families; not bitwise clones of the original codes). "
+        "CARE-FI is a six-family pilot only.\n",
         encoding="utf-8",
     )
     return out_dir

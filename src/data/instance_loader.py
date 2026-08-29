@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from src.env.lognormal import expected_lognormal
+
 # Order of per-node features fed to the encoder.
 NODE_FEATURE_COLUMNS = [
     "x_norm",
@@ -83,8 +85,13 @@ class EVRPTWInstance:
     depot_has_charging: bool = False
     max_abs_coordinate: float = 1.0
     station_charging_rate: np.ndarray | None = None
+    station_price_mu: np.ndarray | None = None
+    station_price_sigma: np.ndarray | None = None
+    station_price_expected: np.ndarray | None = None
     station_price_per_energy: np.ndarray | None = None
     station_wait_mu: np.ndarray | None = None
+    station_wait_sigma: np.ndarray | None = None
+    station_wait_expected: np.ndarray | None = None
     station_density_score: np.ndarray | None = None
 
     # --- convenience properties ---
@@ -277,8 +284,18 @@ def summarize_vehicle_params(dataset_path: str | Path, names: list[str]) -> str:
 
 
 def expected_lognormal_mean(mu: float, sigma: float) -> float:
-    """Expected value E[X] for X ~ LogNormal(mu, sigma) (station price)."""
-    return float(np.exp(mu + 0.5 * sigma ** 2))
+    return expected_lognormal(mu, sigma)
+
+
+def _nan_array(n: int) -> np.ndarray:
+    return np.full(n, np.nan, dtype=np.float32)
+
+
+def _fill_depot(arr: np.ndarray | None, depot_index: int, fallback: float) -> None:
+    if arr is None:
+        return
+    if np.isnan(arr[depot_index]):
+        arr[depot_index] = fallback
 
 
 def _load_station_arrays(
@@ -286,47 +303,76 @@ def _load_station_arrays(
     num_nodes: int,
     depot_index: int,
     depot_has_charging: bool,
-) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-    """Load charging rate, expected price, wait_mu, density from ``stations.csv``."""
+) -> dict[str, np.ndarray | None]:
+    """Load station rate and log-normal price/wait parameters from ``stations.csv``."""
+    empty = {
+        "rate": None, "price_mu": None, "price_sigma": None, "price_expected": None,
+        "wait_mu": None, "wait_sigma": None, "wait_expected": None, "density": None,
+    }
     stations_path = instance_dir / "stations.csv"
     if not stations_path.exists():
-        return None, None, None, None
-    rates = np.full(num_nodes, np.nan, dtype=np.float32)
-    prices = np.full(num_nodes, np.nan, dtype=np.float32)
-    waits = np.full(num_nodes, np.nan, dtype=np.float32)
-    density = np.full(num_nodes, np.nan, dtype=np.float32)
+        return empty
+    rate = _nan_array(num_nodes)
+    price_mu = _nan_array(num_nodes)
+    price_sigma = _nan_array(num_nodes)
+    price_expected = _nan_array(num_nodes)
+    wait_mu = _nan_array(num_nodes)
+    wait_sigma = _nan_array(num_nodes)
+    wait_expected = _nan_array(num_nodes)
+    density = _nan_array(num_nodes)
     has_wait = False
     has_density = False
     with stations_path.open(newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             nid = int(row["node_id"])
-            rates[nid] = float(row["charging_rate"])
-            prices[nid] = expected_lognormal_mean(float(row["price_mu"]), float(row["price_sigma"]))
+            rate[nid] = float(row["charging_rate"])
+            pmu = float(row["price_mu"])
+            psg = float(row["price_sigma"])
+            price_mu[nid] = pmu
+            price_sigma[nid] = psg
+            price_expected[nid] = expected_lognormal(pmu, psg)
             if "wait_mu" in row and row["wait_mu"] not in (None, ""):
-                waits[nid] = float(row["wait_mu"])
+                wmu = float(row["wait_mu"])
+                wsg = float(row["wait_sigma"] or 0.0) if "wait_sigma" in row else 0.0
+                wait_mu[nid] = wmu
+                wait_sigma[nid] = wsg
+                wait_expected[nid] = expected_lognormal(wmu, wsg)
                 has_wait = True
             if "density_score" in row and row["density_score"] not in (None, ""):
                 density[nid] = float(row["density_score"])
                 has_density = True
     if depot_has_charging:
-        if np.isnan(rates[depot_index]):
-            median_rate = float(np.nanmedian(rates))
-            if not np.isnan(median_rate):
-                rates[depot_index] = median_rate
-        if np.isnan(prices[depot_index]):
-            median_price = float(np.nanmedian(prices))
-            if not np.isnan(median_price):
-                prices[depot_index] = median_price
-        if has_wait and np.isnan(waits[depot_index]):
-            waits[depot_index] = 0.0
-        if has_density and np.isnan(density[depot_index]):
-            density[depot_index] = 0.0
-    return (
-        rates,
-        prices,
-        waits if has_wait else None,
-        density if has_density else None,
-    )
+        _fill_depot(rate, depot_index, float(np.nanmedian(rate)))
+        _fill_depot(price_mu, depot_index, 0.0)
+        _fill_depot(price_sigma, depot_index, 0.0)
+        _fill_depot(price_expected, depot_index, float(np.nanmedian(price_expected)))
+        if has_wait:
+            _fill_depot(wait_mu, depot_index, 0.0)
+            _fill_depot(wait_sigma, depot_index, 0.0)
+            _fill_depot(wait_expected, depot_index, 0.0)
+        if has_density:
+            _fill_depot(density, depot_index, 0.0)
+    return {
+        "rate": rate,
+        "price_mu": price_mu,
+        "price_sigma": price_sigma,
+        "price_expected": price_expected,
+        "wait_mu": wait_mu if has_wait else None,
+        "wait_sigma": wait_sigma if has_wait else None,
+        "wait_expected": wait_expected if has_wait else None,
+        "density": density if has_density else None,
+    }
+
+
+def apply_battery_capacity(instance: EVRPTWInstance, battery_capacity: float) -> EVRPTWInstance:
+    """Override battery Q. Energy matrices stay distance * h; only the tank changes."""
+    q = float(battery_capacity)
+    if q <= 0:
+        raise ValueError("battery_capacity must be positive")
+    if abs(instance.vehicle.battery_capacity - q) < 1e-9:
+        return instance
+    instance.vehicle = replace(instance.vehicle, battery_capacity=q)
+    return instance
 
 
 def apply_load_capacity(instance: EVRPTWInstance, load_capacity: float) -> EVRPTWInstance:
@@ -394,9 +440,7 @@ def load_instance(instance_dir: str | Path, *, load_capacity: float | None = Non
 
     depot_index = int(index_sets["depot_index"])
     depot_has_charging = bool(meta.get("depot_has_charging", False))
-    station_rates, station_prices, station_waits, station_density = _load_station_arrays(
-        instance_dir, len(nodes), depot_index, depot_has_charging,
-    )
+    st = _load_station_arrays(instance_dir, len(nodes), depot_index, depot_has_charging)
 
     instance = EVRPTWInstance(
         instance_name=meta["instance_name"],
@@ -412,10 +456,15 @@ def load_instance(instance_dir: str | Path, *, load_capacity: float | None = Non
         planning_horizon=float(meta["planning_horizon"]),
         depot_has_charging=depot_has_charging,
         max_abs_coordinate=float(meta.get("max_abs_coordinate", 1.0)) or 1.0,
-        station_charging_rate=station_rates,
-        station_price_per_energy=station_prices,
-        station_wait_mu=station_waits,
-        station_density_score=station_density,
+        station_charging_rate=st["rate"],
+        station_price_mu=st["price_mu"],
+        station_price_sigma=st["price_sigma"],
+        station_price_expected=st["price_expected"],
+        station_price_per_energy=st["price_expected"],
+        station_wait_mu=st["wait_mu"],
+        station_wait_sigma=st["wait_sigma"],
+        station_wait_expected=st["wait_expected"],
+        station_density_score=st["density"],
     )
     if load_capacity is not None:
         apply_load_capacity(instance, load_capacity)

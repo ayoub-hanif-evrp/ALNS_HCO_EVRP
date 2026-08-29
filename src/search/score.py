@@ -1,21 +1,20 @@
 """Official lexicographic benchmark score for EVRPTW comparisons.
 
-Order (all minimized):
-  1. hard violations
-  2. unserved customers
-  3. used vehicles
-  4. total distance
-  5. total charging time
-  6. total route duration
-  7. internal paper J
+Classical mode:
+  hard, unserved, K, distance, duration
+
+Heterogeneous modes:
+  hard, unserved, K, Φ, distance, duration
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from src.evaluation.paper_objective import MODE_CLASSICAL, ranking_tuple
 
-@dataclass(frozen=True, order=True)
+
+@dataclass(frozen=True)
 class BenchmarkScore:
     hard_violations: int
     unserved_customers: int
@@ -24,16 +23,22 @@ class BenchmarkScore:
     total_charging_time: float
     total_duration: float
     paper_j: float
+    phi: float = 0.0
+    total_station_time: float = 0.0
+    objective_mode: str = MODE_CLASSICAL
 
     def as_tuple(self) -> tuple:
-        return (
-            int(self.hard_violations),
-            int(self.unserved_customers),
-            int(self.used_vehicles),
-            float(self.total_distance),
-            float(self.total_charging_time),
-            float(self.total_duration),
-            float(self.paper_j),
+        return ranking_tuple(
+            hard=self.hard_violations,
+            unserved=self.unserved_customers,
+            used_k=self.used_vehicles,
+            phi=self.phi,
+            distance=self.total_distance,
+            station_time=self.total_station_time,
+            duration=self.total_duration,
+            charging_time=self.total_charging_time,
+            paper_j=self.paper_j,
+            mode=self.objective_mode,
         )
 
     def dominates(self, other: "BenchmarkScore") -> bool:
@@ -49,6 +54,8 @@ class BenchmarkScore:
             total_charging_time=1e18,
             total_duration=1e18,
             paper_j=1e18,
+            phi=1e18,
+            total_station_time=1e18,
         )
 
     @classmethod
@@ -69,6 +76,8 @@ class BenchmarkScore:
             total_charging_time=float(summary.total_charging_time),
             total_duration=float(summary.total_duration),
             paper_j=float(objective),
+            total_station_time=float(summary.total_charging_time)
+            + float(getattr(summary, "station_waiting_time", 0.0) or 0.0),
         )
 
     @classmethod
@@ -76,6 +85,7 @@ class BenchmarkScore:
         hard = int(getattr(result, "hard_violation_count", 0) or 0)
         if not bool(getattr(result, "feasible", False)):
             hard = max(hard, 1)
+        score = getattr(result, "score", None)
         return cls(
             hard_violations=hard,
             unserved_customers=int(getattr(result, "unserved_customers", 0) or 0),
@@ -84,6 +94,9 @@ class BenchmarkScore:
             total_charging_time=float(getattr(result, "charging_time", 0.0) or 0.0),
             total_duration=float(getattr(result, "duration", 0.0) or 0.0),
             paper_j=float(getattr(result, "objective", 0.0) or 0.0),
+            phi=float(getattr(score, "phi", 0.0) or 0.0),
+            total_station_time=float(getattr(score, "total_station_time", 0.0) or 0.0),
+            objective_mode=str(getattr(score, "objective_mode", MODE_CLASSICAL) or MODE_CLASSICAL),
         )
 
     def to_report_row(self, *, feasible: bool, n_customers: int, runtime: float,
@@ -101,6 +114,7 @@ class BenchmarkScore:
             "duration": float(self.total_duration),
             "runtime": float(runtime),
             "paper_j": float(self.paper_j),
+            "phi": float(self.phi),
             "hard_violations": int(self.hard_violations),
             "unserved_customers": int(self.unserved_customers),
         }
@@ -115,10 +129,9 @@ def compare_benchmark(a: BenchmarkScore, b: BenchmarkScore) -> int:
     return 0
 
 
-# Back-compat alias: SearchScore mirrors BenchmarkScore field order.
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class SearchScore:
-    """Legacy alias aligned to BenchmarkScore lexicographic order."""
+    """Search ranking score. Comparison uses as_tuple(), not dataclass field order."""
 
     hard_violation_count: int
     unserved_customer_count: int
@@ -127,20 +140,32 @@ class SearchScore:
     total_charging_time: float
     total_duration: float
     paper_objective: float
+    phi: float = 0.0
+    total_station_time: float = 0.0
+    objective_mode: str = MODE_CLASSICAL
 
     def as_tuple(self) -> tuple:
-        return (
-            int(self.hard_violation_count),
-            int(self.unserved_customer_count),
-            int(self.used_evs),
-            float(self.total_distance),
-            float(self.total_charging_time),
-            float(self.total_duration),
-            float(self.paper_objective),
+        return ranking_tuple(
+            hard=self.hard_violation_count,
+            unserved=self.unserved_customer_count,
+            used_k=self.used_evs,
+            phi=self.phi,
+            distance=self.total_distance,
+            station_time=self.total_station_time,
+            duration=self.total_duration,
+            charging_time=self.total_charging_time,
+            paper_j=self.paper_objective,
+            mode=self.objective_mode,
         )
 
     def dominates(self, other: "SearchScore") -> bool:
         return self.as_tuple() < other.as_tuple()
+
+    def operational_scalar(self) -> float:
+        """Scalar used by regret / SA; never overrides the fleet-first lex rank."""
+        if str(self.objective_mode) == MODE_CLASSICAL:
+            return float(self.total_distance)
+        return float(self.phi)
 
     def to_benchmark(self) -> BenchmarkScore:
         return BenchmarkScore(
@@ -151,6 +176,9 @@ class SearchScore:
             total_charging_time=self.total_charging_time,
             total_duration=self.total_duration,
             paper_j=self.paper_objective,
+            phi=self.phi,
+            total_station_time=self.total_station_time,
+            objective_mode=self.objective_mode,
         )
 
     @classmethod
@@ -163,6 +191,9 @@ class SearchScore:
             total_charging_time=b.total_charging_time,
             total_duration=b.total_duration,
             paper_objective=b.paper_j,
+            phi=b.phi,
+            total_station_time=b.total_station_time,
+            objective_mode=b.objective_mode,
         )
 
     @classmethod
@@ -179,4 +210,6 @@ def compare_scores(a: SearchScore, b: SearchScore) -> int:
 
 
 def score_from_replay(result: Any, weights=None) -> SearchScore:
+    if getattr(result, "score", None) is not None:
+        return result.score
     return SearchScore.from_benchmark(BenchmarkScore.from_replay(result))

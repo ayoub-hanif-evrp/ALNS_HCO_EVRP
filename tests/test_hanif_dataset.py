@@ -24,6 +24,10 @@ def test_hanif_loader_wait_and_density():
     assert inst.num_customers == 1000
     assert inst.num_charging_stations == 333
     assert inst.station_wait_mu is not None
+    assert inst.station_wait_expected is not None
+    assert inst.station_wait_sigma is not None
+    sid = int(inst.charging_station_indices[0])
+    assert abs(float(inst.station_wait_expected[sid]) - float(inst.station_wait_mu[sid])) > 1e-6
     assert inst.station_density_score is not None
     assert inst.station_charging_rate is not None
     meta = __import__("json").loads(

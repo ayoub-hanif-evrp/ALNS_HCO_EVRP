@@ -1,4 +1,9 @@
-"""ALNS with lexicographic acceptance, exact-replay validation, optional neural guide."""
+"""ALNS-style destroy/repair with lexicographic acceptance and exact-replay validation.
+
+Matched baseline inspired by Keskin & Çatay neighbourhood families, not a
+faithful reproduction of their 2016 ALNS (continuous recharge, adaptive weights,
+full operator set).
+"""
 from __future__ import annotations
 
 import random
@@ -269,9 +274,10 @@ def run_alns(
         accept = res.score.dominates(current_score)
         if not accept and res.score.hard_violation_count == current_score.hard_violation_count:
             if res.score.unserved_customer_count == current_score.unserved_customer_count:
-                delta = res.score.paper_objective - current_score.paper_objective
+                delta = res.score.operational_scalar() - current_score.operational_scalar()
                 temp = max(1e-6, 1.0 * (0.995 ** it))
-                if delta <= 0 or rng.random() < pow(2.718281828, -delta / (temp * max(abs(current_score.paper_objective), 1.0))):
+                scale = max(abs(current_score.operational_scalar()), 1.0)
+                if delta <= 0 or rng.random() < pow(2.718281828, -delta / (temp * scale)):
                     accept = True
         lex_improved = bool(res.score.dominates(score_before_obj))
         if accept:

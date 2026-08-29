@@ -19,6 +19,8 @@ class EVState:
     remaining_capacity: float
     route_distance: float = 0.0
     total_waiting_time: float = 0.0
+    customer_early_waiting_time: float = 0.0
+    station_waiting_time: float = 0.0
     total_charging_time: float = 0.0
     total_charging_price: float = 0.0
     route_nodes: list[int] = field(default_factory=list)

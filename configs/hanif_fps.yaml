@@ -77,6 +77,11 @@ cost:
   penalty_depot: 10000.0
   penalty_infeasible: 100000.0
 
+paper_objective:
+  mode: classical_distance
+  risk_alpha: 0.95
+  risk_blend: 0.25
+
 hanif_fleet_intensify:
   enabled: true
   time_limit_seconds: 90

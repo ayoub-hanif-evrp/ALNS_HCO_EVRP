@@ -20,9 +20,9 @@ def _charging_rate(instance, node: int) -> float:
     return 1.0
 
 
-def _station_wait_mu(instance, node: int) -> float:
-    """Expected queue wait at a charging station (0 if unknown / depot TW wait separate)."""
-    waits = getattr(instance, "station_wait_mu", None)
+def _station_wait_expected(instance, node: int) -> float:
+    """Expected queue wait E[W] at a charging station (feasibility timing)."""
+    waits = getattr(instance, "station_wait_expected", None)
     if waits is None:
         return 0.0
     w = float(waits[node])
@@ -54,7 +54,7 @@ def simulate_recharge_departure(
         ready = float(instance.nodes[node].ready_time)
         charge_start = max(arrival, ready)
     else:
-        charge_start = arrival + _station_wait_mu(instance, node)
+        charge_start = arrival + _station_wait_expected(instance, node)
     departure = charge_start + charge_time
     return departure, battery_after, charge_time, e
 

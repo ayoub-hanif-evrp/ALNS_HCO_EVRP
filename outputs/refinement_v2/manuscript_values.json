@@ -1,0 +1,25 @@
+{
+  "experiment": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/refinement_v2",
+  "representative_instance": "R2_10_1",
+  "n_main_figures": 6,
+  "frozen_final": false,
+  "titles": [
+    "Fleet size under the two time-window settings",
+    "Travel distance under the two time-window settings",
+    "Representative electric-vehicle routing and charging decisions",
+    "Battery state of charge along a charging-intensive route",
+    "Charging visits versus expected station waiting",
+    "Composition of vehicle operating time"
+  ],
+  "representative_rule": "Proposed Original-TW feasible instance whose fleet size is closest to the median; ties broken by instance name.",
+  "soc_route_rule": "Within that instance: the route with the most charging visits.",
+  "time_composition_rule": "Shares are summed over all Proposed instances in each TW setting.",
+  "highlighted_routes": [
+    48,
+    11,
+    0
+  ],
+  "soc_routes": [
+    11
+  ]
+}

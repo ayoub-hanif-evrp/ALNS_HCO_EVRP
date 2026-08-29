@@ -1,0 +1,32 @@
+{
+  "figures": [
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig01_fleet_size.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig01_fleet_size.svg",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig02_distance.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig02_distance.svg",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig06_time_composition.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig06_time_composition.svg",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig03_representative_route.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig03_representative_route.svg",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig04_soc_profile.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig04_soc_profile.svg",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig05_station_selection.png",
+    "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs/figures/fig05_station_selection.svg"
+  ],
+  "representative": "R2_10_1",
+  "representative_rule": "Proposed Original-TW feasible instance whose fleet size is closest to the median; ties broken by instance name.",
+  "soc_route_rule": "Within that instance: the route with the most charging visits.",
+  "time_composition_rule": "Shares are summed over all Proposed instances in each TW setting.",
+  "frozen_final": true,
+  "representative_instance": "R2_10_1",
+  "highlighted_routes": [
+    48,
+    32,
+    0
+  ],
+  "soc_routes": [
+    32
+  ],
+  "validation_only": true,
+  "artifact_root": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/outputs"
+}

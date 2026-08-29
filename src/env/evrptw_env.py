@@ -69,6 +69,8 @@ class EVRPTWEnv:
         self.current_event_time = 0.0
         self.total_distance = 0.0
         self.total_waiting_time = 0.0
+        self.customer_early_waiting_time = 0.0
+        self.station_waiting_time = 0.0
         self.total_charging_time = 0.0
         self.total_charging_price = 0.0
         self.total_lateness = 0.0
@@ -673,8 +675,10 @@ class EVRPTWEnv:
         ev.current_time = departure
         ev.route_distance += d
         ev.total_waiting_time += waiting
+        ev.customer_early_waiting_time += waiting
         self.total_distance += d
         self.total_waiting_time += waiting
+        self.customer_early_waiting_time += waiting
 
         ev.route_nodes.append(j)
         ev.arrival_times.append(arrival)
@@ -762,19 +766,23 @@ class EVRPTWEnv:
             lateness = max(0.0, arrival - inst.nodes[node].due_time)
             self._record_depot_lateness(lateness)
             self.total_waiting_time += waiting
+            self.customer_early_waiting_time += waiting
             ev.total_waiting_time += waiting
+            ev.customer_early_waiting_time += waiting
             charge_start = max(arrival, inst.nodes[node].ready_time)
         else:
-            wait_mu = 0.0
-            if inst.station_wait_mu is not None:
-                w = float(inst.station_wait_mu[node])
-                if w > 0.0 and not (w != w):  # not NaN
-                    wait_mu = w
-            waiting = wait_mu
+            waiting = 0.0
+            waits = inst.station_wait_expected
+            if waits is not None:
+                w = float(waits[node])
+                if w > 0.0 and w == w:
+                    waiting = w
             lateness = 0.0
             self.total_waiting_time += waiting
+            self.station_waiting_time += waiting
             ev.total_waiting_time += waiting
-            charge_start = arrival + wait_mu
+            ev.station_waiting_time += waiting
+            charge_start = arrival + waiting
 
         charge_price = 0.0 if free else self._price_per_energy_at(node) * charged_energy
 
@@ -799,6 +807,10 @@ class EVRPTWEnv:
             "charged_energy": charged_energy,
             "charging_time": charging_time,
             "charging_price": charge_price,
+            "battery_on_arrival": battery_after_arrival,
+            "battery_after_charge": new_battery,
+            "station_id": node,
+            "energy_added": charged_energy,
         })
         ev.active = True
         ev.busy = False
@@ -832,7 +844,9 @@ class EVRPTWEnv:
         lateness = max(0.0, arrival - node.due_time)
         self._record_depot_lateness(lateness)
         self.total_waiting_time += waiting
+        self.customer_early_waiting_time += waiting
         ev.total_waiting_time += waiting
+        ev.customer_early_waiting_time += waiting
         service_start = max(arrival, node.ready_time)
         departure = service_start + node.service_time
         ev.current_time = departure
@@ -1050,6 +1064,8 @@ class EVRPTWEnv:
             total_charging_time=self.total_charging_time,
             total_charging_price=self.total_charging_price,
             total_waiting_time=self.total_waiting_time,
+            customer_early_waiting_time=self.customer_early_waiting_time,
+            station_waiting_time=self.station_waiting_time,
             unserved_customers=unserved,
             duplicate_customer_visits=self.duplicate_customer_visits,
             total_lateness=self.total_lateness,

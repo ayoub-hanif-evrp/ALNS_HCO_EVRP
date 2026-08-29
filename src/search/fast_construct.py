@@ -209,7 +209,7 @@ def _dense_construct_large(
                     )
                     if cand is None:
                         continue
-                    if best_cand is None or float(cand.score.total_distance) < float(best_cand.score.total_distance):
+                    if best_cand is None or cand.score.dominates(best_cand.score):
                         best_cand = cand
             if best_cand is not None:
                 routes = best_cand.routes

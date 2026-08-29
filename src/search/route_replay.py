@@ -1,12 +1,29 @@
 """Exact route / solution replay for TG-FPS (no live-env mutation before accept)."""
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.env.cost import CostWeights
 from src.env.evrptw_env import EVRPTWEnv
+from src.evaluation.paper_objective import (
+    MODE_CLASSICAL,
+    charging_rate_s,
+    expected_price_s,
+    expected_wait_s,
+    objective_spec,
+    phi_from_replay,
+)
 from src.search.score import SearchScore
+
+
+def _arc_energy(instance, i: int, j: int) -> float:
+    return float(instance.energy_matrix[int(i), int(j)])
+
+
+def _arc_travel_time(instance, i: int, j: int) -> float:
+    return float(instance.travel_time_matrix[int(i), int(j)])
 
 
 @dataclass
@@ -22,6 +39,7 @@ class RouteEvent:
     charged_energy: float
     charge_portion: float | None
     load_after: float
+    charging_time: float = 0.0
 
 
 @dataclass
@@ -37,6 +55,11 @@ class RouteReplayResult:
     end_time: float
     route_events: list[RouteEvent] = field(default_factory=list)
     hard_violation_count: int = 0
+    customer_early_waiting_time: float = 0.0
+    station_waiting_time: float = 0.0
+    energy_consumed: float = 0.0
+    travel_time: float = 0.0
+    service_time: float = 0.0
 
 
 @dataclass
@@ -55,6 +78,17 @@ class SolutionReplayResult:
     duplicate_customers: int
     route_results: list[RouteReplayResult] = field(default_factory=list)
     score: SearchScore | None = None
+    customer_early_waiting_time: float = 0.0
+    station_waiting_time: float = 0.0
+    phi_breakdown: dict[str, Any] | None = None
+    battery_metrics: dict[str, Any] = field(default_factory=dict)
+    station_metrics: dict[str, Any] = field(default_factory=dict)
+    late_customers: int = 0
+    depot_return_violations: int = 0
+    time_window_violations: int = 0
+    energy_consumed: float = 0.0
+    travel_time: float = 0.0
+    service_time: float = 0.0
 
 
 def _normalize_route(
@@ -118,12 +152,20 @@ def replay_route(
     served: list[int] = []
     first_failure = None
     first_pos = None
+    energy_consumed = 0.0
+    travel_time = 0.0
+    service_time = 0.0
 
     # Skip the initial depot occupancy (already at depot).
     for pos in range(1, len(nodes)):
         node = int(nodes[pos])
         portion = labels[pos]
         node_obj = instance.nodes[node]
+        prev = int(nodes[pos - 1])
+        energy_consumed += _arc_energy(instance, prev, node)
+        travel_time += _arc_travel_time(instance, prev, node)
+        if node_obj.is_customer:
+            service_time += float(node_obj.service_time)
         battery_before = float(ev.remaining_battery)
         try:
             if node_obj.is_depot and pos == len(nodes) - 1:
@@ -154,6 +196,7 @@ def replay_route(
                 charged_energy=float(info.get("charged_energy", 0.0) or 0.0),
                 charge_portion=None if portion is None else float(portion),
                 load_after=float(ev.remaining_capacity),
+                charging_time=float(info.get("charging_time", 0.0) or 0.0),
             )
         )
         hard = (
@@ -196,6 +239,11 @@ def replay_route(
         end_time=float(ev.current_time),
         route_events=events,
         hard_violation_count=hard_count,
+        customer_early_waiting_time=float(ev.customer_early_waiting_time),
+        station_waiting_time=float(ev.station_waiting_time),
+        energy_consumed=float(energy_consumed),
+        travel_time=float(travel_time),
+        service_time=float(service_time),
     )
 
 
@@ -234,6 +282,8 @@ def replay_solution(
     weights: CostWeights | None = None,
     m: int | None = None,
     charging_portions: list[float] | None = None,
+    hard_time_windows: bool = True,
+    stop_on_hard: bool | None = None,
 ) -> SolutionReplayResult:
     """Replay a multi-route solution jointly; detect duplicates and unserved."""
     cfg = config or {}
@@ -243,6 +293,7 @@ def replay_solution(
         or problem.get("charging_portions")
         or [0.25, 0.5, 0.75, 1.0]
     )
+    stop = bool(hard_time_windows) if stop_on_hard is None else bool(stop_on_hard)
     if weights is not None:
         w = weights
     elif cfg:
@@ -264,7 +315,7 @@ def replay_solution(
         charging_portions=portions,
         use_horizon_check=bool(problem.get("use_horizon_check", True)),
         use_depot_charging=bool(problem.get("use_depot_charging", True)),
-        hard_time_windows=True,
+        hard_time_windows=bool(hard_time_windows),
     )
 
     route_results: list[RouteReplayResult] = []
@@ -284,10 +335,18 @@ def replay_solution(
         route_served: list[int] = []
         route_fail = None
         route_fail_pos = None
+        route_energy = 0.0
+        route_travel = 0.0
+        route_service = 0.0
         for pos in range(1, len(nodes_n)):
             node = int(nodes_n[pos])
             portion = labels_n[pos]
             node_obj = instance.nodes[node]
+            prev = int(nodes_n[pos - 1])
+            route_energy += _arc_energy(instance, prev, node)
+            route_travel += _arc_travel_time(instance, prev, node)
+            if node_obj.is_customer:
+                route_service += float(node_obj.service_time)
             battery_before = float(ev.remaining_battery)
             try:
                 if node_obj.is_depot and pos == len(nodes_n) - 1:
@@ -327,6 +386,7 @@ def replay_solution(
                     charged_energy=float(info.get("charged_energy", 0.0) or 0.0),
                     charge_portion=None if portion is None else float(portion),
                     load_after=float(ev.remaining_capacity),
+                    charging_time=float(info.get("charging_time", 0.0) or 0.0),
                 )
             )
             hard = (
@@ -335,7 +395,7 @@ def replay_solution(
                 + int(env.time_window_violation_count)
                 + int(env.depot_return_violation)
             )
-            if hard > 0 or env.infeasible:
+            if (hard > 0 or env.infeasible) and stop:
                 route_fail = route_fail or (
                     f"route={ri} pos={pos} node={node}: hard_violation"
                 )
@@ -363,6 +423,11 @@ def replay_solution(
                 end_time=float(ev.current_time),
                 route_events=events,
                 hard_violation_count=hard_count,
+                customer_early_waiting_time=float(ev.customer_early_waiting_time),
+                station_waiting_time=float(ev.station_waiting_time),
+                energy_consumed=float(route_energy),
+                travel_time=float(route_travel),
+                service_time=float(route_service),
             )
         )
 
@@ -385,6 +450,12 @@ def replay_solution(
     )
     n_cust = int(instance.num_customers)
     unserved = max(0, n_cust - len(served_set))
+    late_customers = 0
+    for route in route_results:
+        for ev in route.route_events:
+            nd = instance.nodes[int(ev.node)]
+            if nd.is_customer and float(ev.arrival) > float(nd.due_time) + 1e-6:
+                late_customers += 1
     feasible = (
         first_failure is None
         and hard == 0
@@ -405,6 +476,24 @@ def replay_solution(
         hard_violation_count=hard,
         duplicate_customers=int(duplicates),
         route_results=route_results,
+        late_customers=int(late_customers),
+        depot_return_violations=int(env.depot_return_violation),
+        time_window_violations=int(env.time_window_violation_count),
+        energy_consumed=sum(float(r.energy_consumed) for r in route_results),
+        travel_time=sum(float(r.travel_time) for r in route_results),
+        service_time=sum(float(r.service_time) for r in route_results),
+    )
+    result.customer_early_waiting_time = float(summary.customer_early_waiting_time)
+    result.station_waiting_time = float(summary.station_waiting_time)
+    phi_info = phi_from_replay(instance, result, cfg)
+    spec = objective_spec(cfg)
+    result.phi_breakdown = phi_info
+    result.battery_metrics = _battery_metrics(instance, result)
+    result.station_metrics = _station_metrics(instance, result, phi_info)
+    operational = (
+        float(summary.total_distance)
+        if spec["mode"] == MODE_CLASSICAL
+        else float(phi_info["Phi"])
     )
     result.score = SearchScore(
         hard_violation_count=hard,
@@ -413,17 +502,137 @@ def replay_solution(
         total_distance=float(summary.total_distance),
         total_charging_time=float(summary.total_charging_time),
         total_duration=float(summary.total_duration),
-        paper_objective=float(objective),
+        paper_objective=operational,
+        phi=float(phi_info["Phi"]),
+        total_station_time=float(phi_info["tstation"]),
+        objective_mode=str(spec["mode"]),
     )
     return result
 
 
-def replay_env_solution(env: EVRPTWEnv, weights: CostWeights | None = None) -> SolutionReplayResult:
+def _battery_metrics(instance, result: SolutionReplayResult) -> dict[str, Any]:
+    q = float(instance.vehicle.battery_capacity)
+    energy_consumed = 0.0
+    energy_charged = 0.0
+    mins: list[float] = []
+    route_mins: list[float] = []
+    n_recharge_routes = 0
+    n_used = 0
+    charging_visits = 0
+    charging_events: list[dict[str, Any]] = []
+    for route in result.route_results:
+        if not route.route_events:
+            continue
+        n_used += 1
+        rmin = q
+        charged_here = False
+        prev_batt = q
+        for ev in route.route_events:
+            charged = float(ev.charged_energy or 0.0)
+            # Traction energy on the incoming arc: drop before charge, restored after charge.
+            energy_consumed += max(0.0, float(ev.battery_before) - float(ev.battery_after) + charged)
+            energy_charged += charged
+            rmin = min(rmin, float(ev.battery_before), float(ev.battery_after))
+            if charged > 1e-12:
+                charged_here = True
+                charging_visits += 1
+                price = expected_price_s(instance, int(ev.node))
+                wait = expected_wait_s(instance, int(ev.node))
+                rate = charging_rate_s(instance, int(ev.node))
+                chg_t = float(ev.charging_time or 0.0)
+                if chg_t <= 1e-12 and rate > 1e-12:
+                    chg_t = charged / rate
+                charging_events.append({
+                    "station_id": int(ev.node),
+                    "arrival_time": float(ev.arrival),
+                    "battery_before_charging": float(ev.battery_before),
+                    "energy_added": charged,
+                    "battery_after_charging": float(ev.battery_after),
+                    "charging_time": chg_t,
+                    "expected_station_wait": wait,
+                    "expected_price": price,
+                    "charging_expense": charged * price,
+                })
+            prev_batt = float(ev.battery_after)
+        mins.append(rmin)
+        route_mins.append(rmin / max(q, 1e-9))
+        if charged_here:
+            n_recharge_routes += 1
+    matrix_energy = float(getattr(result, "energy_consumed", 0.0) or 0.0)
+    reported_energy = matrix_energy if matrix_energy > 1e-9 else energy_consumed
+    extra = {
+        "total_energy_consumed": reported_energy,
+        "energy_consumed_battery_trace": energy_consumed,
+        "total_energy_charged": energy_charged,
+        "routes_requiring_charging": n_recharge_routes,
+        "fraction_routes_requiring_recharge": n_recharge_routes / max(n_used, 1),
+        "charging_visits": charging_visits,
+        "charging_visits_per_used_ev": charging_visits / max(n_used, 1),
+        "energy_charged_per_used_ev": energy_charged / max(n_used, 1),
+        "battery_violations": int(result.hard_violation_count),
+        "charging_events": charging_events,
+    }
+    if not mins:
+        return {
+            "minimum_absolute_battery": q,
+            "minimum_soc_fraction": 1.0,
+            "mean_route_minimum_soc": 1.0,
+            "median_route_minimum_soc": 1.0,
+            **extra,
+            "total_energy_consumed": reported_energy,
+            "total_energy_charged": 0.0,
+            "charging_events": [],
+        }
+    return {
+        "minimum_absolute_battery": min(mins),
+        "minimum_soc_fraction": min(mins) / max(q, 1e-9),
+        "mean_route_minimum_soc": sum(route_mins) / len(route_mins),
+        "median_route_minimum_soc": float(statistics.median(route_mins)),
+        **extra,
+    }
+
+
+def _station_metrics(instance, result: SolutionReplayResult, phi_info: dict[str, Any]) -> dict[str, Any]:
+    visits = list(phi_info.get("charging_visit_records") or [])
+    stations = [int(v["station_id"]) for v in visits]
+    unique = sorted(set(stations))
+    rates, prices, waits = [], [], []
+    for sid in stations:
+        from src.evaluation.paper_objective import charging_rate_s, expected_price_s, expected_wait_s
+        rates.append(charging_rate_s(instance, sid))
+        prices.append(expected_price_s(instance, sid))
+        waits.append(expected_wait_s(instance, sid))
+    def _mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+    return {
+        "charging_visits": len(visits),
+        "unique_stations_used": len(unique),
+        "total_charged_energy": float(result.battery_metrics.get("total_energy_charged", 0.0)) if result.battery_metrics else sum(float(v["energy_added"]) for v in visits),
+        "total_charging_time": float(result.charging_time),
+        "expected_charging_cost": float(phi_info.get("expected_charging_cost") or 0.0),
+        "risk_adjusted_charging_cost": float(phi_info.get("crisk") or 0.0),
+        "CVaR95_charging_cost_exposure": float(phi_info.get("cvar95_charging_cost_exposure") or 0.0),
+        "station_waiting_time_expected": float(phi_info.get("station_waiting_expected") or 0.0),
+        "risk_adjusted_station_waiting": float(phi_info.get("wrisk") or 0.0),
+        "CVaR95_wait_exposure": float(phi_info.get("cvar95_wait_exposure") or 0.0),
+        "mean_charging_rate_visited": _mean(rates),
+        "mean_expected_price_visited": _mean(prices),
+        "mean_expected_wait_visited": _mean(waits),
+    }
+
+
+def replay_env_solution(
+    env: EVRPTWEnv,
+    weights: CostWeights | None = None,
+    config: dict | None = None,
+) -> SolutionReplayResult:
     """Extract routes from env and re-validate via disposable replay."""
     routes = extract_routes_from_env(env)
+    cfg = dict(config or {})
     return replay_solution(
         env.instance,
         routes,
+        config=cfg,
         m=env.m,
         charging_portions=list(env.charging_portions),
         weights=weights or CostWeights(),

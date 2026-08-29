@@ -64,6 +64,8 @@ class SolutionSummary:
     total_charging_time: float = 0.0
     total_charging_price: float = 0.0
     total_waiting_time: float = 0.0
+    customer_early_waiting_time: float = 0.0
+    station_waiting_time: float = 0.0
     unserved_customers: int = 0
     duplicate_customer_visits: int = 0
     total_lateness: float = 0.0

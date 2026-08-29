@@ -159,7 +159,6 @@ def evaluate_insertion(
         dist = float(route_res.distance)
         dur = float(route_res.duration)
         chg = float(route_res.charging_time)
-        # Count served across trial via cheap scan
         served = set()
         for nds, _ in trial:
             for n in nds:
@@ -167,14 +166,22 @@ def evaluate_insertion(
                     served.add(int(n))
         n_cust = int(instance.num_customers)
         unserved = max(0, n_cust - len(served))
+        used = sum(1 for nds, _ in trial if any(instance.nodes[n].is_customer for n in nds))
+        from src.evaluation.paper_objective import MODE_CLASSICAL, objective_spec, phi_from_replay
+        spec = objective_spec(config)
+        fake = type("R", (), {"route_results": [route_res], "distance": dist})()
+        phi_info = phi_from_replay(instance, fake, config)
         score = SearchScore(
             hard_violation_count=0,
             unserved_customer_count=unserved,
-            used_evs=sum(1 for nds, _ in trial if any(instance.nodes[n].is_customer for n in nds)),
-            total_distance=dist,  # provisional; overwritten on full accept
+            used_evs=used,
+            total_distance=dist,
             total_charging_time=chg,
             total_duration=dur,
-            paper_objective=dist + 0.5 * chg + 0.1 * dur,
+            paper_objective=float(phi_info["Phi"]) if spec["mode"] != MODE_CLASSICAL else dist,
+            phi=float(phi_info["Phi"]),
+            total_station_time=float(phi_info["tstation"]),
+            objective_mode=str(spec["mode"]),
         )
         return InsertionCandidate(
             route_index=route_index,
@@ -376,9 +383,8 @@ def regret_insertion(
             regret = 0.0
         else:
             k = min(max(regret_k, 2), len(cands))
-            # Use paper objective component of lex score as scalar regret proxy among feasible inserts.
-            best_j = cands[0].score.paper_objective
-            kth_j = cands[k - 1].score.paper_objective
+            best_j = cands[0].score.operational_scalar()
+            kth_j = cands[k - 1].score.operational_scalar()
             regret = float(kth_j - best_j)
         if regret > best_regret or (
             abs(regret - best_regret) < 1e-9

@@ -123,6 +123,12 @@ def solve_deterministic_fps(
         return global_deadline.child(usable, stage=name)
 
     # Combined fleet search uses upper + descent fractions
+    competitor = str((cfg.get("experiment") or {}).get("competitor") or "").strip().lower()
+    if competitor in {"alns", "vns_ts"}:
+        intensify_cfg_early = dict((cfg.get("hanif_fleet_intensify") or {}))
+        intensify_cfg_early["enabled"] = False
+        cfg = dict(cfg)
+        cfg["hanif_fleet_intensify"] = intensify_cfg_early
     fleet_secs = None
     if budget_seconds is not None:
         fleet_secs = (plan.seconds_for(budget_seconds, "upper_bound") or 0) + (
@@ -253,6 +259,7 @@ def solve_deterministic_fps(
     ledger.mark("early_redescent", sum(x["runtime"] for x in early_logs), invoked=not large_n)
 
     # Hanif fleet intensification (scalable route elimination after feasible construct).
+    # The runner records --disable-intensify; this path must not force it back on.
     intensify_cfg = dict((cfg.get("hanif_fleet_intensify") or {}))
     do_intensify = large_n and bool(intensify_cfg.get("enabled", True))
     if do_intensify and global_deadline.remaining() > 10:
@@ -331,7 +338,7 @@ def solve_deterministic_fps(
         if budget_seconds is not None:
             carry = max(0.0, (plan.seconds_for(budget_seconds, "charging") or 0) + carry - ch_elapsed)
 
-    # Repair + ALNS (Hanif: light repair only, skip ALNS)
+    # Repair + ALNS / VNS-TS (literature competitors keep ALNS/VNS even on large n)
     t_ra = time.perf_counter()
     ra_deadline = _stage_deadline("repair_alns")
     if large_n:
@@ -348,16 +355,34 @@ def solve_deterministic_fps(
     if rep.score is not None and rep.score.dominates(score):
         score = rep.score
     stages["repair"] = {"feasible": bool(rep.feasible), "unserved": int(rep.unserved_customers), "invoked": True}
-    if large_n:
-        stages["alns"] = {"invoked": False, "skipped_large_n": True}
-    else:
+    run_alns_now = (not large_n) or competitor == "alns"
+    run_vns_now = competitor == "vns_ts"
+    if run_vns_now:
+        from src.search.vns_ts import run_vns_ts
+        vns_budget = max(3.0, min(ra_deadline.remaining(), global_deadline.remaining() - 2.0))
+        vns = run_vns_ts(
+            instance, routes, config=cfg, weights=w, m=m_star,
+            time_limit_seconds=vns_budget, seed=int((cfg.get("seed") or 0)),
+        )
+        routes, score = vns.routes, vns.score
+        stages["alns"] = {"invoked": False, "skipped_for": "vns_ts"}
+        stages["vns_ts"] = {
+            "iterations": vns.iterations,
+            "accepted": vns.accepted,
+            "budget_s": vns_budget,
+            "invoked": True,
+            "telemetry": vns.telemetry,
+        }
+    elif run_alns_now:
         alns_cfg = dict((cfg.get("hybrid_search") or {}).get("alns") or {})
         if cfg.get("alns"):
             alns_cfg.update(dict(cfg.get("alns") or {}))
         alns_budget = max(3.0, min(ra_deadline.remaining(), float(alns_cfg.get("time_limit_seconds", 40))))
+        if competitor == "alns":
+            alns_budget = max(alns_budget, min(90.0, global_deadline.remaining() * 0.45))
         alns = run_alns(
             instance, routes, config=cfg, weights=w, m=m_star,
-            iterations=int(alns_cfg.get("iterations", 60)),
+            iterations=int(alns_cfg.get("iterations", 60 if not large_n else 200)),
             time_limit_seconds=alns_budget,
             guide=None,
         )
@@ -373,6 +398,8 @@ def solve_deterministic_fps(
             "neural_guided": False,
             "telemetry": alns.telemetry,
         }
+    else:
+        stages["alns"] = {"invoked": False, "skipped_large_n": True}
 
     # Post-ALNS fleet re-descent (skip on Hanif-scale — too slow).
     routes = _compact_to_used(instance, routes)

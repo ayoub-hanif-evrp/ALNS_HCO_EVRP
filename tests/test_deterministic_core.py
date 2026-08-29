@@ -32,8 +32,8 @@ def test_benchmark_score_lex_order():
     assert a.dominates(b)
     s = SearchScore.from_benchmark(a)
     assert s.as_tuple()[3] == 100.0
-    assert s.as_tuple()[4] == 10.0  # charging
-    assert s.as_tuple()[5] == 1000.0  # duration
+    assert s.as_tuple()[4] == 1000.0  # duration
+    assert len(s.as_tuple()) == 5
 
 
 def test_fixed_fleet_baseline_manifest_present():

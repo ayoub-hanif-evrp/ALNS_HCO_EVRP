@@ -26,7 +26,17 @@ class ExactCheckReport:
     used_vehicles: int = 0
     distance: float = 0.0
     charging_time: float = 0.0
+    waiting_time: float = 0.0
+    customer_early_waiting_time: float = 0.0
+    station_waiting_time: float = 0.0
     duration: float = 0.0
+    phi: float = 0.0
+    battery_metrics: dict[str, Any] = field(default_factory=dict)
+    station_metrics: dict[str, Any] = field(default_factory=dict)
+    travel_time: float = 0.0
+    service_time: float = 0.0
+    energy_consumed: float = 0.0
+    mean_route_minimum_soc: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -42,7 +52,22 @@ class ExactCheckReport:
             "used_vehicles": self.used_vehicles,
             "distance": self.distance,
             "charging_time": self.charging_time,
+            "waiting_time": self.waiting_time,
+            "customer_early_waiting_time": self.customer_early_waiting_time,
+            "station_waiting_time": self.station_waiting_time,
             "duration": self.duration,
+            "phi": self.phi,
+            "battery_metrics": self.battery_metrics,
+            "station_metrics": self.station_metrics,
+            "expected_charging_cost": float((self.station_metrics or {}).get("expected_charging_cost") or 0.0),
+            "station_waiting_time_expected": float((self.station_metrics or {}).get("station_waiting_time_expected") or 0.0),
+            "minimum_soc_fraction": float((self.battery_metrics or {}).get("minimum_soc_fraction") or 0.0),
+            "total_energy_charged": float((self.battery_metrics or {}).get("total_energy_charged") or 0.0),
+            "total_energy_consumed": float((self.battery_metrics or {}).get("total_energy_consumed") or self.energy_consumed or 0.0),
+            "travel_time": float(self.travel_time),
+            "service_time": float(self.service_time),
+            "mean_route_minimum_soc": float((self.battery_metrics or {}).get("mean_route_minimum_soc") or self.mean_route_minimum_soc or 0.0),
+            "routes_requiring_charging": int((self.battery_metrics or {}).get("routes_requiring_charging") or 0),
         }
 
 
@@ -86,14 +111,34 @@ def exact_accept_solution(
         report.used_vehicles = int(final.score.used_evs)
         report.distance = float(final.score.total_distance)
         report.charging_time = float(final.score.total_charging_time)
+        report.waiting_time = float(final.waiting_time)
+        report.customer_early_waiting_time = float(final.customer_early_waiting_time)
+        report.station_waiting_time = float(final.station_waiting_time)
         report.duration = float(final.score.total_duration)
         report.objective = float(final.score.paper_objective)
+        report.phi = float(final.score.phi)
+        report.battery_metrics = dict(final.battery_metrics or {})
+        report.station_metrics = dict(final.station_metrics or {})
+        report.travel_time = float(getattr(final, "travel_time", 0.0) or 0.0)
+        report.service_time = float(getattr(final, "service_time", 0.0) or 0.0)
+        report.energy_consumed = float((final.battery_metrics or {}).get("total_energy_consumed") or final.energy_consumed or 0.0)
+        report.mean_route_minimum_soc = float((final.battery_metrics or {}).get("mean_route_minimum_soc") or 0.0)
     else:
         report.used_vehicles = int(final.used_evs)
         report.distance = float(final.distance)
         report.charging_time = float(final.charging_time)
+        report.waiting_time = float(final.waiting_time)
+        report.customer_early_waiting_time = float(final.customer_early_waiting_time)
+        report.station_waiting_time = float(final.station_waiting_time)
         report.duration = float(final.duration)
         report.objective = float(getattr(final, "objective", 0.0) or 0.0)
+        report.phi = float((final.phi_breakdown or {}).get("Phi") or 0.0)
+        report.battery_metrics = dict(final.battery_metrics or {})
+        report.station_metrics = dict(final.station_metrics or {})
+        report.travel_time = float(getattr(final, "travel_time", 0.0) or 0.0)
+        report.service_time = float(getattr(final, "service_time", 0.0) or 0.0)
+        report.energy_consumed = float((final.battery_metrics or {}).get("total_energy_consumed") or final.energy_consumed or 0.0)
+        report.mean_route_minimum_soc = float((final.battery_metrics or {}).get("mean_route_minimum_soc") or 0.0)
 
     customers = [i for i, n in enumerate(instance.nodes) if n.is_customer]
     served_set = set(report.served_customers)

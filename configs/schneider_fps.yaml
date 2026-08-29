@@ -1,0 +1,97 @@
+# Schneider EVRPTW benchmark profile (56 large instances).
+# Classical lex (K, D). Homogeneous stations. No wait/price.
+seed: 0
+device: cpu
+
+dataset:
+  name: schneider
+  path: dataset/Schneider/evrptw_instances
+  use_only_this_dataset: true
+
+pipeline:
+  run_tgfps: false
+  run_expert: false
+  generate_demonstrations: false
+  run_behavior_cloning: false
+  run_rl_finetuning: false
+  run_final_evaluation: false
+
+hybrid_search:
+  neural_guidance:
+    enabled: false
+
+fleet_search:
+  enabled: true
+  lexicographic: true
+  fast_mode: false
+  construction_backend: dense
+  prefer_expert_construct: false
+  seeds: [0]
+  upper_bound_retries: 1
+  retries_per_fleet: 1
+  failures_before_stop: 3
+  stop_target_on_first_feasible: true
+  stop_upper_on_first_feasible: true
+  warm_start_from_larger_fleet: true
+  cold_retry_after_warm_failure: false
+  route_elimination: true
+  set_partitioning_during_descent: false
+  elim_top_k: 4
+  elim_focused_alns: false
+  intensive_elim_rounds: 4
+  customers_per_vehicle_lo: 20
+  customers_per_vehicle_hi: 5
+  extra_margin: 16
+  initial_upper_m: 24
+  use_tw_pressure_as_hard_floor: false
+  upper_expand_step: 8
+  upper_expand_max: 40
+  max_upper_fleet: 40
+
+deterministic_fps_budget:
+  upper_bound_fraction: 0.25
+  fleet_descent_fraction: 0.55
+  route_pool_fraction: 0.02
+  charging_fraction: 0.03
+  repair_alns_fraction: 0.12
+  rescue_fraction: 0.03
+
+problem:
+  allow_partial_charging: true
+  charging_portions: [0.25, 0.50, 0.75, 1.00]
+  station_reusable: true
+  use_depot_charging: true
+  use_horizon_check: true
+  load_capacity: null
+
+cost:
+  lambda_vehicle: 1000.0
+  lambda_distance: 1.0
+  lambda_duration: 0.1
+  lambda_charging: 0.5
+  lambda_charging_price: 0.0
+  lambda_waiting: 0.1
+  penalty_unserved: 10000.0
+  penalty_duplicate: 10000.0
+  penalty_late: 5000.0
+  penalty_battery: 10000.0
+  penalty_capacity: 10000.0
+  penalty_depot: 10000.0
+  penalty_infeasible: 100000.0
+
+paper_objective:
+  mode: classical_distance
+  risk_alpha: 0.95
+  risk_blend: 0.0
+
+hanif_fleet_intensify:
+  enabled: true
+  time_limit_seconds: 90
+  budget_fraction: 0.55
+  max_rounds: 60
+  top_k: 10
+  seeds: [0, 1, 2, 3]
+
+alns:
+  iterations: 40
+  time_limit_seconds: 25

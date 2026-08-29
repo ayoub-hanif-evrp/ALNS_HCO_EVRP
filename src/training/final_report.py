@@ -143,7 +143,7 @@ def write_final_report(
         "runtime": runtime,
         "remaining_limitations": [
             "B3 pilot uses a deterministic small subset per class; scale to full Hanif for final paper numbers.",
-            "Station wait uses E[wait]=wait_mu only; wait_sigma is not sampled.",
+            "Station wait uses E[W]=exp(wait_mu + 0.5 wait_sigma^2); wait_sigma is not sampled during search.",
             "density_score is a dynamic feature, not a physics constraint.",
             "Exact masks on 1000-customer instances remain computationally heavy.",
         ],

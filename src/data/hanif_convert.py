@@ -264,7 +264,7 @@ def convert_one_instance(
         "planning_horizon": horizon,
         "max_abs_coordinate": max_abs,
         "hanif_fleet_size": int(parsed["fleet_size"]),
-        "station_wait_model": "expected_wait_mu",
+        "station_wait_model": "expected_lognormal_wait",
         "station_attrs_supported": [
             "charging_rate", "price_mu", "price_sigma", "wait_mu", "density_score",
         ],
@@ -309,7 +309,7 @@ def convert_one_instance(
         "price_per_energy_min": float(min(prices)) if prices else None,
         "price_per_energy_max": float(max(prices)) if prices else None,
         "price_per_energy_median": float(np.median(prices)) if prices else None,
-        "station_wait_model": "expected_wait_mu",
+        "station_wait_model": "expected_lognormal_wait",
         "source_ev_specs": str(DEFAULT_EV_SPECS).replace("\\", "/"),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

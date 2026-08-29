@@ -1,0 +1,3 @@
+tw_variant,Delta_vehicles,Delta_distance_%,Delta_station_waiting_%,Delta_charging_time_%,Delta_charging_expense_%
+Original TW,0.0,-0.6117525356779907,-3.774153217776387,-36.3980117385739,-42.378915290086084
+Relaxed TW,0.0,-0.9617318439481926,-8.227279376914975,-30.063338421115446,-39.68571718754085

@@ -275,6 +275,8 @@ def solve_with_fleet_search(
     large_n = int(getattr(instance, "num_customers", 0) or 0) >= 400
     # Probe from an adaptive mid/low band — not the padded maximum.
     hi = adaptive_start_fleet(lo, hi0, instance)
+    if fleet_cfg.get("initial_upper_m") is not None:
+        hi = min(hi0, max(lo, int(fleet_cfg["initial_upper_m"])))
     tw_variant = str((cfg.get("dataset") or {}).get("tw_variant") or "A").upper()
     if large_n and tw_variant in ("B", "RELAXED", "RELAXED_TW", "VARIANT_B"):
         # Relaxed TW: start near capacity band, not type-1 padded hi.

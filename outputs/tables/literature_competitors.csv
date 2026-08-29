@@ -1,0 +1,12 @@
+method_id,method,citation,algorithm_family,original_instances,reimplemented_on_this_benchmark
+VNS_TS,VNS-style,"Schneider, Stenger, Goeke (2014), Transportation Science","variable neighborhood search (relocate, swap, 2-opt)","Schneider EVRPTW (Solomon-based, up to 100 customers)",True
+ALNS,ALNS-style,"Keskin and Catay (2016), Transportation Research Part C",adaptive large neighborhood search (destroy/repair),Schneider EVRPTW with partial recharging,True
+ALNS_LS,ALNS+LS,"Goeke and Schneider (2015), EJOR; Hiermann, Puchinger, Ropke, Hartl (2016), EJOR",ALNS with embedded local search,Schneider EVRPTW and E-FSMFTW (up to a few hundred customers),False
+ILS,ILS,"Montoya, Gueret, Mendoza, Villegas (2017), Transportation Research Part B",iterated local search,EVRP with nonlinear charging (Schneider-scale and extensions),False
+LNS_GTS,LNS×GTS,"Loffler, Desaulniers, Irnich, Schneider (2020), Networks",large neighborhood search + granular tabu search,EVRPTW with a single recharge (up to 100 customers),False
+HMA,Hybrid memetic algorithm,"Jia et al. (2024), arXiv:2410.19580",memetic / population search,"EVRP-TW-SPD, including new 1000-customer JD Logistics instances",False
+KESKIN_2021,Simulation-based ALNS,"Keskin, Catay, Laporte (2021), Computers & Operations Research",ALNS + simulation / recourse,100-customer EVRPTW with stochastic station queues,False
+FROGER_2022,ILS + branch-and-cut,"Froger, Mendoza, Jabali, Laporte (2022), Transportation Science",ILS with B&C assembler,EVRP with capacitated stations and multiple technologies,False
+NAFSTAD_2025,Branch-price-and-cut,"Nafstad, Hasle, Kloster (2025), Transportation Science",exact BP&C,up to 100 customers and 21 charging locations,False
+WANG_2026,MILP + AILS,"Wang, Adulyasak, Cordeau (2026), Computers & Operations Research",AILS with exact fixed-route scheduler,100-customer controlled instances; 1100–1500-customer real cases,False
+WANG_2026_TWOPHASE,Two-phase lexicographic ALNS,"Wang et al. (2026), Transportation Research Part C",lexicographic fleet-first ALNS with partial recharge,EVRPTW (not the Hanif 1000-customer station set),False

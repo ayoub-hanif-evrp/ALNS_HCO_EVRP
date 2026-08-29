@@ -1,7 +1,0 @@
-instance,class,family,n_customers,capacity_lb,search_lo,search_hi,feasible,served,used_k,distance,paper_j,charging_visits,waiting_time,intensify_initial_k,intensify_final_k,intensify_eliminations,warm_start,runtime_s,variant,tw_variant
-C1_10_1,C,C1,1000,90,90,200,True,1000,106,47376.607162833214,170600.336601934,17,0.0,110,106,4,False,67.2428077000659,variant_A_original_TW,A
-C2_10_1,C,C2,1000,28,28,200,True,1000,43,26054.907417535782,90624.32078301975,21,0.0,58,43,15,False,82.84777690004557,variant_A_original_TW,A
-R1_10_1,R,R1,1000,91,91,200,True,1000,179,88988.93499684334,313439.1324646465,29,0.0,185,179,6,False,65.32818550011143,variant_A_original_TW,A
-R2_10_1,R,R2,1000,19,19,200,True,1000,67,66594.9355956316,217235.16217533502,90,0.0,91,67,24,False,119.02055649994873,variant_A_original_TW,A
-RC1_10_1,RC,RC1,1000,90,90,200,True,1000,115,64511.43333673477,207610.45881024713,33,0.0,129,115,14,False,74.70579880010337,variant_A_original_TW,A
-RC2_10_1,RC,RC2,1000,18,18,200,True,1000,63,55819.926361083984,198459.35639311757,87,0.0,114,63,51,False,109.6843904000707,variant_A_original_TW,A

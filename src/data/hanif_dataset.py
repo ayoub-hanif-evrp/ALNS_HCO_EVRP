@@ -23,7 +23,7 @@ SUPPORTED_STATION_ATTRS = (
     "wait_mu",
     "density_score",
 )
-# Stochastic wait is not sampled; masks/env use E[wait]=wait_mu only.
+# Stochastic wait is not sampled during search; feasibility uses E[W]=exp(wait_mu+0.5 wait_sigma^2).
 DOCUMENTED_NON_STOCHASTIC = ("wait_sigma",)
 
 
@@ -242,9 +242,9 @@ def _inspect_instance(root: Path, name: str, *, full_load: bool = False) -> dict
         "source_variant": variant or SOURCE_VARIANT,
         "time_windows_modified": False,
         "detected_station_attributes": detected_attrs,
-        "charging_model": "per_station_rate_plus_expected_wait_mu",
-        "station_wait_model": "expected_wait_mu",
-        "wait_sigma_policy": "not_sampled_use_wait_mu_mean_only",
+        "charging_model": "per_station_rate_plus_expected_lognormal_wait",
+        "station_wait_model": "expected_lognormal_wait",
+        "wait_sigma_policy": "not_sampled_during_search_use_expected_wait",
         "density_score_policy": "dynamic_candidate_feature",
     }
 
@@ -286,10 +286,10 @@ def build_hanif_dataset_report(
         "stations_per_instance": stations,
         "detected_vehicle_capacity": loads,
         "detected_battery_capacity": batteries,
-        "detected_charging_model": "per_station_rate_plus_expected_wait_mu",
+        "detected_charging_model": "per_station_rate_plus_expected_lognormal_wait",
         "detected_station_attributes": list(SUPPORTED_STATION_ATTRS) + list(DOCUMENTED_NON_STOCHASTIC),
         "unsupported_attributes": [],
-        "wait_sigma_note": "Stochastic wait_sigma is not sampled; env/masks use E[wait]=wait_mu.",
+        "wait_sigma_note": "Search feasibility uses E[W]=exp(wait_mu + 0.5 wait_sigma^2); wait_sigma is sampled only in post-optimization robustness evaluation.",
         "density_score_note": "density_score is a dynamic candidate feature (not physics).",
         "time_windows_modified": False,
         "confirmation_no_time_windows_modified": True,

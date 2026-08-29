@@ -1,0 +1,28 @@
+{
+  "expected_n": 60,
+  "workers": 8,
+  "wall_s": 591.9782279999927,
+  "failed_instances": [],
+  "variants": {
+    "A": {
+      "expected_n": 60,
+      "n": 60,
+      "complete": true,
+      "missing_instances": [],
+      "extra_instances": [],
+      "failed_instances": [],
+      "cite_means": true
+    },
+    "B": {
+      "expected_n": 60,
+      "n": 60,
+      "complete": true,
+      "missing_instances": [],
+      "extra_instances": [],
+      "failed_instances": [],
+      "cite_means": true
+    }
+  },
+  "complete": true,
+  "cite_means": true
+}

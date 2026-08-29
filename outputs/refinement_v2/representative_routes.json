@@ -1,0 +1,15 @@
+{
+  "representative_rule": "Proposed Original-TW feasible instance whose fleet size is closest to the median; ties broken by instance name.",
+  "soc_route_rule": "Within that instance: the route with the most charging visits.",
+  "time_composition_rule": "Shares are summed over all Proposed instances in each TW setting.",
+  "frozen_final": false,
+  "representative_instance": "R2_10_1",
+  "highlighted_routes": [
+    48,
+    11,
+    0
+  ],
+  "soc_routes": [
+    11
+  ]
+}
