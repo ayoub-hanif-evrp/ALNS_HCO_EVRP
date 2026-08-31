@@ -16,7 +16,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.hanif_protocols import completeness_report, protocols_compatible
+from src.hanif.evaluation.hanif_protocols import completeness_report, protocols_compatible
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -132,7 +132,7 @@ def main() -> int:
     ap.add_argument("candidate", help="Candidate run root containing original_tw/relaxed_tw")
     ap.add_argument(
         "--frozen",
-        default="outputs/classical",
+        default="outputs/hanif/classical",
         help="Immutable control root",
     )
     ap.add_argument("--out", default=None, help="Optional JSON output path")

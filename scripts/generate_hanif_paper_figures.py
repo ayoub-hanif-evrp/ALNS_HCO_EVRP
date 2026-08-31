@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.visualization.hanif_paper_figures import freeze_current_best, generate_paper_artifacts
+from src.hanif.visualization.hanif_paper_figures import freeze_current_best, generate_paper_artifacts
 
 
 def main() -> int:

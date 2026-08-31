@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.data.instance_loader import load_instance
-from src.env.lognormal import cvar_lognormal, expected_lognormal, std_lognormal
-from src.evaluation.paper_objective import (
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.lognormal import cvar_lognormal, expected_lognormal, std_lognormal
+from src.schneider.evaluation.paper_objective import (
     MODE_CLASSICAL,
     MODE_EXPECTED,
     MODE_RISK_AWARE,
@@ -23,7 +23,7 @@ from src.evaluation.paper_objective import (
     operational_components,
     ranking_tuple,
 )
-from src.search.score import SearchScore
+from src.schneider.search.score import SearchScore
 
 HANIF = Path("dataset/Hanif/converted_hanif_original_tw/C1_10_1")
 
@@ -161,7 +161,7 @@ def test_classical_ignores_phi():
 def test_station_waiting_separated_from_customer_waiting():
     if not (HANIF / "evrp_instance.json").is_file():
         pytest.skip("converted instance missing")
-    from src.search.route_replay import replay_solution
+    from src.schneider.search.route_replay import replay_solution
 
     inst = load_instance(HANIF)
     depot = inst.depot_index
@@ -219,7 +219,7 @@ def test_wait_sigma_changes_risk_not_expected():
 def test_exact_replay_agrees_with_search_objective():
     if not (HANIF / "evrp_instance.json").is_file():
         pytest.skip("converted instance missing")
-    from src.search.route_replay import replay_solution
+    from src.schneider.search.route_replay import replay_solution
 
     inst = load_instance(HANIF)
     depot = inst.depot_index
@@ -237,7 +237,7 @@ def test_exact_replay_agrees_with_search_objective():
 def test_energy_consumed_from_matrix_not_zero():
     if not (HANIF / "evrp_instance.json").is_file():
         pytest.skip("converted instance missing")
-    from src.search.route_replay import replay_solution
+    from src.schneider.search.route_replay import replay_solution
 
     inst = load_instance(HANIF)
     depot = inst.depot_index
@@ -261,7 +261,7 @@ def test_price_mu_is_not_used_as_raw_price_in_env_wait_field_names():
     inst = load_instance(HANIF)
     sid = int(inst.charging_station_indices[0])
     assert abs(float(inst.station_price_expected[sid]) - float(inst.station_price_mu[sid])) > 1e-6
-    from src.env.lognormal import expected_lognormal
+    from src.schneider.env.lognormal import expected_lognormal
     assert abs(
         float(inst.station_price_expected[sid])
         - expected_lognormal(float(inst.station_price_mu[sid]), float(inst.station_price_sigma[sid]))

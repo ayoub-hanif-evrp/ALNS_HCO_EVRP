@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.env.evrptw_env import EVRPTWEnv
-from src.search.fleet import descending_fleet_search
-from src.search.portfolio import best_portfolio_solution, run_expert_portfolio
-from src.search.state_features import compute_construction_pressure
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.cost import CostWeights
+from src.schneider.env.evrptw_env import EVRPTWEnv
+from src.schneider.search.fleet import descending_fleet_search
+from src.schneider.search.portfolio import best_portfolio_solution, run_expert_portfolio
+from src.schneider.search.state_features import compute_construction_pressure
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "dataset" / "Schneider" / "evrptw_instances" / "c101C5"

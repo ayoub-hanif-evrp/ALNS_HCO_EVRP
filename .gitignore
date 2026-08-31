@@ -22,7 +22,8 @@ dataset/EVRPTWD/Downloads/
 dataset/_tmp_evrptw/
 dataset/_tmp_schneider/
 
-# Smoke runs, not paper archives
+# Smoke / scratch solver runs (delete after inspection)
+outputs/_tmp/
 outputs/schneider_smoke/
 outputs/schneider_smoke2/
 

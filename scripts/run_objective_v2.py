@@ -13,14 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.evaluation.hanif_protocols import FROZEN_HEADLINE
-from src.evaluation.objective_reference import build_objective_reference, save_reference, reference_path
-from src.evaluation.paper_objective import audit_payload, independent_recompute_phi, phi_from_replay
-from src.search.route_replay import replay_solution
-from src.utils.config import load_config
+from src.schneider.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.cost import CostWeights
+from src.schneider.evaluation.hanif_protocols import FROZEN_HEADLINE
+from src.schneider.evaluation.objective_reference import build_objective_reference, save_reference, reference_path
+from src.schneider.evaluation.paper_objective import audit_payload, independent_recompute_phi, phi_from_replay
+from src.schneider.search.route_replay import replay_solution
+from src.schneider.utils.config import load_config
 
 FROZEN = ROOT / "outputs/CurrentBestDeterministicHanif"
 OUT = ROOT / "outputs/objective_v2"

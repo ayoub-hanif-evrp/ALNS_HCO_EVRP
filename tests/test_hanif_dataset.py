@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from src.data.hanif_convert import SOURCE_VARIANT
-from src.data.hanif_dataset import (
+from src.hanif.data.hanif_convert import SOURCE_VARIANT
+from src.hanif.data.hanif_dataset import (
     deterministic_class_split,
     resolve_hanif_split,
     save_split_into_config,
 )
-from src.data.instance_loader import load_instance
+from src.hanif.data.instance_loader import load_instance
 
 ROOT = Path(__file__).resolve().parents[1]
 HANIF_OUT = ROOT / "dataset" / "Hanif" / "converted_hanif_original_tw"
@@ -75,7 +75,7 @@ def test_deterministic_class_split_sorted():
 
 @pytest.mark.skipif(not HANIF_SRC.is_dir(), reason="Hanif source missing")
 def test_refuse_relaxed_source(tmp_path: Path):
-    from src.data.hanif_convert import ensure_hanif_original_tw_converted
+    from src.hanif.data.hanif_convert import ensure_hanif_original_tw_converted
 
     with pytest.raises(ValueError, match="relaxed"):
         ensure_hanif_original_tw_converted(

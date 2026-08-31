@@ -4,7 +4,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from src.evaluation.hanif_protocols import (
+from src.schneider.evaluation.hanif_protocols import (
     PROTOCOL_EXTENDED,
     PROTOCOL_NO_WAIT_REPLAY,
     PROTOCOL_PROPOSED_EXTENDED,
@@ -12,7 +12,7 @@ from src.evaluation.hanif_protocols import (
     instance_without_station_wait,
     protocols_compatible,
 )
-from src.evaluation.literature_competitors import competitor_table_rows
+from src.schneider.evaluation.literature_competitors import competitor_table_rows
 
 
 def test_protocol_names_are_explicit():
@@ -61,7 +61,7 @@ def test_no_wait_clone_zeros_wait_mu(tmp_path: Path):
     if not (hanif / "evrp_instance.json").is_file():
         import pytest
         pytest.skip("Hanif converted instance missing")
-    from src.data.instance_loader import load_instance
+    from src.schneider.data.instance_loader import load_instance
 
     inst = load_instance(hanif)
     assert inst.station_wait_mu is not None

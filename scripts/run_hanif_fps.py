@@ -21,22 +21,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
-from src.data.hanif_dataset import discover_hanif_instances
-from src.data.instance_class import instance_class
-from src.data.instance_loader import apply_battery_capacity, load_instance
-from src.env.cost import CostWeights
-from src.evaluation.hanif_protocols import (
+from src.hanif.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
+from src.hanif.data.hanif_dataset import discover_hanif_instances
+from src.hanif.data.instance_class import instance_class
+from src.hanif.data.instance_loader import apply_battery_capacity, load_instance
+from src.hanif.env.cost import CostWeights
+from src.hanif.evaluation.hanif_protocols import (
     PROTOCOL_NO_WAIT_REPLAY,
     completeness_report,
     evaluation_protocol,
 )
-from src.evaluation.objective_reference import attach_reference
-from src.evaluation.output_paths import FROZEN_RESULT_DIRS, OUTPUTS
-from src.evaluation.paper_objective import objective_spec
-from src.search.deterministic_fps import solve_deterministic_fps
-from src.search.fleet_search import capacity_lower_bound, compute_fleet_bounds
-from src.utils.config import load_config
+from src.hanif.evaluation.objective_reference import attach_reference
+from src.hanif.evaluation.output_paths import FROZEN_RESULT_DIRS, OUTPUTS
+from src.hanif.evaluation.paper_objective import objective_spec
+from src.hanif.search.deterministic_fps import solve_deterministic_fps
+from src.hanif.search.fleet_search import capacity_lower_bound, compute_fleet_bounds
+from src.hanif.utils.config import load_config
 
 PILOT = ["C1_10_1", "C2_10_1", "R1_10_1", "R2_10_1", "RC1_10_1", "RC2_10_1"]
 REPLAY_PROTOCOL = dict(PROTOCOL_NO_WAIT_REPLAY)
@@ -121,13 +121,25 @@ def _solve_one(
     )
     lo, hi = compute_fleet_bounds(inst, cfg)
     t0 = time.perf_counter()
-    result = solve_deterministic_fps(
-        inst,
-        config=cfg,
-        weights=weights,
-        budget_seconds=float(budget),
-        warm_start_routes=warm_routes,
-    )
+    if str((cfg.get("dataset") or {}).get("name") or "").lower() == "schneider":
+        from src.hanif.search.schneider_solve import solve_schneider
+
+        result = solve_schneider(
+            inst,
+            config=cfg,
+            weights=weights,
+            budget_seconds=float(budget),
+            seed=int(cfg.get("seed") or 0),
+            warm_start_routes=warm_routes,
+        )
+    else:
+        result = solve_deterministic_fps(
+            inst,
+            config=cfg,
+            weights=weights,
+            budget_seconds=float(budget),
+            warm_start_routes=warm_routes,
+        )
     served = int(inst.num_customers) - int(result.score.unserved_customer_count)
     intens = (result.stages or {}).get("hanif_fleet_intensify") or {}
     exact = result.exact_check or {}

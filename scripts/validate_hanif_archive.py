@@ -13,15 +13,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.evaluation.hanif_protocols import (
+from src.hanif.data.instance_loader import load_instance
+from src.hanif.env.cost import CostWeights
+from src.hanif.evaluation.hanif_protocols import (
     PROTOCOL_EXTENDED,
     PROTOCOL_NO_WAIT_REPLAY,
     instance_without_station_wait,
 )
-from src.search.exact_checks import exact_accept_solution
-from src.utils.config import load_config
+from src.hanif.search.exact_checks import exact_accept_solution
+from src.hanif.utils.config import load_config
 
 VARIANT_DIRS = (
     ("A", "original_tw", "converted_hanif_original_tw"),

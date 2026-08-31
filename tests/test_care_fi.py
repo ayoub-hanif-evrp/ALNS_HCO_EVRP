@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.search.deadline import SearchDeadline
-from src.search.hanif_fleet_intensify import (
+from src.schneider.search.deadline import SearchDeadline
+from src.schneider.search.hanif_fleet_intensify import (
     _try_eliminate_route,
     rank_constraint_aware_routes,
 )
-from src.search.score import SearchScore
+from src.schneider.search.score import SearchScore
 
 
 def _instance():
@@ -54,7 +54,7 @@ def test_constraint_aware_ranking_is_deterministic(monkeypatch):
         return SimpleNamespace(route_events=events)
 
     monkeypatch.setattr(
-        "src.search.hanif_fleet_intensify.replay_route", fake_replay,
+        "src.schneider.search.hanif_fleet_intensify.replay_route", fake_replay,
     )
     a = rank_constraint_aware_routes(instance, routes, top_k=3, seed=0)
     b = rank_constraint_aware_routes(instance, routes, top_k=3, seed=0)
@@ -79,14 +79,14 @@ def test_elimination_accepts_only_exact_customer_complete_solution(monkeypatch):
     score = SearchScore(0, 0, 1, 10.0, 0.0, 20.0, 12.0)
     replay = SimpleNamespace(feasible=True, score=score)
     monkeypatch.setattr(
-        "src.search.fast_construct._recover_unserved_fast", direct_recover,
+        "src.schneider.search.fast_construct._recover_unserved_fast", direct_recover,
     )
     monkeypatch.setattr(
-        "src.search.hanif_fleet_intensify.regret_insertion",
+        "src.schneider.search.hanif_fleet_intensify.regret_insertion",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.search.hanif_fleet_intensify.replay_solution",
+        "src.schneider.search.hanif_fleet_intensify.replay_solution",
         lambda *args, **kwargs: replay,
     )
 
@@ -114,15 +114,15 @@ def test_elimination_rejects_failed_exact_replay(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        "src.search.fast_construct._recover_unserved_fast",
+        "src.schneider.search.fast_construct._recover_unserved_fast",
         lambda _instance, base, ejected, **kwargs: (base, []),
     )
     monkeypatch.setattr(
-        "src.search.hanif_fleet_intensify.regret_insertion",
+        "src.schneider.search.hanif_fleet_intensify.regret_insertion",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "src.search.hanif_fleet_intensify.replay_solution",
+        "src.schneider.search.hanif_fleet_intensify.replay_solution",
         lambda *args, **kwargs: SimpleNamespace(feasible=False, score=None),
     )
     reduced, score, _meta = _try_eliminate_route(

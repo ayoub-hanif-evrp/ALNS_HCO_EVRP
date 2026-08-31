@@ -13,9 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.hanif_protocols import FROZEN_HEADLINE, PROTOCOL_EXTENDED, PROTOCOL_NO_WAIT_REPLAY
-from src.evaluation.literature_competitors import competitor_table_rows
-from src.visualization.hanif_paper_figures import generate_paper_artifacts
+from src.schneider.evaluation.hanif_protocols import FROZEN_HEADLINE, PROTOCOL_EXTENDED, PROTOCOL_NO_WAIT_REPLAY
+from src.schneider.evaluation.literature_competitors import competitor_table_rows
+from src.schneider.visualization.hanif_paper_figures import generate_paper_artifacts
 
 FROZEN = ROOT / "outputs/CurrentBestDeterministicHanif"
 FROZEN_HASHES = {

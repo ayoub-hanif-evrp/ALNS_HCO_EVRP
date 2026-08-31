@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data.schneider_txt_convert import convert_one_txt
+from src.schneider.data.schneider_txt_convert import convert_one_txt
 
 ROOT = Path(__file__).resolve().parents[1]
 RANK_CSV = ROOT / "dataset/EVRPTWD/analysis/cus100_unanchored_RC_easiest_to_hardest.csv"

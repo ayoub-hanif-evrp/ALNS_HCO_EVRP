@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from src.data.schneider_txt_convert import (
+from src.schneider.data.schneider_txt_convert import (
     LARGE_56,
     convert_one_txt,
     parse_schneider_txt,
     schneider_family,
 )
-from src.evaluation.schneider_bks import BKS_FR, BKS_PR, compare_row, summarize
+from src.schneider.evaluation.schneider_bks import BKS_FR, BKS_PR, compare_row, summarize
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "dataset" / "Schneider" / "raw" / "c101_21.txt"
@@ -33,7 +33,7 @@ def test_parse_c101_vehicle_and_counts():
 @pytest.mark.skipif(not RAW.is_file(), reason="Schneider c101_21.txt not downloaded")
 def test_convert_c101_no_wait_price(tmp_path: Path):
     convert_one_txt(RAW, tmp_path)
-    from src.data.instance_loader import load_instance
+    from src.schneider.data.instance_loader import load_instance
 
     inst = load_instance(tmp_path / "c101_21")
     assert inst.num_customers == 100

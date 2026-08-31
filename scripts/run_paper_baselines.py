@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.output_paths import ALNS, CONSTRUCTOR, VNS_TS
+from src.schneider.evaluation.output_paths import ALNS, CONSTRUCTOR, VNS_TS
 
 PYTHON = sys.executable
 FPS = ROOT / "scripts/run_hanif_fps.py"

@@ -145,7 +145,6 @@ def main() -> None:
         print(f"PIPELINE STOPPED: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     print(f"Done. Run directory: {run_dir}")
-    print("Dashboard: python main_dashboard.py")
 
 
 if __name__ == "__main__":

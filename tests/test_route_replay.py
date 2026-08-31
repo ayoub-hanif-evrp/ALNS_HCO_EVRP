@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.env.evrptw_env import EVRPTWEnv
-from src.search.route_replay import extract_routes_from_env, replay_env_solution, replay_route, replay_solution
-from src.search.score import SearchScore
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.cost import CostWeights
+from src.schneider.env.evrptw_env import EVRPTWEnv
+from src.schneider.search.route_replay import extract_routes_from_env, replay_env_solution, replay_route, replay_solution
+from src.schneider.search.score import SearchScore
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "dataset" / "Schneider" / "evrptw_instances" / "c101C5"

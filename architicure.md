@@ -3,10 +3,10 @@
 This document is the source of truth for the **paper method**. It describes the solver that produced the corrected 120-instance results, not the Transformer / BC / DAgger / RL code that still exists in the repository and is **not** used.
 
 **Headline experiment archive (cite these numbers):**  
-`outputs/` — Classical solutions in `outputs/classical/`, Proposed in `outputs/proposed/`.
+`outputs/hanif/` — Classical in `outputs/hanif/classical/`, Proposed in `outputs/hanif/proposed/`.
 
-**Cite figures from:** `outputs/figures/`  
-**Cite tables from:** `outputs/tables/`
+**Cite figures from:** `outputs/hanif/figures/`  
+**Cite tables from:** `outputs/hanif/tables/`
 
 Do not cite old wait_μ-as-minutes fleet means (80.07 / 65.15). Those archives were removed.
 

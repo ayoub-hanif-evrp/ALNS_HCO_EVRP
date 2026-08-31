@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.data.instance_loader import EVRPTWInstance, Node, VehicleParams
+from src.schneider.data.instance_loader import EVRPTWInstance, Node, VehicleParams
 
 
 def _node(

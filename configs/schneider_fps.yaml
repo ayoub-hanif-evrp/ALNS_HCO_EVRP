@@ -33,16 +33,18 @@ fleet_search:
   stop_target_on_first_feasible: true
   stop_upper_on_first_feasible: true
   warm_start_from_larger_fleet: true
-  cold_retry_after_warm_failure: false
+  cold_retry_after_warm_failure: true
   route_elimination: true
-  set_partitioning_during_descent: false
-  elim_top_k: 4
-  elim_focused_alns: false
-  intensive_elim_rounds: 4
+  set_partitioning_during_descent: true
+  elim_top_k: 8
+  elim_focused_alns: true
+  intensive_elim_rounds: 6
   customers_per_vehicle_lo: 20
   customers_per_vehicle_hi: 5
   extra_margin: 16
-  initial_upper_m: 24
+  # Type-1 cap. Type-2 uses type2_initial_upper_m (long horizon ≈ C2/R2/RC2).
+  initial_upper_m: 18
+  type2_initial_upper_m: 8
   use_tw_pressure_as_hard_floor: false
   upper_expand_step: 8
   upper_expand_max: 40
@@ -58,11 +60,18 @@ deterministic_fps_budget:
 
 problem:
   allow_partial_charging: true
-  charging_portions: [0.25, 0.50, 0.75, 1.00]
+  charging_portions: [0.10, 0.20, 0.35, 0.50, 0.75, 1.00]
+  greedy_min_charge: true
   station_reusable: true
   use_depot_charging: true
   use_horizon_check: true
   load_capacity: null
+
+schneider_boost:
+  route_merge: true
+  merge_type1: true
+  max_merge_rounds: 6
+  time_limit_seconds: 45
 
 cost:
   lambda_vehicle: 1000.0
@@ -86,9 +95,10 @@ paper_objective:
 
 hanif_fleet_intensify:
   enabled: true
+  enable_on_small_n: true
   time_limit_seconds: 90
-  budget_fraction: 0.55
-  max_rounds: 60
+  budget_fraction: 0.45
+  max_rounds: 40
   top_k: 10
   seeds: [0, 1, 2, 3]
 

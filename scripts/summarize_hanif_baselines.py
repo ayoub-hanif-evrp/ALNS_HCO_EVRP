@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.hanif_baselines import context_table_rows, summarize_hanif_baseline_csv
+from src.hanif.evaluation.hanif_baselines import context_table_rows, summarize_hanif_baseline_csv
 
 
 def main() -> int:

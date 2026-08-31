@@ -12,8 +12,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.output_paths import OUTPUTS
-from src.visualization.final_paper_figures import generate
+from src.schneider.evaluation.output_paths import OUTPUTS
+from src.schneider.visualization.final_paper_figures import generate
 
 
 def main() -> int:
@@ -36,7 +36,7 @@ def main() -> int:
         paper = OUTPUTS if args.frozen_final else exp
     if paper.resolve() == OUTPUTS.resolve() and not args.frozen_final:
         raise SystemExit(
-            "Refusing to write outputs/figures/ from a non-frozen run. "
+            "Refusing to write outputs/hanif/figures/ from a non-frozen run. "
             "Pass --frozen-final after a scientific PASS on the full 120, "
             "or pass --paper pointing at a separate experiment folder."
         )

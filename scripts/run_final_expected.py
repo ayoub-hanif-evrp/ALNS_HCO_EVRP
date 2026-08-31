@@ -18,16 +18,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.evaluation.hanif_protocols import completeness_report, evaluation_protocol
-from src.evaluation.objective_reference import attach_reference, reference_from_classical_routes, reference_path, save_reference
-from src.evaluation.output_paths import CLASSICAL, FROZEN_RESULT_DIRS, OUTPUTS, REFERENCES
-from src.evaluation.paper_objective import audit_payload
-from src.evaluation.validation_gate import decision_payload, evaluate_gate
-from src.search.station_refine import exact_row_from_replay, refine_charging
-from src.utils.config import load_config
+from src.schneider.data.hanif_convert import VARIANT_SPECS, ensure_hanif_variant_converted
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.cost import CostWeights
+from src.schneider.evaluation.hanif_protocols import completeness_report, evaluation_protocol
+from src.schneider.evaluation.objective_reference import attach_reference, reference_from_classical_routes, reference_path, save_reference
+from src.schneider.evaluation.output_paths import CLASSICAL, FROZEN_RESULT_DIRS, OUTPUTS, REFERENCES
+from src.schneider.evaluation.paper_objective import audit_payload
+from src.schneider.evaluation.validation_gate import decision_payload, evaluate_gate
+from src.schneider.search.station_refine import exact_row_from_replay, refine_charging
+from src.schneider.utils.config import load_config
 
 FROZEN = list(FROZEN_RESULT_DIRS)
 FAMILIES = ["C1", "C2", "R1", "R2", "RC1", "RC2"]
@@ -166,7 +166,7 @@ def _refine_worker(payload: dict) -> dict:
     cfg.setdefault("dataset", {})["tw_variant"] = variant
     weights = CostWeights.from_eval_config(cfg)
     cfg = attach_reference(inst, cfg, weights, reference_dir=ref_dir, variant=variant)
-    from src.search.exact_checks import count_nonempty_routes
+    from src.schneider.search.exact_checks import count_nonempty_routes
 
     k_star = int(count_nonempty_routes(inst, routes))
     t0 = time.perf_counter()

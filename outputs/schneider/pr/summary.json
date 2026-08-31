@@ -1,24 +1,12 @@
 {
   "n": 56,
-  "feasible": 54,
+  "feasible": 56,
   "fleet_wins": 0,
-  "fleet_ties": 2,
-  "fleet_losses": 52,
-  "mean_delta_k": 3.7037037037037037,
+  "fleet_ties": 5,
+  "fleet_losses": 51,
+  "mean_delta_k": 2.642857142857143,
   "distance_wins_when_k_tied": 0,
-  "mean_distance_gap_%_when_k_tied": 84.91935121367976,
+  "mean_distance_gap_%_when_k_tied": 76.04869331922556,
   "citation": "Erdeli\u0107, T.; Cari\u0107, T. Goods Delivery with Electric Vehicles: Electric Vehicle Routing Optimization with Time Windows and Partial or Full Recharge. Energies 2022, 15, 285. https://doi.org/10.3390/en15010285",
-  "gap_rule": "Delta_K = K_CARE - K_BKS; distance gap only when Delta_K = 0",
-  "mode": "pr",
-  "charging_portions": [
-    0.25,
-    0.5,
-    0.75,
-    1.0
-  ],
-  "budget_s": 180.0,
-  "wall_s": 1335.3249420998618,
-  "mean_k": 11.375,
-  "mean_distance": 1770.8558702383723,
-  "mean_runtime_s": 176.21010941785894
+  "gap_rule": "Delta_K = K_CARE - K_BKS; distance gap only when Delta_K = 0"
 }

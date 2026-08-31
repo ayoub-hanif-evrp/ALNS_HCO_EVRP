@@ -15,7 +15,6 @@ dependencies = [
   "matplotlib>=3.7",
   "tqdm>=4.65",
   "pytest>=7.4",
-  "nicegui>=2.0",
 ]
 
 [tool.setuptools.packages.find]

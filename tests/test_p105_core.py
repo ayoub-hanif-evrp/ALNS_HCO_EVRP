@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from src.search.charging_dp import exhaustive_optimum, optimize_charging_plan
-from src.search.deadline import SearchDeadline, StageBudgetPlan
-from src.search.fleet_search import _variant_seed_schedule, capacity_lower_bound, construct_solution
-from src.search.route_elimination import rank_elimination_candidates
-from src.search.route_pool import RoutePool
-from src.search.set_partitioning import solve_set_partitioning
+from src.schneider.search.charging_dp import exhaustive_optimum, optimize_charging_plan
+from src.schneider.search.deadline import SearchDeadline, StageBudgetPlan
+from src.schneider.search.fleet_search import _variant_seed_schedule, capacity_lower_bound, construct_solution
+from src.schneider.search.route_elimination import rank_elimination_candidates
+from src.schneider.search.route_pool import RoutePool
+from src.schneider.search.set_partitioning import solve_set_partitioning
 from tests.fixtures import build_energy_tight_tiny, build_tiny_evrptw
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +29,7 @@ def test_fleet_retry_diversity_covers_all_variants():
 
 def test_cold_construct_after_warm_failure_flag_path():
     # Schedule / API guarantee: cold retry source string is distinct
-    from src.search.fleet_search import FleetAttemptTrace
+    from src.schneider.search.fleet_search import FleetAttemptTrace
     t = FleetAttemptTrace(
         fleet_size=30, attempt=1, variant="edf", seed=0, feasible=False,
         served=99, used_vehicles=30, distance=1.0, runtime=0.1,

@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from src.search.charging_dp import optimize_charging_plan
-from src.search.fleet_search import capacity_lower_bound, compute_fleet_bounds, solve_with_fleet_search
-from src.search.incremental import capacity_precheck, energy_precheck
-from src.search.score import BenchmarkScore, SearchScore
-from src.search.route_pool import RoutePool
-from src.search.set_partitioning import solve_set_partitioning
+from src.schneider.search.charging_dp import optimize_charging_plan
+from src.schneider.search.fleet_search import capacity_lower_bound, compute_fleet_bounds, solve_with_fleet_search
+from src.schneider.search.incremental import capacity_precheck, energy_precheck
+from src.schneider.search.score import BenchmarkScore, SearchScore
+from src.schneider.search.route_pool import RoutePool
+from src.schneider.search.set_partitioning import solve_set_partitioning
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "dataset" / "Schneider" / "evrptw_instances" / "c101C5"
@@ -21,7 +21,7 @@ FIX_BASELINE = ROOT / "outputs" / "baselines" / "fixed_fleet_expert_repair_alns"
 def small_instance():
     if not SMALL.is_dir():
         pytest.skip("external Schneider fixture c101C5 absent")
-    from src.data.instance_loader import load_instance
+    from src.schneider.data.instance_loader import load_instance
     return load_instance(SMALL)
 
 
@@ -85,8 +85,8 @@ def test_fleet_bounds_and_search_smoke(small_instance):
 
 
 def test_route_pool_and_partition(small_instance):
-    from src.env.cost import CostWeights
-    from src.search.portfolio import best_portfolio_solution
+    from src.schneider.env.cost import CostWeights
+    from src.schneider.search.portfolio import best_portfolio_solution
 
     best = best_portfolio_solution(
         small_instance, 3, variants=["hybrid"], seeds=[0], weights=CostWeights(),

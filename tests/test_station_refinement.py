@@ -7,15 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.evaluation.hanif_protocols import (
+from src.schneider.evaluation.hanif_protocols import (
     PROTOCOL_EXTENDED,
     PROTOCOL_PROPOSED_EXTENDED,
     evaluation_protocol,
 )
-from src.evaluation.paper_objective import expected_wait_s
-from src.evaluation.validation_gate import decision_payload, evaluate_gate
-from src.search.station_candidates import balanced_union, geo_nearest_stations, operational_station_pool
-from src.search.station_refine import acceptable_refinement, visit_phi_burden
+from src.schneider.evaluation.paper_objective import expected_wait_s
+from src.schneider.evaluation.validation_gate import decision_payload, evaluate_gate
+from src.schneider.search.station_candidates import balanced_union, geo_nearest_stations, operational_station_pool
+from src.schneider.search.station_refine import acceptable_refinement, visit_phi_burden
 
 HANIF = Path("dataset/Hanif/converted_hanif_original_tw/C1_10_1")
 GEN = Path("src/visualization/final_paper_figures.py")
@@ -126,7 +126,7 @@ def test_visit_phi_burden_does_not_add_raw_wait_and_price():
         station_price_expected = {0: 1.0, 1: 100.0}
         station_charging_rate = {0: 1.0, 1: 1.0}
 
-    from src.evaluation.paper_objective import ObjectiveReference
+    from src.schneider.evaluation.paper_objective import ObjectiveReference
 
     ref = ObjectiveReference(distance=1.0, tstation=10.0, ccharge=10.0)
     high_wait = visit_phi_burden(_Inst(), 0, 1.0, ref)
@@ -148,7 +148,7 @@ def test_acceptable_refinement_never_adds_ev():
 def test_operational_pool_is_not_distance_only():
     if not (HANIF / "evrp_instance.json").is_file():
         pytest.skip("converted instance missing")
-    from src.data.instance_loader import load_instance
+    from src.schneider.data.instance_loader import load_instance
 
     inst = load_instance(HANIF)
     cust = next(i for i, n in enumerate(inst.nodes) if n.is_customer)
@@ -174,5 +174,5 @@ def test_figures_have_no_inset_and_three_routes():
 
 def test_paper_folder_is_gated():
     text = GEN_SCRIPT.read_text(encoding="utf-8")
-    assert "Refusing to write outputs/figures/" in text
+    assert "Refusing to write outputs/hanif/figures/" in text
     assert "--frozen-final" in text

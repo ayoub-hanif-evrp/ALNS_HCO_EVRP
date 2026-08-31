@@ -3,7 +3,7 @@
 Compares lexicographic (K, D) against published BKS values. Does not reimplement
 Schneider VNS-TS or Keskin ALNS.
 
-  python scripts/run_schneider_benchmark.py --mode both --budget 180 --workers 8 --out outputs/schneider
+  python scripts/run_schneider_benchmark.py --mode both --budget 180 --workers 8 --out outputs/_tmp/schneider
 """
 from __future__ import annotations
 
@@ -18,29 +18,116 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.run_hanif_fps import _solve_one  # noqa: E402
-from src.data.instance_class import instance_class  # noqa: E402
-from src.data.schneider_txt_convert import (  # noqa: E402
+from src.schneider.data.instance_class import instance_class  # noqa: E402
+from src.schneider.data.instance_loader import apply_battery_capacity, load_instance  # noqa: E402
+from src.schneider.data.schneider_txt_convert import (  # noqa: E402
     DEFAULT_CONVERTED,
     LARGE_56,
     ensure_schneider_converted,
     schneider_family,
 )
-from src.env.cost import CostWeights  # noqa: E402
-from src.evaluation.output_paths import FROZEN_RESULT_DIRS, OUTPUTS  # noqa: E402
-from src.evaluation.schneider_bks import BKS_CITATION, compare_row, summarize  # noqa: E402
-from src.utils.config import load_config  # noqa: E402
+from src.schneider.env.cost import CostWeights  # noqa: E402
+from src.schneider.evaluation.objective_reference import attach_reference  # noqa: E402
+from src.schneider.evaluation.output_paths import FROZEN_RESULT_DIRS, OUTPUTS, SCHNEIDER_OUT  # noqa: E402
+from src.schneider.paths import TMP_OUT  # noqa: E402
+from src.schneider.evaluation.schneider_bks import BKS_CITATION, compare_row, summarize  # noqa: E402
+from src.schneider.evaluation.schneider_incumbent import load_best_incumbent  # noqa: E402
+from src.schneider.search.fleet_search import capacity_lower_bound, compute_fleet_bounds  # noqa: E402
+from src.schneider.solver import solve_schneider  # noqa: E402
+from src.schneider.utils.config import load_config  # noqa: E402
 
 PORTIONS = {
     "fr": [1.0],
-    "pr": [0.25, 0.50, 0.75, 1.0],
+    "pr": [0.10, 0.20, 0.35, 0.50, 0.75, 1.0],
 }
+
+
+def _serialize_routes(routes: list) -> list[dict]:
+    out = []
+    for nodes, labels in routes:
+        out.append({
+            "nodes": [int(n) for n in nodes],
+            "labels": [None if x is None else float(x) for x in (labels or [None] * len(nodes))],
+        })
+    return out
+
+
+def _solve_one(
+    *,
+    name: str,
+    root: Path,
+    cfg: dict,
+    weights: CostWeights,
+    budget: float,
+    warm_routes: list | None,
+    routes_dir: Path | None,
+) -> dict:
+    inst = load_instance(root / name, load_capacity=None)
+    q = (cfg.get("problem") or {}).get("battery_capacity")
+    if q is not None:
+        inst = apply_battery_capacity(inst, float(q))
+    cfg = attach_reference(
+        inst, cfg, weights,
+        reference_dir=Path(ref) if (ref := (cfg.get("experiment") or {}).get("objective_reference_dir")) else None,
+        variant=str((cfg.get("dataset") or {}).get("tw_variant") or ""),
+    )
+    lo, hi = compute_fleet_bounds(inst, cfg)
+    t0 = time.perf_counter()
+    result = solve_schneider(
+        inst,
+        config=cfg,
+        weights=weights,
+        budget_seconds=float(budget),
+        seed=int(cfg.get("seed") or 0),
+        warm_start_routes=warm_routes,
+    )
+    served = int(inst.num_customers) - int(result.score.unserved_customer_count)
+    exact = result.exact_check or {}
+    method_name = str((cfg.get("experiment") or {}).get("method_name") or "CARE-FI")
+    row = {
+        "instance": name,
+        "class": instance_class(name),
+        "family": name.split("_")[0],
+        "n_customers": int(inst.num_customers),
+        "capacity_lb": int(capacity_lower_bound(inst)),
+        "search_lo": int(lo),
+        "search_hi": int(hi),
+        "feasible": bool(result.feasible),
+        "served": served,
+        "used_k": int(result.m_star) if result.feasible else int(result.score.used_evs),
+        "distance": float(result.score.total_distance),
+        "hard_violations": int(exact.get("hard_violations") or result.score.hard_violation_count),
+        "served_ratio": served / max(int(inst.num_customers), 1),
+        "runtime_s": time.perf_counter() - t0,
+        "method": method_name,
+        "warm_start": bool(((result.stages or {}).get("warm_start") or {}).get("accepted")),
+    }
+    if routes_dir is not None:
+        routes_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "instance": name,
+            "feasible": bool(result.feasible),
+            "used_k": row["used_k"],
+            "exact_check": exact,
+            "routes": _serialize_routes(result.routes),
+            "method": method_name,
+        }
+        (routes_dir / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+    return row
 
 
 def _refuse(out: Path) -> None:
     resolved = out.resolve()
     if resolved == OUTPUTS.resolve():
         raise SystemExit("Refusing to overwrite the frozen outputs/ archive")
+    frozen_pr = OUTPUTS / "schneider" / "pr"
+    frozen_fr = OUTPUTS / "schneider" / "fr"
+    if resolved == frozen_pr.resolve() or frozen_pr.resolve() in resolved.parents:
+        raise SystemExit("Refusing to overwrite frozen outputs/schneider/pr")
+    if resolved == frozen_fr.resolve() or frozen_fr.resolve() in resolved.parents:
+        raise SystemExit("Refusing to overwrite frozen outputs/schneider/fr")
+    if resolved == SCHNEIDER_OUT.resolve() or resolved == (OUTPUTS / "hanif").resolve():
+        raise SystemExit("Write new Schneider runs under outputs/_tmp/schneider, not the frozen archive")
     for p in FROZEN_RESULT_DIRS:
         fr = p.resolve()
         if resolved == fr or fr in resolved.parents:
@@ -49,13 +136,14 @@ def _refuse(out: Path) -> None:
 
 def _worker(job: dict) -> dict:
     cfg = job["cfg"]
+    warm, _meta = load_best_incumbent(job["name"], job["mode"])
     row = _solve_one(
         name=job["name"],
         root=Path(job["root"]),
         cfg=cfg,
         weights=CostWeights.from_eval_config(cfg),
         budget=float(job["budget"]),
-        warm_routes=None,
+        warm_routes=warm,
         routes_dir=Path(job["routes_dir"]),
     )
     row["family"] = schneider_family(job["name"])
@@ -105,6 +193,8 @@ def _run_mode(mode: str, *, names: list[str], cfg: dict, budget: float, workers:
     problem = dict(cfg.get("problem") or {})
     problem["charging_portions"] = list(portions)
     problem["allow_partial_charging"] = mode == "pr"
+    # Full-recharge BKS assume a complete refill. Just-enough charge is PR-only.
+    problem["greedy_min_charge"] = bool(mode == "pr" and problem.get("greedy_min_charge", True))
     cfg["problem"] = problem
     cfg.setdefault("experiment", {})["method_name"] = f"CARE-FI-{mode.upper()}"
     cfg.setdefault("dataset", {})["path"] = str(DEFAULT_CONVERTED)
@@ -157,7 +247,7 @@ def main() -> int:
     ap.add_argument("--mode", choices=["fr", "pr", "both"], default="both")
     ap.add_argument("--budget", type=float, default=180.0)
     ap.add_argument("--workers", type=int, default=8)
-    ap.add_argument("--out", default="outputs/schneider")
+    ap.add_argument("--out", default=str(TMP_OUT / "schneider"))
     ap.add_argument("--instances", nargs="*", default=None)
     ap.add_argument("--pilot", action="store_true", help="Six family representatives")
     args = ap.parse_args()

@@ -15,7 +15,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.evaluation.output_paths import (
+from src.schneider.evaluation.output_paths import (
     ALNS,
     CLASSICAL,
     CONSTRUCTOR,
@@ -266,7 +266,7 @@ def compile() -> dict:
                 per.append({"method": label, "tw_variant": twlab, **r})
     _write(TABLES / "per_instance.csv", per)
 
-    from src.evaluation.literature_competitors import competitor_table_rows
+    from src.schneider.evaluation.literature_competitors import competitor_table_rows
     _write(TABLES / "literature_competitors.csv", competitor_table_rows())
 
     present = sorted(methods)

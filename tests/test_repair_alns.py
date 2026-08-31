@@ -5,17 +5,17 @@ from pathlib import Path
 
 import pytest
 
-from src.data.instance_loader import load_instance
-from src.env.cost import CostWeights
-from src.search.operators import destroy_random_customers, relocate_customer, swap_customers
-from src.search.repair import (
+from src.schneider.data.instance_loader import load_instance
+from src.schneider.env.cost import CostWeights
+from src.schneider.search.operators import destroy_random_customers, relocate_customer, swap_customers
+from src.schneider.search.repair import (
     best_insertion,
     relabel_charge_portions,
     remove_station_if_redundant,
     repair_solution,
 )
-from src.search.route_replay import replay_solution
-from src.search.alns import run_alns
+from src.schneider.search.route_replay import replay_solution
+from src.schneider.search.alns import run_alns
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL = ROOT / "dataset" / "Schneider" / "evrptw_instances" / "c101C5"

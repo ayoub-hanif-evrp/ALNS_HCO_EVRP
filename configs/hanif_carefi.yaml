@@ -1,0 +1,26 @@
+# Deterministic CARE-FI for the Hanif 1000-customer benchmark.
+seed: 0
+device: cpu
+
+dataset:
+  name: hanif
+  path: dataset/Hanif/converted_hanif_original_tw
+
+problem:
+  allow_partial_charging: true
+  charging_portions: [0.25, 0.50, 0.75, 1.00]
+  station_reusable: true
+  use_depot_charging: true
+  use_horizon_check: true
+
+carefi:
+  nearby_routes: 8
+  insert_positions: 3
+  nearby_stations: 3
+  max_elim_candidates: 10
+  stage2_passes: 3
+
+paper_objective:
+  mode: expected_heterogeneous
+  risk_alpha: 0.95
+  risk_blend: 0.0

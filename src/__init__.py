@@ -1,1 +1,1 @@
-"""Multi-Agent Transformer solver for E-VRPTW."""
+"""EVRPTW solvers: `src.hanif` and `src.schneider` are independent packages."""
