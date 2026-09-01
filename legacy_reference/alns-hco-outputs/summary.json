@@ -1,0 +1,136 @@
+{
+  "n": 120,
+  "feasible": 120,
+  "hyperparameters": {
+    "name": "Adaptive large neighbourhood search with heterogeneous charging oracle",
+    "abbreviation": "ALNS-HCO",
+    "random_seed": 0,
+    "phase1_time_limit_s": 15.0,
+    "phase2_time_limit_s": 15.0,
+    "fleet_compress_s": 8.0,
+    "phase1_engine": "same GI + 15 s ALNS as the ALNS baseline, then just-enough route elimination",
+    "phase1_charge_policy": "baseline ALNS uses full recharge; compression/Phase II use just-enough partial charge",
+    "phase1_objective": "lexicographic (unserved, K, distance)",
+    "phase2_objective": "lexicographic (K, distance, charging expense); fleet may decrease",
+    "epsilon_distance": 0.01,
+    "epsilon_duration": 0.0,
+    "fleet_constraint": "K never increases above the Phase-I incumbent; route elimination is allowed",
+    "destroy_size_min": 4,
+    "destroy_size_max": 12,
+    "phase1_destroy_operators": [
+      "random",
+      "worst_detour",
+      "related_shaw",
+      "short_route"
+    ],
+    "phase2_destroy_operators": [
+      "random",
+      "worst_detour",
+      "related_shaw",
+      "short_route",
+      "expensive_charge",
+      "slow_charge_wait"
+    ],
+    "repair_phase1": "greedy cheapest feasible insertion (nearby_routes=8, positions=3, stations=3)",
+    "repair_phase2": "greedy insertion with just-enough partial charge on every station",
+    "nearby_routes": 8,
+    "insert_positions": 3,
+    "nearby_stations": 3,
+    "adaptive_reaction_factor_rho": 0.2,
+    "segment_length": 20,
+    "score_new_best": 33,
+    "score_better": 9,
+    "score_accepted": 5,
+    "sa_start_temperature_factor": 0.05,
+    "sa_cooling": 0.9995,
+    "exact_oracle_threshold_theta": 0.02,
+    "fast_station_candidates": 4,
+    "exact_station_replacements": 4,
+    "accept_infeasible": false,
+    "cache_by_customer_sequence": true
+  },
+  "original": {
+    "n": 60,
+    "feasible": 60,
+    "mean_k": 68.68333333333334,
+    "mean_distance": 47270.021674438314,
+    "mean_duration": 163958.85185327593,
+    "mean_charging_expense": 7838.59188939823,
+    "mean_charging_time": 12713.642433084551,
+    "mean_station_waiting": 864.7418294648329,
+    "mean_k_s1": 69.88333333333334,
+    "mean_alns_k": 71.26666666666667,
+    "mean_distance_s1": 48301.38416394393,
+    "mean_charging_expense_s1": 7975.625038790283,
+    "mean_runtime_s": 32.53427928498325,
+    "k_wins_vs_own_alns": 38,
+    "by_family": {
+      "C1": {
+        "n": 10,
+        "mean_k": 108.2
+      },
+      "C2": {
+        "n": 10,
+        "mean_k": 40.8
+      },
+      "R1": {
+        "n": 10,
+        "mean_k": 106.8
+      },
+      "R2": {
+        "n": 10,
+        "mean_k": 28.4
+      },
+      "RC1": {
+        "n": 10,
+        "mean_k": 94.6
+      },
+      "RC2": {
+        "n": 10,
+        "mean_k": 33.3
+      }
+    }
+  },
+  "relaxed": {
+    "n": 60,
+    "feasible": 60,
+    "mean_k": 59.983333333333334,
+    "mean_distance": 46500.57398695747,
+    "mean_duration": 142001.83557913342,
+    "mean_charging_expense": 9183.334180356158,
+    "mean_charging_time": 15072.616701620667,
+    "mean_station_waiting": 1104.6130118131637,
+    "mean_k_s1": 61.06666666666667,
+    "mean_alns_k": 62.85,
+    "mean_distance_s1": 47733.28628819585,
+    "mean_charging_expense_s1": 9686.64283657212,
+    "mean_runtime_s": 33.274687453336085,
+    "k_wins_vs_own_alns": 46,
+    "by_family": {
+      "C1": {
+        "n": 10,
+        "mean_k": 96.1
+      },
+      "C2": {
+        "n": 10,
+        "mean_k": 38.4
+      },
+      "R1": {
+        "n": 10,
+        "mean_k": 93.0
+      },
+      "R2": {
+        "n": 10,
+        "mean_k": 20.7
+      },
+      "RC1": {
+        "n": 10,
+        "mean_k": 91.4
+      },
+      "RC2": {
+        "n": 10,
+        "mean_k": 20.3
+      }
+    }
+  }
+}

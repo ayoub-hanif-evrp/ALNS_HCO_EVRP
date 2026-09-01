@@ -1,28 +1,24 @@
-"""ALNS-HCO unit checks: imports, guardrails, and a short live solve if data exist."""
+"""ALNS-HCO unit checks for the paper method."""
 from __future__ import annotations
 
+from src.alns_hco.hco import hco
 from src.alns_hco.hyperparameters import HYPERPARAMETERS
-from src.alns_hco.oracle import promising_for_exact
 from src.alns_hco.solver import MODES, solve_alns_hco
 
 
-def test_hyperparameters_match_spec():
-    assert HYPERPARAMETERS["epsilon_distance"] == 0.01
-    assert HYPERPARAMETERS["epsilon_duration"] == 0.0
-    assert HYPERPARAMETERS["fleet_compress_s"] == 8.0
-    assert HYPERPARAMETERS["exact_oracle_threshold_theta"] == 0.02
+def test_one_hco_and_frozen_fleet_settings():
+    assert HYPERPARAMETERS["abbreviation"] == "ALNS-HCO"
+    assert "fleet_compress_s" not in HYPERPARAMETERS
+    assert "exact_oracle_threshold_theta" not in HYPERPARAMETERS
+    assert "exactly K=K*" in HYPERPARAMETERS["fleet_constraint"]
     assert "expensive_charge" in HYPERPARAMETERS["phase2_destroy_operators"]
-    assert "slow_charge_wait" in HYPERPARAMETERS["phase2_destroy_operators"]
+    assert callable(hco)
 
 
 def test_modes_defined():
-    assert MODES == ("alns", "alns_hco_post", "alns_hco_fast", "alns_hco")
-
-
-def test_promising_threshold():
-    assert promising_for_exact(100.0, 100.0, 0.02) is True
-    assert promising_for_exact(103.0, 100.0, 0.02) is False
-    assert promising_for_exact(101.0, 100.0, 0.02) is True
+    assert "alns_hco" in MODES
+    assert "alns_pr" in MODES
+    assert "alns_hco_post" in MODES
 
 
 def test_short_solve_if_converted():
@@ -36,5 +32,5 @@ def test_short_solve_if_converted():
     assert result.metrics.feasible
     assert result.metrics.unserved == 0
     assert result.metrics.hard_violations == 0
-    assert result.validation["k_ok"]
-    assert result.metrics.used_k <= int(result.validation["k_star"])
+    assert result.validation["k_frozen_ok"]
+    assert int(result.metrics.used_k) == int(result.validation["k_star"])

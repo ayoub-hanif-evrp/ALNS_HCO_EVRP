@@ -1,39 +1,32 @@
-# CARE-FI
+# CARE-FI and ALNS-HCO
 
-Deterministic two-stage EVRPTW solver.
+**CARE-FI** is a deterministic two-stage solver. **ALNS-HCO** is Adaptive Large
+Neighborhood Search with a Heterogeneous Charging Oracle. The **Hanif**
+1000-customer set and the **Schneider** EVRPTW set are separate benchmarks.
+Do not call either algorithm “the Hanif method.”
 
-**CARE-FI** is the method. The **Hanif 1000-customer dataset** is one benchmark it is applied to. The **Schneider EVRPTW set** is a separate published-BKS benchmark. Do not call CARE-FI “the Hanif method.”
+ALNS-HCO method: `src/alns-hco/METHOD.md`. CARE-FI method: `METHOD.md`.
 
-Paper method: `METHOD.md`.
-
-## Run
+## Run ALNS-HCO paper experiments (Hanif)
 
 ```powershell
-python scripts/run_hanif_carefi.py --representative --tw both --budget 180 --workers 2
-python scripts/run_alns_hco.py --representative --tw both --workers 2
-python scripts/run_schneider_benchmark.py --mode pr --budget 180 --workers 2
+python scripts/run_all_paper_experiments.py --representative --seeds 0 --workers 8
+python scripts/run_all_paper_experiments.py --workers 8
+python scripts/run_all_paper_experiments.py --compile-only
 ```
 
-Scratch files go to `outputs/_tmp/` (gitignored). Delete that folder when you are done.
-
-## Citeable archives (do not overwrite)
-
-| Benchmark | Archive | Headline |
-|---|---|---|
-| Hanif Stage 1 / Stage 2 | `outputs/hanif/classical/`, `outputs/hanif/proposed/` | K Original 78.82, Relaxed 65.20 |
-| Schneider PR | `outputs/schneider/pr/` | 56/56 feasible, 5 fleet ties, mean ΔK +2.64 |
+Equal budget: ALNS-PR 30 s vs ALNS-HCO 15 s + 15 s. Seeds `{0,1,2,3,4}` (`n=5`).
 
 ## Layout
 
 ```
+src/common/       shared experiment/paper utilities
+src/alns-hco/     ALNS-HCO (Hanif experiments import as src.alns_hco)
 src/care-fi/      CARE-FI
-src/alns-hco/     ALNS-HCO (import as src.alns_hco)
 src/schneider/    Schneider BKS branch
-outputs/care-fi/  citeable CARE-FI Hanif results
-outputs/alns-hco/ citeable ALNS-HCO Hanif results
-outputs/schneider/  citeable Schneider results
-```
-
-```powershell
-pytest tests/test_hanif_carefi.py -q
+outputs/hanif/    ALNS-HCO paper package (Hanif only)
+outputs/alns-hco/ frozen pre-paper ALNS-HCO snapshot
+outputs/care-fi/  CARE-FI Hanif archive
+outputs/schneider/ Schneider archive (never mixed with Hanif)
+legacy_reference/ frozen copy of the pre-paper ALNS-HCO solver and CSVs
 ```

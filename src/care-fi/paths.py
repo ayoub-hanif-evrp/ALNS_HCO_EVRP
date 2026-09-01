@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUTS = ROOT / "outputs"
 
-HANIF_OUT = OUTPUTS / "hanif"
+HANIF_OUT = OUTPUTS / "care-fi"
 SCHNEIDER_OUT = OUTPUTS / "schneider"
 TMP_OUT = OUTPUTS / "_tmp"
 

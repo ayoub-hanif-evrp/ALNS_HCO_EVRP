@@ -3,13 +3,7 @@ from __future__ import annotations
 
 import time
 
-from src.alns_hco.oracle import (
-    fast_hco,
-    just_enough_alpha,
-    just_enough_labels,
-    plan_min_charge_stations,
-    station_candidates,
-)
+from src.alns_hco.hco import hco, just_enough_alpha, just_enough_labels, plan_min_charge_stations, station_candidates
 from src.alns_hco.routes import customers_of, used_k
 from src.hanif.construction import (
     cheapest_positions,
@@ -248,59 +242,46 @@ def insert_charging_aware(
     *,
     cache,
     k_max: int,
-    d_cap: float,
-    t_cap: float,
     nearby_routes: int = NEARBY_ROUTES,
     insert_positions: int = INSERT_POSITIONS,
 ) -> bool:
-    """Phase II insert: rank by fast-HCO expense; reject if D/T caps would break."""
+    """Phase II insert: rank feasible hosts by HCO charging expense."""
     depot = int(instance.depot_index)
     stations = station_candidates(instance, customer, 4)
     candidates = nearby_route_ids(instance, routes, customer, limit=nearby_routes)
-    base_d = sum(replay_route(instance, n, l).distance for n, l in routes)
-    base_t = sum(replay_route(instance, n, l).duration for n, l in routes)
 
     scored: list[tuple] = []
     for ri in candidates:
-        nodes, labels = routes[ri]
-        old = replay_route(instance, nodes, labels)
-        rest_d = base_d - old.distance
-        rest_t = base_t - old.duration
+        nodes, _labels = routes[ri]
         for pos in cheapest_positions(instance, nodes, customer, insert_positions):
             seq = list(nodes[:pos]) + [customer] + list(nodes[pos:])
-            plan = _try_plain(instance, seq) or _try_min_charge(instance, seq, customer, stations)
+            plan = _try_plain_partial(instance, seq) or _try_just_enough(instance, seq, customer, stations)
             if plan is None:
                 continue
-            if rest_d + plan.distance > d_cap + 1e-6:
-                continue
-            if rest_t + plan.duration > t_cap + 1e-6:
-                continue
-            hat = fast_hco(instance, customers_of(instance, plan.nodes), cache)
-            cost = hat.charging_expense if hat.feasible else plan.charging_expense
-            scored.append((cost, rest_d + (hat.distance if hat.feasible else plan.distance), ri, plan))
+            scored.append((plan.charging_expense, plan.distance, ri, plan))
 
     if scored:
         scored.sort(key=lambda x: (x[0], x[1]))
         _cost, _d, ri, plan = scored[0]
-        if plan.feasible:
-            use = (list(plan.nodes), list(plan.labels))
-            if _cost < 1e17:
-                hat = fast_hco(instance, customers_of(instance, plan.nodes), cache)
-                if hat.feasible:
-                    use = (list(hat.nodes), list(hat.labels))
-            routes[ri] = use
-            return True
+        hat = hco(instance, customers_of(instance, plan.nodes), cache)
+        if hat.feasible:
+            routes[ri] = (list(hat.nodes), list(hat.labels))
+        else:
+            routes[ri] = (list(plan.nodes), list(plan.labels))
+        return True
 
     if used_k(instance, routes) >= int(k_max):
         return False
-    opened = _try_plain(instance, [depot, customer, depot])
+    opened = _try_plain_partial(instance, [depot, customer, depot])
     if opened is None:
-        opened = _try_min_charge(instance, [depot, customer, depot], customer, stations)
+        opened = _try_just_enough(instance, [depot, customer, depot], customer, stations)
     if opened is None:
         return False
-    if base_d + opened.distance > d_cap + 1e-6 or base_t + opened.duration > t_cap + 1e-6:
-        return False
-    routes.append((list(opened.nodes), list(opened.labels)))
+    hat = hco(instance, customers_of(instance, opened.nodes), cache)
+    if hat.feasible:
+        routes.append((list(hat.nodes), list(hat.labels)))
+    else:
+        routes.append((list(opened.nodes), list(opened.labels)))
     return True
 
 
@@ -311,13 +292,9 @@ def charging_aware_reinsert(
     *,
     cache,
     k_max: int,
-    d_cap: float,
-    t_cap: float,
 ) -> bool:
     ok = True
     for c in customers:
-        if not insert_charging_aware(
-            instance, routes, c, cache=cache, k_max=k_max, d_cap=d_cap, t_cap=t_cap,
-        ):
+        if not insert_charging_aware(instance, routes, c, cache=cache, k_max=k_max):
             ok = False
     return ok

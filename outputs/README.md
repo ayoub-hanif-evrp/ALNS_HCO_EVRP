@@ -5,7 +5,8 @@ Citeable archives only. Do not add smoke folders, versioned experiments, or nest
 | Path | What it is |
 |---|---|
 | `care-fi/` | Citeable CARE-FI Hanif results |
-| `alns-hco/` | Citeable ALNS-HCO Hanif results |
-| `schneider/` | Citeable Schneider EVRPTW results |
+| `alns-hco/` | Frozen pre-paper ALNS-HCO snapshot (do not overwrite) |
+| `hanif/` | ALNS-HCO paper experiments (Hanif 1000-customer set) |
+| `schneider/` | Schneider EVRPTW results (kept separate from Hanif) |
 
 New solver runs write under `outputs/_tmp/` (gitignored). Delete that folder when you are done looking at the numbers.
