@@ -10,10 +10,11 @@ Paper method: `METHOD.md`.
 
 ```powershell
 python scripts/run_hanif_carefi.py --representative --tw both --budget 180 --workers 2
+python scripts/run_alns_hco.py --representative --tw both --workers 2
 python scripts/run_schneider_benchmark.py --mode pr --budget 180 --workers 2
 ```
 
-Scratch files go to `outputs/_tmp/` (gitignored). Delete that folder when you are done. Never write into `outputs/hanif/` or `outputs/schneider/`.
+Scratch files go to `outputs/_tmp/` (gitignored). Delete that folder when you are done.
 
 ## Citeable archives (do not overwrite)
 
@@ -25,11 +26,12 @@ Scratch files go to `outputs/_tmp/` (gitignored). Delete that folder when you ar
 ## Layout
 
 ```
-src/hanif/        CARE-FI for the Hanif 1000-customer set
+src/care-fi/      CARE-FI
+src/alns-hco/     ALNS-HCO (import as src.alns_hco)
 src/schneider/    Schneider BKS branch
-outputs/hanif/    citeable Hanif results
+outputs/care-fi/  citeable CARE-FI Hanif results
+outputs/alns-hco/ citeable ALNS-HCO Hanif results
 outputs/schneider/  citeable Schneider results
-legacy/           old training / search, not the paper method
 ```
 
 ```powershell
