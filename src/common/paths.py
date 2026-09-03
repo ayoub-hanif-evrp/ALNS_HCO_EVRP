@@ -1,29 +1,29 @@
-"""Hanif vs Schneider output roots. Never mix the two."""
+"""Hanif paper result roots. Schneider outputs are not written here."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUTS = ROOT / "outputs"
-HANIF_OUT = OUTPUTS / "hanif"
-SCHNEIDER_OUT = OUTPUTS / "schneider"
-LEGACY_ALNS_HCO = OUTPUTS / "alns-hco"
-LEGACY_REFERENCE = ROOT / "legacy_reference"
+HANIF_OUT = ROOT / "outputs"
+REVIEW = ROOT / "review_before_delete"
 
 
 def hanif_dirs() -> dict[str, Path]:
-    paper = HANIF_OUT / "paper"
     paths = {
         "root": HANIF_OUT,
         "raw": HANIF_OUT / "raw",
-        "runs": HANIF_OUT / "runs",
-        "summaries": HANIF_OUT / "summaries",
+        "processed": HANIF_OUT / "processed",
+        "ablation": HANIF_OUT / "ablation",
+        "statistics": HANIF_OUT / "statistics",
         "tables": HANIF_OUT / "tables",
         "figures": HANIF_OUT / "figures",
+        "supplement": HANIF_OUT / "figures" / "supplement",
         "diagnostics": HANIF_OUT / "diagnostics",
-        "paper": paper,
-        "paper_tables": paper / "tables",
-        "paper_figures": paper / "figures",
-        "paper_supplement": paper / "supplement",
-        "paper_data": paper / "data",
+        "paper": HANIF_OUT / "processed",
+        "paper_tables": HANIF_OUT / "tables",
+        "paper_figures": HANIF_OUT / "figures",
+        "paper_supplement": HANIF_OUT / "figures" / "supplement",
+        "paper_data": HANIF_OUT / "processed",
+        "runs": HANIF_OUT / "raw",
+        "summaries": HANIF_OUT / "processed",
     }
     for p in paths.values():
         p.mkdir(parents=True, exist_ok=True)
@@ -31,16 +31,16 @@ def hanif_dirs() -> dict[str, Path]:
 
 
 def schneider_dirs() -> dict[str, Path]:
+    """Unused by the Hanif paper. Kept so old imports do not crash."""
+    root = REVIEW / "_unused_schneider_outputs"
     paths = {
-        "root": SCHNEIDER_OUT,
-        "raw": SCHNEIDER_OUT / "raw",
-        "runs": SCHNEIDER_OUT / "runs",
-        "summaries": SCHNEIDER_OUT / "summaries",
-        "tables": SCHNEIDER_OUT / "tables",
-        "figures": SCHNEIDER_OUT / "figures",
-        "diagnostics": SCHNEIDER_OUT / "diagnostics",
-        "paper": SCHNEIDER_OUT / "paper",
+        "root": root,
+        "raw": root / "raw",
+        "runs": root / "runs",
+        "summaries": root / "summaries",
+        "tables": root / "tables",
+        "figures": root / "figures",
+        "diagnostics": root / "diagnostics",
+        "paper": root / "paper",
     }
-    for p in paths.values():
-        p.mkdir(parents=True, exist_ok=True)
     return paths

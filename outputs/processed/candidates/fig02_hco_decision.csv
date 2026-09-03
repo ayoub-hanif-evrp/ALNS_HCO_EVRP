@@ -1,0 +1,5 @@
+panel,content
+a,infeasible customer arc c_i to c_j
+b,"candidates s1,s2,s3 with Pbar, Wbar, r, detour"
+c,"select s*, partial charge e_s, feasibility replay"
+,

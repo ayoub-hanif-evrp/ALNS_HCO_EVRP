@@ -68,6 +68,7 @@ def _load(path: Path) -> list[dict]:
                 "k", "distance", "duration", "customer_waiting", "charging_visits",
                 "charged_energy", "station_waiting", "charging_time", "charging_expense",
                 "runtime_s", "served", "unserved", "hard_violations", "seed",
+                "phase1_s", "phase2_s",
                 "phase1_k", "phase1_distance", "phase1_charging_expense", "k_star",
             ):
                 if k in rec:
@@ -242,7 +243,8 @@ def table03_effect(dirs, rows: list[dict]) -> None:
         md.append("")
     _write_csv(dirs["paper_tables"] / "table03_main_hco_effect.csv", stats_rows)
     _write_csv(dirs["paper_data"] / "table03_main_hco_effect.csv", stats_rows)
-    _write_csv(dirs["paper_data"] / "statistical_tests.csv", stats_rows)
+    _write_csv(dirs["statistics"] / "statistical_tests.csv", stats_rows)
+    _write_csv(dirs["statistics"] / "table03_paired_alns_pr_vs_hco.csv", stats_rows)
     (dirs["paper_tables"] / "table03_main_hco_effect.md").write_text("\n".join(md), encoding="utf-8")
     tex = ["\\begin{tabular}{lrrrrlrr}", "\\toprule",
            "metric & PR & HCO & $\\Delta$ & \\% & W/T/L & CI\\% & $p$ \\\\", "\\midrule"]
@@ -277,9 +279,8 @@ def table04_ablation(dirs, rows: list[dict]) -> None:
                 f"{_fmt(rec['charging_time'],1)} | {_fmt(rec['charging_expense'],1)} | {_fmt(rec['runtime_s'])} |"
             )
         md.append("")
-    _write_csv(dirs["paper_tables"] / "table04_ablation.csv", out)
-    _write_csv(dirs["paper_data"] / "table04_ablation.csv", out)
-    (dirs["paper_tables"] / "table04_ablation.md").write_text("\n".join(md), encoding="utf-8")
+    _write_csv(dirs["ablation"] / "table04_ablation.csv", out)
+    (dirs["ablation"] / "table04_ablation.md").write_text("\n".join(md), encoding="utf-8")
     tex = ["\\begin{tabular}{llrrrrrrr}", "\\toprule",
            "TW & method & $K$ & $D$ & $T$ & energy & wait & $t_{ch}$ & $C$ \\\\", "\\midrule"]
     for r in out:
@@ -288,7 +289,7 @@ def table04_ablation(dirs, rows: list[dict]) -> None:
             f"{_fmt(r['charged_energy'],1)} & {_fmt(r['station_waiting'],1)} & {_fmt(r['charging_time'],1)} & {_fmt(r['charging_expense'],1)} \\\\"
         )
     tex += ["\\bottomrule", "\\end{tabular}", ""]
-    (dirs["paper_tables"] / "table04_ablation.tex").write_text("\n".join(tex), encoding="utf-8")
+    (dirs["ablation"] / "table04_ablation.tex").write_text("\n".join(tex), encoding="utf-8")
 
 
 def table05_family(dirs, rows: list[dict]) -> None:
@@ -340,205 +341,6 @@ def table_a01(dirs) -> None:
     )
 
 
-def fig01_framework(dirs) -> None:
-    fig, ax = plt.subplots(figsize=(7.2, 3.2))
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 4)
-    ax.axis("off")
-    boxes = [
-        (0.2, 1.5, "Hanif\ninstance"),
-        (2.0, 1.5, "Phase I\nALNS-PR"),
-        (3.9, 1.5, r"$K^*$" + "\nrouting"),
-        (5.6, 1.5, "Phase II\nfixed $K^*$"),
-        (7.6, 1.5, "HCO\n$r,\\bar W,\\bar P$"),
-        (7.6, 0.2, "ALNS-HCO\nsolution"),
-    ]
-    for x, y, t in boxes:
-        ax.add_patch(plt.Rectangle((x, y), 1.6, 1.3, fill=True, facecolor="#f2f2f2", edgecolor="black", lw=1))
-        ax.text(x + 0.8, y + 0.65, t, ha="center", va="center", fontsize=8)
-    for a, b in [(1.8, 2.15), (3.6, 2.15), (5.5, 2.15), (7.2, 2.15)]:
-        ax.annotate("", xy=(a + 0.2, b), xytext=(a - 0.15, b), arrowprops=dict(arrowstyle="->", color="black"))
-    ax.annotate("", xy=(8.4, 1.5), xytext=(8.4, 1.5), arrowprops=dict(arrowstyle="->", color="black"))
-    ax.annotate("", xy=(8.4, 1.5), xytext=(8.4, 1.45),
-                arrowprops=dict(arrowstyle="->", color="black"))
-    ax.plot([8.4, 8.4], [1.5, 1.5], color="black")
-    ax.annotate("", xy=(8.4, 1.5), xytext=(8.4, 1.5))
-    ax.annotate("", xy=(8.4, 0.85), xytext=(8.4, 1.5), arrowprops=dict(arrowstyle="->", color="black"))
-    _save_fig(fig, dirs["paper_figures"] / "fig01_alns_hco_framework")
-    _write_csv(dirs["paper_data"] / "fig01_alns_hco_framework.csv", [
-        {"step": 1, "label": "Hanif instance"},
-        {"step": 2, "label": "Phase I ALNS-PR"},
-        {"step": 3, "label": "K* and routing"},
-        {"step": 4, "label": "Phase II fixed K*"},
-        {"step": 5, "label": "HCO r, wait, price, partial charge"},
-        {"step": 6, "label": "final ALNS-HCO solution"},
-    ])
-
-
-def fig02_paired(dirs, rows: list[dict]) -> None:
-    metrics = ["distance", "duration", "station_waiting", "charging_time", "charged_energy", "charging_expense"]
-    fig, axes = plt.subplots(2, 3, figsize=(8.4, 5.2))
-    data_rows = []
-    for ax, metric in zip(axes.ravel(), metrics):
-        series, labels = [], []
-        for tw in TW_VARIANTS:
-            pr, hco, keys = _paired(rows, tw)
-            pcts = [pct_change(hco[k][metric], pr[k][metric]) for k in keys]
-            pcts = [p for p in pcts if p is not None]
-            series.append(pcts)
-            labels.append(tw)
-            for i, p in enumerate(pcts):
-                data_rows.append({"tw": tw, "metric": metric, "i": i, "pct": p})
-        ax.axhline(0.0, color="0.4", lw=0.8)
-        ax.boxplot(series, tick_labels=labels, showfliers=True)
-        ax.set_title(metric.replace("_", " "), fontsize=9)
-        ax.set_ylabel("% change")
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_figures"] / "fig02_paired_improvements")
-    _write_csv(dirs["paper_data"] / "fig02_paired_improvements.csv", data_rows)
-
-
-def fig03_scatter(dirs, rows: list[dict]) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(8.0, 3.6), sharex=False, sharey=False)
-    data_rows = []
-    for ax, tw in zip(axes, TW_VARIANTS):
-        pr, hco, keys = _paired(rows, tw)
-        xs = [pr[k]["charging_expense"] for k in keys]
-        ys = [hco[k]["charging_expense"] for k in keys]
-        ax.scatter(xs, ys, s=14, alpha=0.75)
-        if xs and ys:
-            lo = min(min(xs), min(ys))
-            hi = max(max(xs), max(ys))
-            ax.plot([lo, hi], [lo, hi], color="0.35", lw=0.9)
-        ax.set_title(f"{tw.title()} TW")
-        ax.set_xlabel("ALNS-PR charging expense")
-        ax.set_ylabel("ALNS-HCO charging expense")
-        for k, x, y in zip(keys, xs, ys):
-            data_rows.append({"tw": tw, "instance": k[0], "alns_pr": x, "alns_hco": y})
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_figures"] / "fig03_charging_cost_scatter")
-    _write_csv(dirs["paper_data"] / "fig03_charging_cost_scatter.csv", data_rows)
-
-
-def fig04_mechanisms(dirs, rows: list[dict]) -> None:
-    names = [
-        ("charged_energy", "charged energy"),
-        ("price_proxy", "expense / energy"),
-        ("wait_per_visit", "wait / visits"),
-        ("time_per_energy", "ch. time / energy"),
-        ("charging_visits", "charging visits"),
-    ]
-    data_rows = []
-    fig, axes = plt.subplots(1, 2, figsize=(8.0, 3.6), sharey=True)
-    for ax, tw in zip(axes, TW_VARIANTS):
-        pr, hco, keys = _paired(rows, tw)
-        vals = []
-        for key, _lab in names:
-            pcts = []
-            for k in keys:
-                if key == "price_proxy":
-                    a = pr[k]["charging_expense"] / max(pr[k]["charged_energy"] or 0, 1e-9)
-                    b = hco[k]["charging_expense"] / max(hco[k]["charged_energy"] or 0, 1e-9)
-                elif key == "wait_per_visit":
-                    a = pr[k]["station_waiting"] / max(pr[k]["charging_visits"] or 0, 1e-9)
-                    b = hco[k]["station_waiting"] / max(hco[k]["charging_visits"] or 0, 1e-9)
-                elif key == "time_per_energy":
-                    a = pr[k]["charging_time"] / max(pr[k]["charged_energy"] or 0, 1e-9)
-                    b = hco[k]["charging_time"] / max(hco[k]["charged_energy"] or 0, 1e-9)
-                else:
-                    a, b = pr[k][key], hco[k][key]
-                p = pct_change(b, a)
-                if p is not None:
-                    pcts.append(p)
-            m = mean(pcts)
-            vals.append(0.0 if m is None else m)
-            data_rows.append({"tw": tw, "mechanism": key, "mean_pct": m})
-        ax.axvline(0.0, color="0.4", lw=0.8)
-        ax.barh([n[1] for n in names], vals, color="#4c78a8")
-        ax.set_title(f"{tw.title()} TW")
-        ax.set_xlabel("% change")
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_figures"] / "fig04_charging_mechanisms")
-    _write_csv(dirs["paper_data"] / "fig04_charging_mechanisms.csv", data_rows)
-
-
-def fig05_heatmap(dirs, rows: list[dict]) -> None:
-    metrics = ["distance", "duration", "station_waiting", "charging_time", "charged_energy", "charging_expense"]
-    fig, axes = plt.subplots(1, 2, figsize=(8.4, 3.8))
-    data_rows = []
-    for ax, tw in zip(axes, TW_VARIANTS):
-        pr, hco, keys = _paired(rows, tw)
-        mat = []
-        for fam in FAMILIES:
-            fk = [k for k in keys if k[1] == fam]
-            row = []
-            for m in metrics:
-                pcts = [pct_change(hco[k][m], pr[k][m]) for k in fk]
-                val = mean([p for p in pcts if p is not None])
-                row.append(0.0 if val is None else val)
-                data_rows.append({"tw": tw, "family": fam, "metric": m, "mean_pct": val})
-            mat.append(row)
-        im = ax.imshow(mat, cmap="RdBu_r", vmin=-30, vmax=30, aspect="auto")
-        ax.set_xticks(range(len(metrics)))
-        ax.set_xticklabels([m.replace("_", "\n") for m in metrics], fontsize=7)
-        ax.set_yticks(range(len(FAMILIES)))
-        ax.set_yticklabels(FAMILIES)
-        ax.set_title(f"{tw.title()} TW")
-        for i, row in enumerate(mat):
-            for j, v in enumerate(row):
-                ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=6)
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_figures"] / "fig05_family_heatmap")
-    _write_csv(dirs["paper_data"] / "fig05_family_heatmap.csv", data_rows)
-
-
-def fig06_runtime(dirs, rows: list[dict]) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(8.0, 3.5))
-    data_rows = []
-    for ax, tw in zip(axes, TW_VARIANTS):
-        labels, p1, p2 = [], [], []
-        inst_h = _instance_means(rows, METHOD_ALNS_HCO, tw)
-        inst_pr = _instance_means(rows, METHOD_ALNS_PR, tw)
-        labels = ["ALNS-PR", "ALNS-HCO P1", "ALNS-HCO P2"]
-        pr_t = mean([v["runtime_s"] for v in inst_pr.values()]) or 0
-        hco_rows = [r for r in rows if r.get("method") == METHOD_ALNS_HCO and r.get("tw") == tw and r.get("feasible")]
-        h1 = mean([_f(r.get("phase1_s"), 0) or 0 for r in hco_rows]) or 0
-        h2 = mean([_f(r.get("phase2_s"), 0) or 0 for r in hco_rows]) or 0
-        ax.bar(labels, [pr_t, h1, h2], color=["#4c78a8", "#f58518", "#54a24b"])
-        ax.set_title(f"{tw.title()} TW")
-        ax.set_ylabel("mean runtime (s)")
-        ax.tick_params(axis="x", rotation=20)
-        data_rows += [
-            {"tw": tw, "component": "ALNS-PR total", "seconds": pr_t},
-            {"tw": tw, "component": "ALNS-HCO Phase I", "seconds": h1},
-            {"tw": tw, "component": "ALNS-HCO Phase II", "seconds": h2},
-        ]
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_figures"] / "fig06_runtime_quality")
-    _write_csv(dirs["paper_data"] / "fig06_runtime_quality.csv", data_rows)
-
-
-def fig_s03_runtime(dirs, rows: list[dict]) -> None:
-    fig, ax = plt.subplots(figsize=(6.4, 3.6))
-    data_rows = []
-    series, labels = [], []
-    for method in PAPER_METHODS:
-        vals = [r["runtime_s"] for r in rows if r.get("method") == method and r.get("runtime_s") is not None]
-        if not vals:
-            continue
-        series.append(vals)
-        labels.append(method)
-        for v in vals:
-            data_rows.append({"method": method, "runtime_s": v})
-    if series:
-        ax.boxplot(series, tick_labels=labels, showfliers=False)
-    ax.set_ylabel("runtime (s)")
-    ax.tick_params(axis="x", rotation=20)
-    fig.tight_layout()
-    _save_fig(fig, dirs["paper_supplement"] / "figS03_runtime_distribution")
-    _write_csv(dirs["paper_data"] / "figS03_runtime_distribution.csv", data_rows)
-
 
 def _captions(dirs, n_inst: int) -> None:
     n = n_inst or "N"
@@ -554,19 +356,15 @@ Table 4. Ablation: full recharge (ALNS-FR), partial recharge (ALNS-PR), HCO on f
 
 Table 5. Mean paired percentage change of ALNS-HCO vs ALNS-PR by Solomon-style family.
 
-Figure 1. ALNS-HCO architecture. Phase I is ALNS-PR. Phase II freezes $K=K^*$ and evaluates candidates with one Heterogeneous Charging Oracle.
+Figure 1. Two-phase ALNS-HCO framework (author drawing). Phase I is ALNS-PR and returns $X^{{\\mathrm{{PR}}}}$ with $K^*=K(X^{{\\mathrm{{PR}}}})$. Phase II is charging-aware ALNS with frozen $K=K^*$, HCO inside the search, acceptance/rejection, and output $X^*$. This figure is not generated by the result compiler.
 
-Figure 2. Paired percentage changes of ALNS-HCO relative to ALNS-PR. The horizontal line is zero.
+Figure 2. Illustrative HCO charging decision. A customer arc is battery-infeasible; a restricted set of stations $\\{{s_1,s_2,s_3\\}}$ is scored by detour, $\\bar P_s$, $\\bar W_s$, and $r_s$; HCO inserts a station $s^*$, assigns a just-enough partial charge $e_s$, and replays route feasibility. The diagram is a methodological illustration, not an experimental result.
 
-Figure 3. Instance-level charging expense: ALNS-HCO (y) vs ALNS-PR (x). Points below the diagonal are improvements.
+Figure 3. Charging ablation profile. Each series is the instance-mean metric indexed to ALNS-FR $=100$, for ALNS-FR $\\to$ ALNS-PR $\\to$ ALNS-PR+HCO $\\to$ ALNS-HCO. The large drop occurs when partial charging is introduced. Fixed-route HCO changes little; full Phase-II ALNS-HCO then trades waiting time against energy and charging expense.
 
-Figure 4. Mechanism decomposition of charging-expense change (energy, expense/energy, wait/visit, time/energy, visits).
+Figure 4. Paired ALNS-HCO versus ALNS-PR. Dots are the mean of instance-level $100(M_{{\\mathrm{{HCO}}}}-M_{{\\mathrm{{PR}}}})/M_{{\\mathrm{{PR}}}}$; whiskers are paired bootstrap 95% confidence intervals. The vertical line is zero. Negative values are reductions.
 
-Figure 5. Family heatmap of mean paired percentage changes (ALNS-HCO vs ALNS-PR). Diverging scale centred at zero.
-
-Figure 6. Mean runtime of equal-budget ALNS-PR versus ALNS-HCO Phase I / Phase II.
-
-Figure S3. Runtime distribution by method.
+Figure 5. Family-level charging effects of ALNS-HCO versus ALNS-PR for $N_{{\\mathrm{{ch}}}}$, $T_{{\\mathrm{{wait}}}}$, and $C_{{\\mathrm{{ch}}}}$. Blue is a reduction.
 """
     (dirs["paper"] / "captions.md").write_text(text, encoding="utf-8")
 
@@ -610,7 +408,6 @@ def _copy_method(dirs) -> None:
 def compile_hanif_paper(master_path: Path) -> None:
     dirs = hanif_dirs()
     rows = _load(master_path)
-    (dirs["paper_data"] / "master_results.csv").write_bytes(master_path.read_bytes() if master_path.is_file() else b"")
     n_inst = len({r["instance"] for r in rows if r.get("tw") == "original"})
     table01_setup(dirs, n_inst)
     table02_comparison(dirs, rows)
@@ -618,25 +415,11 @@ def compile_hanif_paper(master_path: Path) -> None:
     table04_ablation(dirs, rows)
     table05_family(dirs, rows)
     table_a01(dirs)
-    fig01_framework(dirs)
-    if rows:
-        fig02_paired(dirs, rows)
-        fig03_scatter(dirs, rows)
-        fig04_mechanisms(dirs, rows)
-        fig05_heatmap(dirs, rows)
-        fig06_runtime(dirs, rows)
-        fig_s03_runtime(dirs, rows)
+    from src.alns_hco.figures import generate_all_figures
+    generate_all_figures(dirs, rows, master_path=master_path)
     _captions(dirs, n_inst)
     _summary(dirs, rows)
     _copy_method(dirs)
     (dirs["paper"] / "experiment_config.json").write_text(
         json.dumps(experiment_config(), indent=2) + "\n", encoding="utf-8",
     )
-    # placeholder supplement route figures until routes are stored
-    for name in ("figS01_representative_route", "figS02_soc_profile"):
-        note = dirs["paper_supplement"] / f"{name}.md"
-        if not (dirs["paper_supplement"] / f"{name}.png").is_file():
-            note.write_text(
-                f"# {name}\n\nGenerated when `--save-routes` is used on a run that stores seed-0 routes.\n",
-                encoding="utf-8",
-            )

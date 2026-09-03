@@ -1,12 +1,21 @@
-# outputs/
+# Hanif paper results
 
-Citeable archives only. Do not add smoke folders, versioned experiments, or nested run trees.
+Source of truth: `raw/master_results.csv` (3720 rows). Numbers were not
+recomputed; tables and Figures 2–5 are compiled from this file.
 
-| Path | What it is |
+| Path | Contents |
 |---|---|
-| `care-fi/` | Citeable CARE-FI Hanif results |
-| `alns-hco/` | Frozen pre-paper ALNS-HCO snapshot (do not overwrite) |
-| `hanif/` | ALNS-HCO paper experiments (Hanif 1000-customer set) |
-| `schneider/` | Schneider EVRPTW results (kept separate from Hanif) |
+| `raw/master_results.csv` | Every (instance, TW, method, seed) row |
+| `processed/` | Figure CSVs, captions, METHOD, RESULTS_SUMMARY |
+| `ablation/` | Table 4 |
+| `statistics/` | Paired tests |
+| `tables/` | Tables 1–3, 5, A01 |
+| `figures/` | Fig 2–5 (png/svg/pdf). Fig 1 is the author framework drawing |
+| `figures/archive/` | Discarded dashboard-style figures |
+| `figure_manifest.md` | Mapping from each figure to source and script |
 
-New solver runs write under `outputs/_tmp/` (gitignored). Delete that folder when you are done looking at the numbers.
+Regenerate Figures 2–5 only (does not re-run the solver, does not overwrite Fig 1):
+
+```powershell
+python scripts/generate_hanif_figures.py
+```

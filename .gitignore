@@ -1,3 +1,6 @@
+# Local full-repo backup created before Hanif-paper cleanup (not pushed)
+archive/
+
 # Python caches and local virtualenvs (root only — do not match src/env/)
 __pycache__/
 *.py[cod]

@@ -1,0 +1,5 @@
+panel,content
+a,infeasible customer arc due to battery deficit
+b,"restricted candidates s1,s2,s3 with Pbar, Wbar, r, detour"
+c,HCO selects s*; just-enough partial charge e_s; feasibility replay
+,not computed from saved routes

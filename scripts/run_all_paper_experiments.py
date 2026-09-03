@@ -19,7 +19,6 @@ sys.path.insert(0, str(ROOT))
 from src.alns_hco.experiments import solve_job  # noqa: E402
 from src.alns_hco.paper import compile_hanif_paper  # noqa: E402
 from src.alns_hco.quality import check_master  # noqa: E402
-from src.alns_hco.schneider_paper import compile_schneider_paper  # noqa: E402
 from src.common.config import MASTER_FIELDS, METHOD_GI, PAPER_METHODS, SEEDS, experiment_config  # noqa: E402
 from src.common.paths import hanif_dirs  # noqa: E402
 from src.hanif.loader import REPRESENTATIVE, list_instances  # noqa: E402
@@ -96,10 +95,6 @@ def main() -> int:
                     )
                     rows.append(row)
         _write_master(rows, master_path)
-        (dirs["runs"] / "latest_rows.json").write_text(
-            json.dumps([{k: v for k, v in r.items() if k != "routes"} for r in rows], indent=2) + "\n",
-            encoding="utf-8",
-        )
         print(f"wrote {master_path}", flush=True)
 
     errors = check_master(master_path)
@@ -109,8 +104,7 @@ def main() -> int:
     if errors:
         print("quality checks:", *errors[:12], sep="\n  ", flush=True)
     compile_hanif_paper(master_path)
-    compile_schneider_paper()
-    print("paper package written under outputs/hanif/paper and outputs/schneider/paper", flush=True)
+    print("Hanif paper files written under outputs/", flush=True)
     return 0 if not errors else 1
 
 
