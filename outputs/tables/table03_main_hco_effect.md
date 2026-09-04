@@ -3,6 +3,10 @@
 Paired instance-level means (seeds averaged first). Relative change is the mean of
 $100(M_{\mathrm{HCO}}-M_{\mathrm{PR}})/M_{\mathrm{PR}}$. Negative = reduction.
 
+The $K$ gap is not an HCO effect. ALNS-PR spends the full 30 s on Phase I; ALNS-HCO splits the same budget into about 15 s Phase I + 15 s Phase II and then freezes $K=K^*$. Phase II cannot change fleet size.
+
+Customer-waiting mean paired percentages are marked $\dagger$ and are **not a headline result**. Small waiting denominators can dominate the mean of ratios: in Original TW the average waiting falls while the mean paired percentage is positive.
+
 ## Original TW (n=60 paired instances)
 
 | Metric | ALNS-PR | ALNS-HCO | Δ | mean % | wins/ties/losses | 95% CI % | p |
@@ -10,7 +14,7 @@ $100(M_{\mathrm{HCO}}-M_{\mathrm{PR}})/M_{\mathrm{PR}}$. Negative = reduction.
 | fleet $K$ | 69.88 | 71.01 | 1.13 | 1.49 | 0/17/43 | [1.11, 1.93] | 0.0000 |
 | distance | 48555.33 | 50082.65 | 1527.32 | 3.55 | 2/0/58 | [2.90, 4.29] | 0.0000 |
 | duration | 168826.13 | 170532.20 | 1706.07 | 1.00 | 18/0/42 | [0.64, 1.41] | 0.0000 |
-| customer waiting | 67489.67 | 67102.84 | -386.83 | 3.08 | 30/0/30 | [-0.08, 6.48] | 0.3770 |
+| customer waiting $\dagger$ | 67489.67 | 67102.84 | -386.83 | 3.08 $\dagger$ | 30/0/30 | [-0.08, 6.48] $\dagger$ | 0.3770 |
 | charging visits | 79.04 | 72.80 | -6.24 | -8.31 | 58/0/2 | [-10.29, -6.52] | 0.0000 |
 | charged energy | 17438.57 | 18157.30 | 718.73 | 2.87 | 20/0/40 | [-0.42, 6.31] | 0.0000 |
 | station waiting | 1194.95 | 1093.39 | -101.56 | -9.21 | 57/0/3 | [-11.75, -7.04] | 0.0000 |
@@ -25,10 +29,12 @@ $100(M_{\mathrm{HCO}}-M_{\mathrm{PR}})/M_{\mathrm{PR}}$. Negative = reduction.
 | fleet $K$ | 61.80 | 62.81 | 1.00 | 1.94 | 0/17/43 | [1.42, 2.54] | 0.0000 |
 | distance | 49276.55 | 50998.01 | 1721.46 | 4.44 | 1/0/59 | [3.53, 5.35] | 0.0000 |
 | duration | 148947.56 | 151179.52 | 2231.96 | 1.47 | 16/0/44 | [0.94, 2.04] | 0.0000 |
-| customer waiting | 42199.44 | 41646.52 | -552.92 | 1.33 | 34/0/26 | [-1.26, 4.24] | 0.1351 |
+| customer waiting $\dagger$ | 42199.44 | 41646.52 | -552.92 | 1.33 $\dagger$ | 34/0/26 | [-1.26, 4.24] $\dagger$ | 0.1351 |
 | charging visits | 106.77 | 103.57 | -3.20 | -2.65 | 50/3/7 | [-3.22, -2.07] | 0.0000 |
 | charged energy | 22227.95 | 23505.87 | 1277.92 | 7.21 | 4/0/56 | [5.37, 9.47] | 0.0000 |
 | station waiting | 1600.59 | 1551.73 | -48.86 | -2.62 | 51/0/9 | [-3.21, -2.01] | 0.0000 |
 | charging time | 19195.61 | 20311.31 | 1115.70 | 7.18 | 3/0/57 | [5.30, 9.45] | 0.0000 |
 | charging expense | 12152.28 | 12846.07 | 693.79 | 7.16 | 4/0/56 | [5.32, 9.35] | 0.0000 |
 | runtime (s) | 31.19 | 31.32 | 0.14 | 0.45 | 4/0/56 | [0.36, 0.53] | 0.0000 |
+
+$\dagger$ Mean of instance-level percentages is unstable for customer waiting. Use the absolute $\Delta$, not the percentage, if this metric is discussed at all.

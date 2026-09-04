@@ -1,0 +1,3 @@
+tw,left,right,n_instance_seed_pairs,n_k_differs,note
+original,ALNS-PR,ALNS-PR+HCO,300,3,independent 30 s runs; not a controlled fixed-route pair
+relaxed,ALNS-PR,ALNS-PR+HCO,300,13,independent 30 s runs; not a controlled fixed-route pair

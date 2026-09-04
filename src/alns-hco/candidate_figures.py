@@ -184,59 +184,11 @@ def _heatmap(axes, mats, metrics, vmax: float):
 
 
 def fig01_framework() -> None:
-    fig, ax = plt.subplots(figsize=(10.0, 4.55))
-    ax.set_xlim(0, 16.2)
-    ax.set_ylim(0, 7.6)
-    ax.axis("off")
-    fig.patch.set_facecolor("white")
-
-    def box(x, y, w, h, title, body="", fc="white", lw=1.05):
-        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="square,pad=0",
-                                    facecolor=fc, edgecolor="black", linewidth=lw))
-        if body:
-            ax.text(x + w / 2, y + h - 0.18, title, ha="center", va="top",
-                    fontsize=9, fontweight="bold")
-            ax.text(x + w / 2, y + 0.16, body, ha="center", va="bottom",
-                    fontsize=8, linespacing=1.3)
-        else:
-            ax.text(x + w / 2, y + h / 2, title, ha="center", va="center",
-                    fontsize=9, fontweight="bold")
-
-    def arrow(x0, y0, x1, y1):
-        ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>",
-                                     mutation_scale=11, lw=1.05, color="black",
-                                     shrinkA=0, shrinkB=0))
-
-    box(0.25, 4.85, 2.55, 1.95, "EVRPTW instance", "Hanif, 1000 customers")
-    box(3.45, 4.85, 5.15, 1.95, "Phase I: ALNS-PR",
-        "partial recharging\nlexicographic (unserved, $K$, $D$)", fc="#f7f7f7")
-    box(9.25, 4.85, 3.55, 1.95, r"Incumbent $X^{\mathrm{PR}}$", r"$K^*=K(X^{\mathrm{PR}})$")
-    arrow(2.80, 5.82, 3.45, 5.82)
-    arrow(8.60, 5.82, 9.25, 5.82)
-
-    ax.add_patch(FancyBboxPatch((0.25, 0.35), 12.15, 3.95, boxstyle="square,pad=0",
-                                facecolor="#f4f4f4", edgecolor="black", linewidth=1.15))
-    ax.text(6.32, 4.08, r"Phase II: fixed-fleet ALNS-HCO, $K=K^*$ throughout",
-            ha="center", va="top", fontsize=9, fontweight="bold")
-    box(0.50, 0.60, 6.55, 3.05, "HCO (inside Phase II)",
-        r"candidates scored by $\bar P_s$, $\bar W_s$, $r_s$, detour"
-        "\npartial charge $e_s$; insert / replace / remove"
-        "\nroute feasibility replay", fc="white")
-    box(7.30, 1.70, 4.75, 1.75, "Accept / reject",
-        r"$K=K^*$ required" + "\n" + r"SA score $(D,\,C_{\mathrm{ch}})$", fc="white")
-    box(13.00, 1.70, 2.90, 1.75, r"Output $X^*$", "ALNS-HCO solution", lw=1.25)
-    arrow(11.02, 4.85, 11.02, 4.30)
-    ax.plot([6.32, 11.02], [4.30, 4.30], color="black", lw=1.05)
-    arrow(6.32, 4.30, 6.32, 3.65)
-    arrow(12.05, 2.58, 13.00, 2.58)
-    ax.text(11.20, 4.52, r"$K=K^*$", ha="left", va="center", fontsize=8)
-    _save_png(fig, "fig01_two_phase_framework")
-    _write_csv(CSV_DIR / "fig01_two_phase_framework.csv", [
-        {"step": 1, "block": "EVRPTW instance"},
-        {"step": 2, "block": "Phase I ALNS-PR", "output": "X_PR, K*"},
-        {"step": 3, "block": "Phase II fixed-fleet ALNS-HCO", "constraint": "K=K*"},
-        {"step": 4, "block": "X*"},
-    ])
+    """Removed from the candidate pack. Manuscript Fig. 1 is the author drawing only."""
+    raise RuntimeError(
+        "Do not generate fig01_two_phase_framework.png. "
+        "Use the author file outputs/figures/fig01_alns_hco_framework.png."
+    )
 
 
 def fig02_hco_decision() -> None:
@@ -687,9 +639,6 @@ def fig15_seed_stability(rows) -> None:
 
 
 MANIFEST_ROWS = [
-    ("fig01_two_phase_framework.png",
-     "How is ALNS-HCO organised as a two-phase algorithm?",
-     "schematic", "architecture", "none", "Main"),
     ("fig02_hco_decision.png",
      "What is distinctive about an HCO charging decision?",
      "schematic", "Pbar_s, Wbar_s, r_s, detour, e_s", "illustrative", "Main"),
@@ -698,9 +647,9 @@ MANIFEST_ROWS = [
      "master_results.csv", "D, T, N_ch, E_ch, T_wait, T_ch, C_ch",
      "ALNS-PR vs ALNS-FR", "Main"),
     ("fig04_charging_ablation.png",
-     "At which algorithmic stage do charging gains appear?",
+     "At which algorithmic stage do charging gains appear (cross-run only)?",
      "master_results.csv", "E_ch, T_ch, C_ch, T_wait",
-     "ALNS-FR = 100; FR to PR to PR+HCO to HCO", "Main"),
+     "ALNS-FR = 100; FR to PR to PR+HCO to HCO (not a controlled sequential ablation)", "Supplement"),
     ("fig05_alns_hco_paired_effect.png",
      "What does Phase-II ALNS-HCO change relative to ALNS-PR?",
      "master_results.csv", "K, D, T, N_ch, E_ch, T_wait, T_ch, C_ch",
@@ -708,11 +657,11 @@ MANIFEST_ROWS = [
     ("fig06_win_tie_loss.png",
      "Are the Phase-II effects consistent across the 60 instances?",
      "master_results.csv", "K, D, T, N_ch, E_ch, T_wait, T_ch, C_ch",
-     "HCO better / tie / PR better", "Main"),
+     "HCO better / tie / PR better", "Supplement"),
     ("fig07_family_hco_effect.png",
      "Which Hanif families benefit from charging-aware search?",
      "master_results.csv", "K, D, N_ch, E_ch, T_wait, C_ch",
-     "ALNS-HCO vs ALNS-PR by family", "Main or Supplement"),
+     "ALNS-HCO vs ALNS-PR by family", "Supplement"),
     ("fig08_family_partial_charging.png",
      "Is the partial-recharging benefit uniform across families?",
      "master_results.csv", "D, T, N_ch, E_ch, T_ch, C_ch",
@@ -759,13 +708,15 @@ def write_manifest() -> None:
         "Drawing code: `src/alns-hco/candidate_figures.py`.",
         "",
         "No solver rerun. No Schneider/CARE-FI figures. No dataset-description plots.",
+        "Figure 1 for the manuscript is the **author drawing** (`outputs/figures/fig01_alns_hco_framework.png`);",
+        "this candidate pack no longer generates a framework PNG.",
         "Figure 2 is a methodological illustration; no saved Hanif routes exist.",
         "Percentage changes are always $100(\\mathrm{new}-\\mathrm{baseline})/\\mathrm{baseline}$; negative = reduction.",
         "",
-        "| Fig | File | Research question | Data | Metrics | Comparison | Recommendation |",
+        "| # | File | Research question | Data | Metrics | Comparison | Recommendation |",
         "|---|---|---|---|---|---|---|",
     ]
-    for i, (fn, q, data, metrics, cmp, rec) in enumerate(MANIFEST_ROWS, start=1):
+    for i, (fn, q, data, metrics, cmp, rec) in enumerate(MANIFEST_ROWS, start=2):
         lines.append(f"| {i} | `{fn}` | {q} | {data} | {metrics} | {cmp} | {rec} |")
     lines += [
         "",
@@ -784,7 +735,13 @@ def generate() -> None:
     PNG_DIR.mkdir(parents=True, exist_ok=True)
     dirs = hanif_dirs()
     rows = _load(dirs["raw"] / "master_results.csv")
-    fig01_framework()
+    # Do not generate fig01: manuscript Fig. 1 is the author's drawing only.
+    stale01 = PNG_DIR / "fig01_two_phase_framework.png"
+    if stale01.is_file():
+        stale01.unlink()
+    stale01_csv = CSV_DIR / "fig01_two_phase_framework.csv"
+    if stale01_csv.is_file():
+        stale01_csv.unlink()
     fig02_hco_decision()
     fig03_partial_recharge(rows)
     fig04_ablation(rows)

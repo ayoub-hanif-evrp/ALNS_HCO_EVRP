@@ -1,14 +1,27 @@
-\begin{tabular}{llrrrrrrr}
+% Panel A: independent 30 s runs. PR vs PR+HCO is not a perfectly controlled fixed-route comparison.
+\begin{tabular}{llrrrrrrrr}
 \toprule
-TW & method & $K$ & $D$ & $T$ & energy & wait & $t_{ch}$ & $C$ \\
+TW & method & $K$ & $D$ & $T$ & $N_{\mathrm{ch}}$ & $E_{\mathrm{ch}}$ & $T_{\mathrm{wait}}$ & $T_{\mathrm{ch}}$ & $C_{\mathrm{ch}}$ \\
 \midrule
-original & ALNS-FR & 69.97 & 47416.9 & 171088.2 & 23313.0 & 1245.1 & 20002.7 & 12843.4 \\
-original & ALNS-PR & 69.88 & 48555.3 & 168826.1 & 17438.6 & 1195.0 & 14911.1 & 9652.7 \\
-original & ALNS-PR+HCO & 69.87 & 48539.4 & 168752.4 & 17368.9 & 1184.4 & 14865.9 & 9609.5 \\
-original & ALNS-HCO & 71.01 & 50082.7 & 170532.2 & 18157.3 & 1093.4 & 15582.5 & 10021.2 \\
-relaxed & ALNS-FR & 61.91 & 48244.7 & 149697.6 & 26697.9 & 1608.7 & 23054.8 & 14566.3 \\
-relaxed & ALNS-PR & 61.80 & 49276.6 & 148947.6 & 22227.9 & 1600.6 & 19195.6 & 12152.3 \\
-relaxed & ALNS-PR+HCO & 61.79 & 49267.8 & 148915.3 & 22234.2 & 1600.6 & 19195.3 & 12158.0 \\
-relaxed & ALNS-HCO & 62.81 & 50998.0 & 151179.5 & 23505.9 & 1551.7 & 20311.3 & 12846.1 \\
+original & ALNS-FR & 69.97 & 47416.9 & 171088.2 & 81.02 & 23313.0 & 1245.1 & 20002.7 & 12843.4 \\
+original & ALNS-PR & 69.88 & 48555.3 & 168826.1 & 79.04 & 17438.6 & 1195.0 & 14911.1 & 9652.7 \\
+original & ALNS-PR+HCO & 69.87 & 48539.4 & 168752.4 & 78.40 & 17368.9 & 1184.4 & 14865.9 & 9609.5 \\
+original & ALNS-HCO & 71.01 & 50082.7 & 170532.2 & 72.80 & 18157.3 & 1093.4 & 15582.5 & 10021.2 \\
+relaxed & ALNS-FR & 61.91 & 48244.7 & 149697.6 & 106.36 & 26697.9 & 1608.7 & 23054.8 & 14566.3 \\
+relaxed & ALNS-PR & 61.80 & 49276.6 & 148947.6 & 106.77 & 22227.9 & 1600.6 & 19195.6 & 12152.3 \\
+relaxed & ALNS-PR+HCO & 61.79 & 49267.8 & 148915.3 & 106.76 & 22234.2 & 1600.6 & 19195.3 & 12158.0 \\
+relaxed & ALNS-HCO & 62.81 & 50998.0 & 151179.5 & 103.57 & 23505.9 & 1551.7 & 20311.3 & 12846.1 \\
+\bottomrule
+\end{tabular}
+
+% Panel B: within-run phase1_* vs final. This is the controlled HCO comparison.
+\begin{tabular}{llrrrrrrrrl}
+\toprule
+TW & method & $n$ & $K$ chg. & $D$/$C$ chg. & $K_1$ & $K$ & $D_1$ & $D$ & $C_1$ & $C$ \\
+\midrule
+original & ALNS-PR+HCO & 300 & 0 & 12 & 69.87 & 69.87 & 48550.3 & 48539.4 & 9644.1 & 9609.5 \\
+original & ALNS-HCO & 300 & 0 & 20 & 71.01 & 71.01 & 50106.2 & 50082.7 & 10097.4 & 10021.2 \\
+relaxed & ALNS-PR+HCO & 300 & 0 & 0 & 61.79 & 61.79 & 49267.8 & 49267.8 & 12158.0 & 12158.0 \\
+relaxed & ALNS-HCO & 300 & 0 & 0 & 62.81 & 62.81 & 50998.0 & 50998.0 & 12846.1 & 12846.1 \\
 \bottomrule
 \end{tabular}
