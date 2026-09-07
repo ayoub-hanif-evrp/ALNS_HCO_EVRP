@@ -1,9 +1,13 @@
-"""Feasible insertion with minimum required partial charge (Phase I) and HCO ranking (Phase II)."""
+"""Feasible insertion with minimum required partial charge (Phase I) and HCO-guided repair (Phase II)."""
 from __future__ import annotations
 
 import time
 
-from src.alns_hco.hco import hco, just_enough_alpha, just_enough_labels, plan_min_charge_stations, station_candidates
+from src.alns_hco.hco import (
+    ensure_explicit_labels, hco, just_enough_labels, plan_min_charge_stations,
+    replay_explicit, station_candidates,
+)
+from src.alns_hco.hyperparameters import HYPERPARAMETERS
 from src.alns_hco.routes import customers_of, used_k
 from src.hanif.construction import (
     cheapest_positions,
@@ -28,10 +32,11 @@ def _try_plain(instance, seq: list[int]):
 
 
 def _try_plain_partial(instance, seq: list[int]):
-    """Replay with just-enough on existing stations, then full recharge as fallback."""
+    """Replay with just-enough on existing stations, then full recharge as fallback (Phase I only)."""
     if not tw_optimistic(instance, seq):
         return None
-    plan = replay_route(instance, seq, just_enough_labels(instance, seq))
+    labs = just_enough_labels(instance, seq)
+    plan = replay_explicit(instance, seq, labs)
     if plan.feasible:
         return plan
     plan = replay_route(instance, seq, default_portion=1.0)
@@ -58,7 +63,7 @@ def _try_min_charge(instance, seq: list[int], customer: int, stations: list[int]
 
 
 def _try_just_enough(instance, seq: list[int], customer: int, stations: list[int]):
-    """One closed-form partial charge, then full recharge as fallback (Keskin-style)."""
+    """Explicit just-enough on the new station; preserve other stations via remap in plan_min_charge."""
     try:
         cpos = seq.index(customer)
     except ValueError:
@@ -67,8 +72,6 @@ def _try_just_enough(instance, seq: list[int], customer: int, stations: list[int
         (n for n in seq[cpos + 1:] if instance.nodes[n].is_customer or n == instance.depot_index),
         instance.depot_index,
     )
-    energy = instance.energy_matrix
-    batt_cap = float(instance.vehicle.battery_capacity)
     best = None
     for s in stations:
         for insert_at in (cpos, cpos + 1):
@@ -76,14 +79,14 @@ def _try_just_enough(instance, seq: list[int], customer: int, stations: list[int
             if instance.nodes[prev].is_charging_station or instance.nodes[after].is_charging_station:
                 continue
             trial = seq[:insert_at] + [s] + seq[insert_at:]
-            batt_arr = batt_cap - float(energy[prev, s])
-            alpha = just_enough_alpha(instance, s, max(0.0, batt_arr), nxt)
-            labs = [None] * len(trial)
-            labs[insert_at] = min(1.0, max(float(alpha), 0.20))
-            plan = replay_route(instance, trial, labs)
+            # Explicit just-enough for *all* stations on the trial (no None→1.0).
+            labs = just_enough_labels(instance, trial)
+            plan = replay_explicit(instance, trial, labs)
             if not plan.feasible:
+                # Explicit full charge only at the new station; recompute others just-enough.
+                labs = just_enough_labels(instance, trial)
                 labs[insert_at] = 1.0
-                plan = replay_route(instance, trial, labs)
+                plan = replay_explicit(instance, trial, labs)
             if plan.feasible and (best is None or plan.distance < best.distance):
                 best = plan
     return best
@@ -235,6 +238,36 @@ def greedy_reinsert_just_enough(
     return ok
 
 
+def _shortlist_insertions(
+    instance,
+    routes: list,
+    customer: int,
+    *,
+    nearby_routes: int,
+    insert_positions: int,
+    stations: list[int],
+    shortlist_size: int,
+) -> list[tuple]:
+    """Generate promising feasible (ri, plan) insertions ranked before HCO."""
+    candidates = nearby_route_ids(instance, routes, customer, limit=nearby_routes)
+    scored: list[tuple] = []
+    for ri in candidates:
+        nodes, _labels = routes[ri]
+        for pos in cheapest_positions(instance, nodes, customer, insert_positions):
+            seq = list(nodes[:pos]) + [customer] + list(nodes[pos:])
+            plan = _try_plain_partial(instance, seq) or _try_just_enough(instance, seq, customer, stations)
+            if plan is None:
+                continue
+            scored.append((
+                float(plan.charging_expense),
+                float(plan.distance),
+                ri,
+                plan,
+            ))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return scored[: max(1, int(shortlist_size))]
+
+
 def insert_charging_aware(
     instance,
     routes: list,
@@ -244,30 +277,64 @@ def insert_charging_aware(
     k_max: int,
     nearby_routes: int = NEARBY_ROUTES,
     insert_positions: int = INSERT_POSITIONS,
+    hco_mode: str = "heterogeneous",
+    candidates_per_criterion: int = 5,
+    shortlist_size: int | None = None,
+    use_hco: bool = True,
 ) -> bool:
-    """Phase II insert: rank feasible hosts by HCO charging expense."""
+    """Phase II insert: shortlist hosts → HCO-evaluate each → pick best (or NoHCO ranking)."""
     depot = int(instance.depot_index)
-    stations = station_candidates(instance, customer, 4)
-    candidates = nearby_route_ids(instance, routes, customer, limit=nearby_routes)
+    sl = int(shortlist_size if shortlist_size is not None else HYPERPARAMETERS.get("phase2_repair_shortlist_size", 5))
+    mode = "detour" if hco_mode == "detour" else "heterogeneous"
+    stations = station_candidates(
+        instance, customer, customer, k=candidates_per_criterion, mode=mode,
+    )
+    shortlist = _shortlist_insertions(
+        instance, routes, customer,
+        nearby_routes=nearby_routes, insert_positions=insert_positions,
+        stations=stations, shortlist_size=sl,
+    )
 
-    scored: list[tuple] = []
-    for ri in candidates:
-        nodes, _labels = routes[ri]
-        for pos in cheapest_positions(instance, nodes, customer, insert_positions):
-            seq = list(nodes[:pos]) + [customer] + list(nodes[pos:])
-            plan = _try_plain_partial(instance, seq) or _try_just_enough(instance, seq, customer, stations)
-            if plan is None:
-                continue
-            scored.append((plan.charging_expense, plan.distance, ri, plan))
-
-    if scored:
-        scored.sort(key=lambda x: (x[0], x[1]))
-        _cost, _d, ri, plan = scored[0]
-        hat = hco(instance, customers_of(instance, plan.nodes), cache)
-        if hat.feasible:
-            routes[ri] = (list(hat.nodes), list(hat.labels))
-        else:
-            routes[ri] = (list(plan.nodes), list(plan.labels))
+    if shortlist:
+        best = None
+        for _ce, _d, ri, plan in shortlist:
+            if use_hco and hco_mode not in ("plain", "nohco"):
+                hat = hco(
+                    instance, customers_of(instance, plan.nodes), cache,
+                    mode=mode, candidates_per_criterion=candidates_per_criterion,
+                    input_nodes=list(plan.nodes), input_labels=list(plan.labels),
+                    non_worsening=False,
+                )
+                if hat.feasible:
+                    cand_nodes, cand_labs = list(hat.nodes), list(hat.labels)
+                    score = (
+                        float(hat.charging_expense),
+                        float(hat.station_waiting),
+                        float(hat.charging_time),
+                        float(hat.distance),
+                    )
+                else:
+                    cand_nodes, cand_labs = list(plan.nodes), list(plan.labels)
+                    score = (
+                        float(plan.charging_expense),
+                        float(plan.station_waiting),
+                        float(plan.charging_time),
+                        float(plan.distance),
+                    )
+            else:
+                # PhaseII-NoHCO: same shortlist + lex charge ranking, no oracle.
+                cand_nodes, cand_labs = list(plan.nodes), list(plan.labels)
+                score = (
+                    float(plan.charging_expense),
+                    float(plan.station_waiting),
+                    float(plan.charging_time),
+                    float(plan.distance),
+                )
+            if best is None or score < best[0]:
+                best = (score, ri, cand_nodes, cand_labs)
+        assert best is not None
+        _, ri, new_nodes, new_labs = best
+        routes[ri] = (list(new_nodes), ensure_explicit_labels(instance, new_nodes, new_labs))
         return True
 
     if used_k(instance, routes) >= int(k_max):
@@ -277,11 +344,17 @@ def insert_charging_aware(
         opened = _try_just_enough(instance, [depot, customer, depot], customer, stations)
     if opened is None:
         return False
-    hat = hco(instance, customers_of(instance, opened.nodes), cache)
-    if hat.feasible:
-        routes.append((list(hat.nodes), list(hat.labels)))
-    else:
-        routes.append((list(opened.nodes), list(opened.labels)))
+    if use_hco and hco_mode not in ("plain", "nohco"):
+        hat = hco(
+            instance, customers_of(instance, opened.nodes), cache,
+            mode=mode, candidates_per_criterion=candidates_per_criterion,
+            input_nodes=list(opened.nodes), input_labels=list(opened.labels),
+            non_worsening=False,
+        )
+        if hat.feasible:
+            routes.append((list(hat.nodes), list(hat.labels)))
+            return True
+    routes.append((list(opened.nodes), ensure_explicit_labels(instance, opened.nodes, opened.labels)))
     return True
 
 
@@ -292,9 +365,17 @@ def charging_aware_reinsert(
     *,
     cache,
     k_max: int,
+    hco_mode: str = "heterogeneous",
+    candidates_per_criterion: int = 5,
+    shortlist_size: int | None = None,
+    use_hco: bool = True,
 ) -> bool:
     ok = True
     for c in customers:
-        if not insert_charging_aware(instance, routes, c, cache=cache, k_max=k_max):
+        if not insert_charging_aware(
+            instance, routes, c, cache=cache, k_max=k_max,
+            hco_mode=hco_mode, candidates_per_criterion=candidates_per_criterion,
+            shortlist_size=shortlist_size, use_hco=use_hco,
+        ):
             ok = False
     return ok

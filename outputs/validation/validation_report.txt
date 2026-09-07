@@ -1,0 +1,10 @@
+solution rows: 6720
+station visit rows: 610138
+failed jobs: 0
+errors found: 0
+all checks passed
+
+## HCO regression tests (tests/test_hco_final_fix.py)
+command: C:\Users\ayoub\AppData\Local\Programs\Python\Python313\python.exe -m pytest tests/test_hco_final_fix.py -q --tb=line
+exit_code: 0
+summary: 13 passed in 4.06s

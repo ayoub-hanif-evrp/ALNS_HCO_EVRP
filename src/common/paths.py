@@ -1,4 +1,4 @@
-"""Hanif paper result roots. Schneider outputs are not written here."""
+"""Hanif paper result roots for the clean revision study."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +17,11 @@ def hanif_dirs() -> dict[str, Path]:
         "figures": HANIF_OUT / "figures",
         "supplement": HANIF_OUT / "figures" / "supplement",
         "diagnostics": HANIF_OUT / "diagnostics",
+        "validation": HANIF_OUT / "validation",
+        "analysis": HANIF_OUT / "analysis",
+        "config": HANIF_OUT / "config",
+        "logs": HANIF_OUT / "logs",
+        "shared_phase1": HANIF_OUT / "shared_phase1",
         "paper": HANIF_OUT / "processed",
         "paper_tables": HANIF_OUT / "tables",
         "paper_figures": HANIF_OUT / "figures",
@@ -24,6 +29,7 @@ def hanif_dirs() -> dict[str, Path]:
         "paper_data": HANIF_OUT / "processed",
         "runs": HANIF_OUT / "raw",
         "summaries": HANIF_OUT / "processed",
+        "legacy": HANIF_OUT / "legacy_pre_revision",
     }
     for p in paths.values():
         p.mkdir(parents=True, exist_ok=True)

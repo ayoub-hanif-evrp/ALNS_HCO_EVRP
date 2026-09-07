@@ -1,64 +1,43 @@
-# ALNS-HCO method (paper)
+# ALNS-HCO method (corrected Hanif study)
 
-ALNS-HCO is Adaptive Large Neighborhood Search with a Heterogeneous Charging
-Oracle. Hanif is the 1000-customer **benchmark**. ALNS-HCO is the **method**.
+## Pipeline
 
-This file describes the **active** execution path in `src/alns-hco/`.
+1. **Phase I (ALNS-PR, 15 s)** — shared \(X^{PR}_{15}\) under `outputs/shared_phase1/` with customer-route checksum. Equal 15/15 split of the common 30 s budget (not claimed optimal).
 
-## Phase I — ALNS-PR
+2. **Fixed-route HCO** — may only change charging stations/charges on frozen customer sequences. Non-worsening under lex \((C_{ch}, T_{wait}, T_{ch}, D)\).
 
-GI constructs a feasible start. ALNS then destroy/repairs for `phase1_time_limit_s`
-(15 s in the equal-budget experiments). Repair uses **just-enough partial
-recharge**, not full recharge.
+3. **Phase II (15 s)** — \(K=K^*\), admit only if \(D\le(1+\varepsilon)D^{PR}\). Lex ranking \((C_{ch}, T_{wait}, T_{ch}, D)\).
 
-The lexicographic score is (unserved, \(K\), distance). The incumbent fleet is
+## Phase II controls (same \(X^{PR}_{15}\))
 
-\[
-K^*.
-\]
+| Method | Operators | HCO |
+|---|---|---|
+| **PhaseII-NoHCO** | Phase-II destroy + shortlist repair | No (main ablation) |
+| **PhaseII-Detour** | Same + HCO-Detour | Detour only |
+| **PhaseII-Heterogeneous** | Same + HCO-Heterogeneous | Heterogeneous |
+| **PhaseII-Plain** | Phase-I destroy + just-enough | No (secondary: extra ordinary ALNS time) |
 
-Phase I **is** the ALNS-PR baseline when it is given the same 30 s total budget.
-Inside ALNS-HCO, Phase I uses 15 s so that Phase II also receives 15 s.
+Main HCO ablation: PhaseII-NoHCO → PhaseII-Heterogeneous.
 
-## Phase II — frozen fleet, charging-aware ALNS + HCO
+## HCO rules
 
-Freeze
+- Explicit \((s,e_s)\) plans; never `None → full recharge`.
+- Battery propagates through all prior charging stops.
+- **Detour:** rank by `(detour, station_id)` only; non-worsening acceptance by
+  `(D, N_ch, station-id sequence)` only — never uses \(\bar P, \bar W, r, C_{ch}, T_{wait}, T_{ch}\).
+- **Heterogeneous:** top-\(k\) union of detour/price/wait/rate, dominate, then lex charge score;
+  non-worsening under lex \((C_{ch}, T_{wait}, T_{ch}, D)\).
+- Activity rates: `changed_calls / feasible_hco_calls`, `objective_improvements / feasible_hco_calls`.
 
-\[
-K = K^*.
-\]
+## Frozen config
 
-Phase II never accepts a candidate with a different number of vehicles.
-Customer-to-vehicle assignment and customer order may change.
+See `outputs/config/frozen_experiment_config.json`.
 
-Repair inserts removed customers with just-enough charge and then calls **HCO
-on the modified route**. After a complete candidate is assembled, HCO is applied
-to every route and the SA score uses the HCO plan (distance, then charging
-expense).
+## Workflow
 
-## One HCO
-
-There is a single function `hco` (`src/alns-hco/hco.py`). It is a deterministic
-route-level charging **heuristic**: insert a station if the sequence is
-battery-infeasible, replace or drop redundant stops, and set just-enough
-portions. Station candidates mix proximity, rate \(r_s\), expected wait
-\(\bar W_s\), and expected price \(\bar P_s\).
-
-It is not an exact algorithm and does not claim global optimality.
-
-Names `fast_hco` / `exact_hco` in `oracle.py` are aliases of `hco` for old tests.
-
-## Equal budget
-
-The paper comparison is
-
-\[
-\text{ALNS-PR (30 s)}\quad\text{vs}\quad\text{ALNS-HCO (15 s + 15 s)}.
-\]
-
-ALNS-FR is the same ALNS loop with full recharge, also 30 s.
-ALNS-PR+HCO freezes Phase-I customer sequences and applies HCO only (ablation).
-
-## Seeds
-
-Stochastic methods use seeds \(\{0,1,2,3,4\}\) (\(n=5\)).
+```bash
+python -m pytest tests/test_hco_final_fix.py -q
+python scripts/select_phase2_epsilon.py
+python scripts/preserve_trusted_baselines.py   # once, before first corrected rerun
+python scripts/run_final_hco_branches.py --workers 8
+```

@@ -273,8 +273,6 @@ def fig03_partial_recharge(rows) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(8.5, 4.35), sharex=True, sharey=True)
     _draw_forest(axes, recs, FR_PR_METRICS,
                  r"$100(M_{\mathrm{PR}}-M_{\mathrm{FR}})/M_{\mathrm{FR}}$ (%)")
-    axes[0].text(0.02, 1.02, "negative = reduction", transform=axes[0].transAxes,
-                 ha="left", va="bottom", fontsize=8, color=C_GRAY)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save_png(fig, "fig03_partial_recharging_effect")
     _write_csv(CSV_DIR / "fig03_partial_recharging_effect.csv", recs)
@@ -320,8 +318,6 @@ def fig05_hco_vs_pr(rows) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(8.5, 4.55), sharex=True, sharey=True)
     _draw_forest(axes, recs, HCO_PR_METRICS,
                  r"$100(M_{\mathrm{HCO}}-M_{\mathrm{PR}})/M_{\mathrm{PR}}$ (%)")
-    axes[0].text(0.02, 1.02, "negative = reduction", transform=axes[0].transAxes,
-                 ha="left", va="bottom", fontsize=8, color=C_GRAY)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save_png(fig, "fig05_alns_hco_paired_effect")
     _write_csv(CSV_DIR / "fig05_alns_hco_paired_effect.csv", recs)

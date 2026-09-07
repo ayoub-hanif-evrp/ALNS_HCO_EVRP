@@ -310,8 +310,6 @@ def fig03_partial_recharging(dirs, rows: list[dict]) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(8.5, 4.35), sharex=True, sharey=True)
     _draw_forest(axes, records, FR_PR_METRICS,
                  r"$100(M_{\mathrm{PR}}-M_{\mathrm{FR}})/M_{\mathrm{FR}}$ (%)")
-    axes[0].text(0.02, 1.02, "negative = reduction", transform=axes[0].transAxes,
-                 ha="left", va="bottom", fontsize=8, color=C_GRAY)
     legend = [
         Line2D([0], [0], marker="o", color=C_BLUE, lw=0, label="CI entirely < 0"),
         Line2D([0], [0], marker="o", color=C_ORANGE, lw=0, label="CI entirely > 0"),
@@ -413,8 +411,6 @@ def fig04_forest(dirs, rows: list[dict]) -> None:
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.set_ylim(-0.6, n - 0.4)
-    axes[0].text(0.02, 1.02, "negative = reduction", transform=axes[0].transAxes,
-                 ha="left", va="bottom", fontsize=8, color=C_GRAY)
     legend = [
         Line2D([0], [0], marker="o", color=C_BLUE, lw=0, label="CI entirely < 0"),
         Line2D([0], [0], marker="o", color=C_ORANGE, lw=0, label="CI entirely > 0"),

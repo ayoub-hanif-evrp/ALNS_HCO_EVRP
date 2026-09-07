@@ -1,21 +1,35 @@
-# Hanif paper results
+# Clean Hanif ALNS-HCO revision outputs
 
-Source of truth: `raw/master_results.csv` (3720 rows). Numbers were not
-recomputed; tables and Figures 2–5 are compiled from this file.
+## Reproduce
 
-| Path | Contents |
-|---|---|
-| `raw/master_results.csv` | Every (instance, TW, method, seed) row |
-| `processed/` | Figure CSVs, captions, METHOD, RESULTS_SUMMARY |
-| `ablation/` | Table 4 |
-| `statistics/` | Paired tests |
-| `tables/` | Tables 1–3, 5, A01 |
-| `figures/` | Fig 2–5 (png/svg/pdf). Fig 1 is the author framework drawing |
-| `figures/archive/` | Discarded dashboard-style figures |
-| `figure_manifest.md` | Mapping from each figure to source and script |
-
-Regenerate Figures 2–5 only (does not re-run the solver, does not overwrite Fig 1):
-
-```powershell
-python scripts/generate_hanif_figures.py
+```bash
+python scripts/select_phase2_epsilon.py
+python scripts/run_clean_hanif_study.py --workers 8 --fresh
 ```
+
+## Method names
+
+| Name | Meaning |
+|---|---|
+| GI / VNS / SA | Routing baselines |
+| ALNS-FR | Full recharge ALNS, 30 s |
+| ALNS-PR | Partial recharge ALNS, 30 s |
+| PhaseI-PR-15 | Shared Phase-I solution X_PR_15 |
+| FixedRoute-HCO-Detour | HCO on frozen customer routes; detour-only selection |
+| FixedRoute-HCO-Heterogeneous | HCO on same routes; detour+price+wait+rate |
+| PhaseII-Detour | 15 s charging-aware ALNS + HCO-Detour from shared Phase I |
+| PhaseII-Heterogeneous | Same with HCO-Heterogeneous (final ALNS-HCO) |
+
+## Locations
+
+- Raw: `outputs/raw/solution_results.csv`, `station_visits.csv`, `route_results.csv`
+- Shared Phase I: `outputs/shared_phase1/`
+- Config: `outputs/config/frozen_experiment_config.json`
+- Stats: `outputs/statistics/`
+- Tables: `outputs/tables/`
+- Figures: `outputs/figures/` (PNG only)
+- Validation: `outputs/validation/validation_report.txt`
+- RQs: `outputs/analysis/research_questions.md`
+- Report: `outputs/final_experiment_report.md`
+
+Prior manuscript package: `outputs/legacy_pre_revision/` and `archive/pre_clean_revision_*`.

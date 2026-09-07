@@ -1,0 +1,17 @@
+tw,baseline,treatment,metric,n,mean_A,mean_B,mean_abs_diff,mean_paired_pct,median_paired_pct,ci95_lo,ci95_hi,wins,ties,losses,wilcoxon_p,pct_definition
+original,PhaseII-Detour,PhaseII-Heterogeneous,k,60,71.09333333333333,71.09333333333333,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,distance,60,50253.6558960553,50256.344839791855,2.688943736552877,0.0029789654291652217,0.0,-0.007691340805794001,0.01344968174814251,2,52,6,0.3828125,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,duration,60,171163.3157801511,171186.02291072244,22.70713057131749,0.014121360492265969,0.0,0.00116493949048043,0.02950107345008611,2,52,6,0.078125,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,charging_visits,60,64.47666666666666,64.47333333333333,-0.003333333333333381,-0.021410347618309615,0.0,-0.14162562196892217,0.09603542936876236,4,53,3,0.90625,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,charged_energy,60,19580.76994796425,19585.114514896555,4.344566932305001,0.141729311377068,0.0,0.044083939597471436,0.25450888410400596,0,52,8,0.0078125,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,station_waiting,60,970.2634989202022,965.5675288359324,-4.695970084269843,-1.6306725995005027,0.0,-2.8620096402329285,-0.5560862670705212,8,52,0,0.0078125,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,charging_time,60,16811.137970242413,16838.38046962979,27.242499387375908,0.9696304813932867,0.0,0.29625743735402915,1.7284141742447665,0,52,8,0.0078125,mean of instance-level 100*(B-A)/A
+original,PhaseII-Detour,PhaseII-Heterogeneous,charging_expense,60,10801.80068443096,10794.609527761811,-7.191156669148694,-0.5272903172454055,0.0,-0.9508532548847235,-0.1601845487350296,8,52,0,0.0078125,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,k,60,63.17666666666666,63.17666666666666,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,distance,60,51029.71984236677,51029.71984236677,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,duration,60,151929.89640233055,151929.89640233055,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,charging_visits,60,93.68666666666667,93.68666666666667,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,charged_energy,60,25643.360181028325,25643.360181028325,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,station_waiting,60,1409.885870908896,1409.885870908896,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,charging_time,60,22187.131548706373,22187.131548706373,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,PhaseII-Detour,PhaseII-Heterogeneous,charging_expense,60,13970.026696049847,13970.026696049847,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
