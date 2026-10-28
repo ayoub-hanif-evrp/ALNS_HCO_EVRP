@@ -86,6 +86,11 @@ MASTER_FIELDS = (
     "feasible_hco_calls",
     "hco_eval_time_s",
     "execution_time_s",
+    "solver_runtime_s",
+    "reporting_overhead_s",
+    "end_to_end_runtime_s",
+    "phase1_runtime_s",
+    "phase2_runtime_s",
 )
 
 # Fields computed after the solve; never consulted by ALNS/HCO decisions.
@@ -105,6 +110,11 @@ REPORTING_ONLY_FIELDS = (
     "feasible_hco_calls",
     "hco_eval_time_s",
     "execution_time_s",
+    "solver_runtime_s",
+    "reporting_overhead_s",
+    "end_to_end_runtime_s",
+    "phase1_runtime_s",
+    "phase2_runtime_s",
 )
 
 

@@ -1,0 +1,5 @@
+tw,method_a,method_b,metric,n_instances,mean_diff,ci95_diff_lo,ci95_diff_hi,mean_pct,ci95_pct_lo,ci95_pct_hi,wins_b,ties,losses_b
+original,PhaseII-NoHCO,PhaseII-Heterogeneous,charging_expense,12,28.914159136629905,0.0,75.36319239280321,1.1641396300910292,0.0,3.287891491118893,0,9,3
+original,PhaseII-NoHCO,PhaseII-Heterogeneous,distance,12,23.092876573403675,0.8650309244791666,64.16365623474121,0.03936779792739161,0.0014534317183532276,0.10712776885890386,0,8,4
+original,PhaseI-PR-15,PhaseII-Heterogeneous,charging_expense,12,0.0,0.0,0.0,0.0,0.0,0.0,0,12,0
+original,ALNS-PR,PhaseII-Heterogeneous,distance,12,341.092060615619,-541.8369138240814,1169.9145672718685,0.8386429679316842,-0.7470255471375138,2.404335044879495,6,0,6

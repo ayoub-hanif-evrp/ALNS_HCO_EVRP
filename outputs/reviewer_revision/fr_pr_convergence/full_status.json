@@ -1,0 +1,60 @@
+{
+  "mode": "full",
+  "n_jobs_planned": 24,
+  "instances": [
+    "C1_10_1",
+    "C1_10_2",
+    "C2_10_1",
+    "C2_10_2",
+    "R1_10_1",
+    "R1_10_2",
+    "R2_10_1",
+    "R2_10_2",
+    "RC1_10_1",
+    "RC1_10_2",
+    "RC2_10_1",
+    "RC2_10_2"
+  ],
+  "budgets_s": [
+    30.0
+  ],
+  "seeds": [
+    0
+  ],
+  "tw": [
+    "original"
+  ],
+  "started_utc": "2026-10-28T14:39:00Z",
+  "completed": [
+    "ALNS-FR|C1_10_1|original|seed0|30.0s",
+    "ALNS-PR|C1_10_1|original|seed0|30.0s",
+    "ALNS-FR|C1_10_2|original|seed0|30.0s",
+    "ALNS-PR|C1_10_2|original|seed0|30.0s",
+    "ALNS-FR|C2_10_1|original|seed0|30.0s",
+    "ALNS-PR|C2_10_1|original|seed0|30.0s",
+    "ALNS-FR|C2_10_2|original|seed0|30.0s",
+    "ALNS-PR|C2_10_2|original|seed0|30.0s",
+    "ALNS-FR|R1_10_1|original|seed0|30.0s",
+    "ALNS-PR|R1_10_1|original|seed0|30.0s",
+    "ALNS-FR|R1_10_2|original|seed0|30.0s",
+    "ALNS-PR|R1_10_2|original|seed0|30.0s",
+    "ALNS-FR|R2_10_1|original|seed0|30.0s",
+    "ALNS-PR|R2_10_1|original|seed0|30.0s",
+    "ALNS-FR|R2_10_2|original|seed0|30.0s",
+    "ALNS-PR|R2_10_2|original|seed0|30.0s",
+    "ALNS-FR|RC1_10_1|original|seed0|30.0s",
+    "ALNS-PR|RC1_10_1|original|seed0|30.0s",
+    "ALNS-FR|RC1_10_2|original|seed0|30.0s",
+    "ALNS-PR|RC1_10_2|original|seed0|30.0s",
+    "ALNS-FR|RC2_10_1|original|seed0|30.0s",
+    "ALNS-PR|RC2_10_1|original|seed0|30.0s",
+    "ALNS-FR|RC2_10_2|original|seed0|30.0s",
+    "ALNS-PR|RC2_10_2|original|seed0|30.0s"
+  ],
+  "failed": [],
+  "finished_utc": "2026-10-28T14:51:21Z",
+  "wall_s": 740.2420029998757,
+  "n_completed": 24,
+  "n_failed": 0,
+  "incomplete": false
+}

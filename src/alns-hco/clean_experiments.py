@@ -1,6 +1,8 @@
 """Solve one (instance, TW, method, seed) job for the clean Hanif revision study."""
 from __future__ import annotations
 
+import time
+
 from src.alns_hco.checksum import customer_checksum
 from src.alns_hco.hyperparameters import HYPERPARAMETERS
 from src.alns_hco.shared_phase1 import ensure_shared_phase1
@@ -32,10 +34,31 @@ def _finalize_reporting(
     *,
     stages: dict | None = None,
     validation: dict | None = None,
+    shared_phase1_iterations: int | None = None,
 ) -> dict:
-    """Attach post-hoc energy + search diagnostics. Never feeds back into solvers."""
-    attach_energy_reporting(row, instance, routes)
-    attach_search_diagnostics(row, stages=stages, validation=validation)
+    """Attach post-hoc energy + search diagnostics. Never feeds back into solvers.
+
+    Separates solver wall-clock from reporting overhead / end-to-end time.
+    Avoids recomputing energy when ``solution_row`` already filled it.
+    """
+    t0 = time.perf_counter()
+    if row.get("solver_runtime_s") is None and row.get("runtime_s") is not None:
+        row["solver_runtime_s"] = float(row["runtime_s"])
+    attach_energy_reporting(row, instance, routes)  # no-op if already filled
+    attach_search_diagnostics(
+        row,
+        stages=stages,
+        validation=validation,
+        shared_phase1_iterations=shared_phase1_iterations,
+    )
+    overhead = time.perf_counter() - t0
+    row["reporting_overhead_s"] = float(overhead)
+    solver_rt = row.get("solver_runtime_s")
+    if solver_rt is not None:
+        row["end_to_end_runtime_s"] = float(solver_rt) + float(overhead)
+    else:
+        row["end_to_end_runtime_s"] = None
+    row["execution_time_s"] = row.get("end_to_end_runtime_s")
     return row
 
 
@@ -223,7 +246,10 @@ def solve_job(job: dict) -> dict:
             })
             row["station_visits"] = extract_station_visits(inst, routes, meta={**meta, "phase": "phase1"})
             row["route_rows"] = extract_route_rows(inst, routes, meta={**meta, "phase": "phase1"})
-            return _finalize_reporting(row, inst, routes)
+            return _finalize_reporting(
+                row, inst, routes,
+                shared_phase1_iterations=rec.get("iterations"),
+            )
 
         hco_mode = {
             METHOD_FIXED_DETOUR: "detour",
@@ -264,6 +290,7 @@ def solve_job(job: dict) -> dict:
             row["route_rows"] = extract_route_rows(inst, result.routes, meta={**meta, "phase": "final"})
             return _finalize_reporting(
                 row, inst, result.routes, stages=result.stages, validation=result.validation,
+                shared_phase1_iterations=rec.get("iterations"),
             )
 
         if method in (METHOD_PHASE2_PLAIN, METHOD_PHASE2_NOHCO, METHOD_PHASE2_DETOUR, METHOD_PHASE2_HET):
@@ -301,6 +328,7 @@ def solve_job(job: dict) -> dict:
             row["route_rows"] = extract_route_rows(inst, result.routes, meta={**meta, "phase": "final"})
             return _finalize_reporting(
                 row, inst, result.routes, stages=result.stages, validation=result.validation,
+                shared_phase1_iterations=rec.get("iterations"),
             )
 
         raise ValueError(f"unknown method {method}")

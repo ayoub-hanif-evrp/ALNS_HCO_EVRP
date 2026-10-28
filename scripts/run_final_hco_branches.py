@@ -19,22 +19,19 @@ from src.alns_hco.clean_experiments import solve_job  # noqa: E402
 from src.alns_hco.clean_study import compile_clean_study  # noqa: E402
 from src.alns_hco.hyperparameters import HYPERPARAMETERS  # noqa: E402
 from src.common.config import (  # noqa: E402
-    HCO_DEPENDENT_METHODS, METHOD_GI, PHASE2_S, SEEDS, TW_VARIANTS, experiment_config,
+    HCO_DEPENDENT_METHODS, MASTER_FIELDS, METHOD_GI, PHASE2_S, SEEDS, TW_VARIANTS,
+    experiment_config,
 )
 from src.common.paths import hanif_dirs  # noqa: E402
 from src.hanif.loader import REPRESENTATIVE, list_instances  # noqa: E402
 
-SOLUTION_FIELDS = [
-    "instance", "family", "tw", "method", "seed", "phase",
-    "feasible", "served", "unserved", "hard_violations",
-    "k", "distance", "duration", "customer_waiting",
-    "charging_visits", "charged_energy", "station_waiting",
-    "charging_time", "charging_expense",
-    "runtime_s", "termination_reason",
-    "phase1_s", "phase2_s", "phase1_k", "phase1_distance", "phase1_charging_expense",
-    "k_star", "k_frozen_ok", "phase1_checksum", "hco_mode", "eps",
-    "Cch_over_Ech", "Twait_over_Nch", "Tch_over_Ech", "error",
+# Include Round-1/2 reporting fields so post-hoc metrics survive CSV export.
+SOLUTION_FIELDS = list(MASTER_FIELDS) + [
+    "phase", "Cch_over_Ech", "Twait_over_Nch", "Tch_over_Ech",
 ]
+# Preserve stable uniqueness / order
+_seen = set()
+SOLUTION_FIELDS = [f for f in SOLUTION_FIELDS if not (f in _seen or _seen.add(f))]
 
 
 def _jobs(names, methods, seeds, tws, eps: float) -> list[dict]:

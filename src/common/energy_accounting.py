@@ -212,8 +212,55 @@ def account_solution_energy(instance, routes: list) -> SolutionEnergyAccount:
     )
 
 
-def attach_energy_reporting(row: dict, instance, routes: list | None) -> dict:
-    """Merge energy reporting fields into an existing result row (in place)."""
+def _optional_int(value) -> int | None:
+    """Convert to int; treat missing/blank as None (never coerce missing → 0)."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sum_optional_ints(*values: int | None) -> int | None:
+    """Sum known counts; return None only if every input is missing."""
+    known = [v for v in values if v is not None]
+    if not known:
+        return None
+    return int(sum(known))
+
+
+def attach_energy_reporting(
+    row: dict,
+    instance,
+    routes: list | None,
+    *,
+    force: bool = False,
+    account: SolutionEnergyAccount | None = None,
+) -> dict:
+    """Merge energy reporting fields into an existing result row (in place).
+
+    Skips recomputation when energy fields are already present unless ``force``.
+    """
+    already = row.get("propulsion_energy") is not None and row.get("energy_balance_ok") is not None
+    if already and not force and account is None:
+        return row
+    if account is not None:
+        row.update(account.reporting_fields())
+        return row
     if not routes:
         row.setdefault("propulsion_energy", None)
         row.setdefault("enroute_purchased_energy", None)
@@ -229,8 +276,19 @@ def attach_energy_reporting(row: dict, instance, routes: list | None) -> dict:
     return row
 
 
-def attach_search_diagnostics(row: dict, *, stages: dict | None = None, validation: dict | None = None) -> dict:
-    """Attach ALNS iteration / HCO call / timing diagnostics without affecting solves."""
+def attach_search_diagnostics(
+    row: dict,
+    *,
+    stages: dict | None = None,
+    validation: dict | None = None,
+    shared_phase1_iterations: int | None = None,
+) -> dict:
+    """Attach ALNS iteration / HCO call / timing diagnostics without affecting solves.
+
+    Shared Phase-I iteration counts stored on the row (or passed explicitly) are
+    never overwritten by an empty ``stages['phase1']`` block from fixed-route /
+    Phase-II solves that reuse ``start_routes``.
+    """
     stages = stages or {}
     validation = validation or {}
     p1 = stages.get("phase1") or {}
@@ -246,18 +304,41 @@ def attach_search_diagnostics(row: dict, *, stages: dict | None = None, validati
     if not isinstance(act, dict):
         act = getattr(act, "as_dict", lambda: {})()
 
-    row["alns_phase1_iterations"] = p1.get("iterations")
-    row["alns_phase2_iterations"] = p2.get("iterations")
-    row["alns_iterations"] = (
-        (int(p1.get("iterations") or 0) + int(p2.get("iterations") or 0))
-        if (p1.get("iterations") is not None or p2.get("iterations") is not None)
-        else row.get("alns_iterations")
-    )
+    # Prefer live stage counters; fall back to shared / pre-filled row values.
+    p1_iters = _optional_int(p1.get("iterations"))
+    if p1_iters is None:
+        p1_iters = _optional_int(shared_phase1_iterations)
+    if p1_iters is None:
+        p1_iters = _optional_int(row.get("alns_phase1_iterations"))
+
+    p2_iters = _optional_int(p2.get("iterations"))
+    if p2_iters is None:
+        p2_iters = _optional_int(row.get("alns_phase2_iterations"))
+
+    row["alns_phase1_iterations"] = p1_iters
+    row["alns_phase2_iterations"] = p2_iters
+
+    staged_total = sum_optional_ints(p1_iters, p2_iters)
+    if staged_total is not None:
+        row["alns_iterations"] = staged_total
+    else:
+        # Preserve single-loop totals (e.g. ALNS-FR) already set on the row.
+        row["alns_iterations"] = _optional_int(row.get("alns_iterations"))
+
     row["hco_calls"] = act.get("hco_calls", act.get("calls"))
     row["feasible_hco_calls"] = act.get("feasible_hco_calls", act.get("feasible_plans"))
     row["hco_eval_time_s"] = act.get("eval_time_s")
-    row["phase1_runtime_s"] = p1.get("runtime_s", row.get("phase1_s"))
-    row["phase2_runtime_s"] = p2.get("runtime_s", row.get("phase2_s"))
-    # Wall-clock already stored as runtime_s on the row when available.
-    row["execution_time_s"] = row.get("runtime_s")
+
+    p1_rt = _optional_float(p1.get("runtime_s"))
+    if p1_rt is None:
+        p1_rt = _optional_float(row.get("phase1_s"))
+    p2_rt = _optional_float(p2.get("runtime_s"))
+    if p2_rt is None:
+        p2_rt = _optional_float(row.get("phase2_s"))
+    row["phase1_runtime_s"] = p1_rt
+    row["phase2_runtime_s"] = p2_rt
+
+    # Solver wall-clock (excludes post-hoc reporting). Do not invent values.
+    if row.get("solver_runtime_s") is None and row.get("runtime_s") is not None:
+        row["solver_runtime_s"] = _optional_float(row.get("runtime_s"))
     return row

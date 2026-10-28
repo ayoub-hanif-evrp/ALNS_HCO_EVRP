@@ -131,7 +131,7 @@ def solution_row(
         "charging_time": float(metrics.charging_time),
         "charging_expense": float(metrics.charging_expense),
         "runtime_s": float(runtime_s),
-        "execution_time_s": float(runtime_s),
+        "solver_runtime_s": float(runtime_s),
         "phase1_checksum": phase1_checksum,
         "Cch_over_Ech": (
             float(metrics.charging_expense) / float(metrics.charged_energy)
