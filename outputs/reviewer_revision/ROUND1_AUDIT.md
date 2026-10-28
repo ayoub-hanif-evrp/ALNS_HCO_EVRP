@@ -3,7 +3,7 @@
 **Branch:** `reviewer-revision-2026` (never modify `main` for reviewer work)  
 **Git remote:** https://github.com/ayoub-hanif-evrp/ALNS_HCO_EVRP  
 **Base:** `origin/main` @ `e8e7ecf` (never modified for reviewer work)  
-**Branch:** `reviewer-revision-2026` (Round-1 commits only on this branch)  
+**Branch:** [`reviewer-revision-2026`](https://github.com/ayoub-hanif-evrp/ALNS_HCO_EVRP/tree/reviewer-revision-2026) @ `76db85c`  
 **Constraint:** no changes to ALNS operators, HCO decision logic, objectives, or feasibility acceptance.
 
 ---
