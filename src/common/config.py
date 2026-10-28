@@ -70,6 +70,41 @@ MASTER_FIELDS = (
     "phase1_s", "phase2_s", "phase1_k", "phase1_distance", "phase1_charging_expense",
     "k_star", "k_frozen_ok", "phase1_checksum", "hco_mode", "eps",
     "error",
+    # Round-1 reviewer reporting (post-hoc; not used by optimizers)
+    "propulsion_energy",
+    "enroute_purchased_energy",
+    "residual_battery_at_depot",
+    "depot_replenishment_energy",
+    "mean_energy_per_charging_visit",
+    "initial_battery_energy",
+    "energy_balance_ok",
+    "energy_balance_residual",
+    "alns_iterations",
+    "alns_phase1_iterations",
+    "alns_phase2_iterations",
+    "hco_calls",
+    "feasible_hco_calls",
+    "hco_eval_time_s",
+    "execution_time_s",
+)
+
+# Fields computed after the solve; never consulted by ALNS/HCO decisions.
+REPORTING_ONLY_FIELDS = (
+    "propulsion_energy",
+    "enroute_purchased_energy",
+    "residual_battery_at_depot",
+    "depot_replenishment_energy",
+    "mean_energy_per_charging_visit",
+    "initial_battery_energy",
+    "energy_balance_ok",
+    "energy_balance_residual",
+    "alns_iterations",
+    "alns_phase1_iterations",
+    "alns_phase2_iterations",
+    "hco_calls",
+    "feasible_hco_calls",
+    "hco_eval_time_s",
+    "execution_time_s",
 )
 
 

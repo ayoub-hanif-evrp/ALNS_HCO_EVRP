@@ -12,6 +12,7 @@ from src.common.config import (
     METHOD_PHASE2_HET, METHOD_PHASE2_NOHCO, METHOD_PHASE2_PLAIN, METHOD_SA, METHOD_VNS,
     PHASE1_S, PHASE2_S, TOTAL_BUDGET_S,
 )
+from src.common.energy_accounting import attach_energy_reporting, attach_search_diagnostics
 from src.common.paths import hanif_dirs
 from src.hanif.benchmarks.alns import solve_alns
 from src.hanif.benchmarks.greedy import solve_greedy
@@ -22,6 +23,20 @@ from src.hanif.loader import load_hanif
 
 def _family(name: str) -> str:
     return name.split("_")[0]
+
+
+def _finalize_reporting(
+    row: dict,
+    instance,
+    routes: list | None,
+    *,
+    stages: dict | None = None,
+    validation: dict | None = None,
+) -> dict:
+    """Attach post-hoc energy + search diagnostics. Never feeds back into solvers."""
+    attach_energy_reporting(row, instance, routes)
+    attach_search_diagnostics(row, stages=stages, validation=validation)
+    return row
 
 
 def _base_meta(instance_name, tw, method, seed, phase="final") -> dict:
@@ -85,7 +100,10 @@ def solve_job(job: dict) -> dict:
             inst = load_hanif(name, tw)
             out = solve_greedy(inst, deadline=GI_DEADLINE_S)
             meta = _base_meta(name, tw, method, 0)
-            row = solution_row(out["metrics"], meta=meta, runtime_s=out["runtime_s"])
+            row = solution_row(
+                out["metrics"], meta=meta, runtime_s=out["runtime_s"],
+                instance=inst, routes=out["routes"],
+            )
             row.update({
                 "termination_reason": "construction",
                 "phase1_s": None, "phase2_s": None,
@@ -94,30 +112,37 @@ def solve_job(job: dict) -> dict:
             })
             row["station_visits"] = extract_station_visits(inst, out["routes"], meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, out["routes"], meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(row, inst, out["routes"])
 
         if method == METHOD_ALNS_FR:
             inst = load_hanif(name, tw)
             gi = solve_greedy(inst, deadline=GI_DEADLINE_S)
             out = solve_alns(inst, gi["routes"], time_limit_s=TOTAL_BUDGET_S, seed=seed)
             meta = _base_meta(name, tw, method, seed)
-            row = solution_row(out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"])
+            row = solution_row(
+                out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"],
+                instance=inst, routes=out["routes"],
+            )
             row.update({
                 "termination_reason": "time_limit",
                 "phase1_s": None, "phase2_s": None,
                 "phase1_k": None, "phase1_distance": None, "phase1_charging_expense": None,
                 "k_star": None, "k_frozen_ok": True, "hco_mode": None, "eps": None, "error": None,
+                "alns_iterations": out.get("iterations"),
             })
             row["station_visits"] = extract_station_visits(inst, out["routes"], meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, out["routes"], meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(row, inst, out["routes"])
 
         if method == METHOD_VNS:
             inst = load_hanif(name, tw)
             gi = solve_greedy(inst, deadline=GI_DEADLINE_S)
             out = solve_vns(inst, gi["routes"], time_limit_s=TOTAL_BUDGET_S, seed=seed)
             meta = _base_meta(name, tw, method, seed)
-            row = solution_row(out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"])
+            row = solution_row(
+                out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"],
+                instance=inst, routes=out["routes"],
+            )
             row.update({
                 "termination_reason": "time_limit",
                 "phase1_s": None, "phase2_s": None,
@@ -126,14 +151,17 @@ def solve_job(job: dict) -> dict:
             })
             row["station_visits"] = extract_station_visits(inst, out["routes"], meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, out["routes"], meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(row, inst, out["routes"])
 
         if method == METHOD_SA:
             inst = load_hanif(name, tw)
             gi = solve_greedy(inst, deadline=GI_DEADLINE_S)
             out = solve_sa(inst, gi["routes"], time_limit_s=TOTAL_BUDGET_S, seed=seed)
             meta = _base_meta(name, tw, method, seed)
-            row = solution_row(out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"])
+            row = solution_row(
+                out["metrics"], meta=meta, runtime_s=out["runtime_s"] + gi["runtime_s"],
+                instance=inst, routes=out["routes"],
+            )
             row.update({
                 "termination_reason": "time_limit",
                 "phase1_s": None, "phase2_s": None,
@@ -142,15 +170,18 @@ def solve_job(job: dict) -> dict:
             })
             row["station_visits"] = extract_station_visits(inst, out["routes"], meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, out["routes"], meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(row, inst, out["routes"])
 
         if method == METHOD_ALNS_PR:
             inst = load_hanif(name, tw)
             result = solve_alns_hco(inst, mode="alns_pr", phase1_s=TOTAL_BUDGET_S, phase2_s=0.0, seed=seed)
             meta = _base_meta(name, tw, method, seed)
             p1 = result.stages.get("phase1") or {}
-            row = solution_row(result.metrics, meta=meta, runtime_s=result.runtime_s,
-                               phase1_checksum=p1.get("customer_checksum"))
+            row = solution_row(
+                result.metrics, meta=meta, runtime_s=result.runtime_s,
+                phase1_checksum=p1.get("customer_checksum"),
+                instance=inst, routes=result.routes,
+            )
             row.update({
                 "termination_reason": "time_limit",
                 "phase1_s": p1.get("runtime_s"), "phase2_s": None,
@@ -161,7 +192,9 @@ def solve_job(job: dict) -> dict:
             })
             row["station_visits"] = extract_station_visits(inst, result.routes, meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, result.routes, meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(
+                row, inst, result.routes, stages=result.stages, validation=result.validation,
+            )
 
         # Shared Phase I and all dependents
         shared = ensure_shared_phase1(shared_root, instance_name=name, tw=tw, seed=seed)
@@ -174,7 +207,10 @@ def solve_job(job: dict) -> dict:
 
         if method == METHOD_PHASE1_PR15:
             meta = _base_meta(name, tw, method, seed, phase="phase1")
-            row = solution_row(shared["metrics"], meta=meta, runtime_s=rec["phase1_s"], phase1_checksum=chk)
+            row = solution_row(
+                shared["metrics"], meta=meta, runtime_s=rec["phase1_s"], phase1_checksum=chk,
+                instance=inst, routes=routes,
+            )
             row.update({
                 "termination_reason": "shared_phase1",
                 "phase1_s": rec["phase1_s"], "phase2_s": 0.0,
@@ -182,10 +218,12 @@ def solve_job(job: dict) -> dict:
                 "phase1_charging_expense": rec["metrics"]["charging_expense"],
                 "k_star": k_star, "k_frozen_ok": True,
                 "hco_mode": None, "eps": None, "error": None,
+                "alns_phase1_iterations": rec.get("iterations"),
+                "alns_iterations": rec.get("iterations"),
             })
             row["station_visits"] = extract_station_visits(inst, routes, meta={**meta, "phase": "phase1"})
             row["route_rows"] = extract_route_rows(inst, routes, meta={**meta, "phase": "phase1"})
-            return row
+            return _finalize_reporting(row, inst, routes)
 
         hco_mode = {
             METHOD_FIXED_DETOUR: "detour",
@@ -207,8 +245,10 @@ def solve_job(job: dict) -> dict:
             if result.validation.get("customer_checksum") != chk:
                 raise AssertionError("fixed-route HCO changed customer sequence")
             meta = _base_meta(name, tw, method, seed)
-            row = solution_row(result.metrics, meta=meta, runtime_s=result.runtime_s + float(rec["phase1_s"]),
-                               phase1_checksum=chk)
+            row = solution_row(
+                result.metrics, meta=meta, runtime_s=result.runtime_s + float(rec["phase1_s"]),
+                phase1_checksum=chk, instance=inst, routes=result.routes,
+            )
             act = (result.stages.get("postprocess") or {}).get("hco_activity") or result.validation.get("hco_activity")
             row.update({
                 "termination_reason": "fixed_route_hco",
@@ -218,10 +258,13 @@ def solve_job(job: dict) -> dict:
                 "k_star": k_star, "k_frozen_ok": result.validation.get("k_frozen_ok"),
                 "hco_mode": hco_mode, "eps": None, "error": None,
                 "hco_activity": act,
+                "alns_phase1_iterations": rec.get("iterations"),
             })
             row["station_visits"] = extract_station_visits(inst, result.routes, meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, result.routes, meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(
+                row, inst, result.routes, stages=result.stages, validation=result.validation,
+            )
 
         if method in (METHOD_PHASE2_PLAIN, METHOD_PHASE2_NOHCO, METHOD_PHASE2_DETOUR, METHOD_PHASE2_HET):
             result = solve_alns_hco(
@@ -235,9 +278,11 @@ def solve_job(job: dict) -> dict:
                 raise AssertionError(f"Phase II changed K: {result.metrics.used_k} != {k_star}")
             meta = _base_meta(name, tw, method, seed)
             p2 = result.stages.get("phase2") or {}
-            row = solution_row(result.metrics, meta=meta,
-                               runtime_s=result.runtime_s + float(rec["phase1_s"]),
-                               phase1_checksum=chk)
+            row = solution_row(
+                result.metrics, meta=meta,
+                runtime_s=result.runtime_s + float(rec["phase1_s"]),
+                phase1_checksum=chk, instance=inst, routes=result.routes,
+            )
             term = {
                 METHOD_PHASE2_PLAIN: "phase2_plain",
                 METHOD_PHASE2_NOHCO: "phase2_nohco",
@@ -250,10 +295,13 @@ def solve_job(job: dict) -> dict:
                 "k_star": k_star, "k_frozen_ok": result.validation.get("k_frozen_ok"),
                 "hco_mode": hco_mode, "eps": eps, "error": None,
                 "hco_activity": p2.get("hco_activity") or result.validation.get("hco_activity"),
+                "alns_phase1_iterations": rec.get("iterations"),
             })
             row["station_visits"] = extract_station_visits(inst, result.routes, meta={**meta, "phase": "final"})
             row["route_rows"] = extract_route_rows(inst, result.routes, meta={**meta, "phase": "final"})
-            return row
+            return _finalize_reporting(
+                row, inst, result.routes, stages=result.stages, validation=result.validation,
+            )
 
         raise ValueError(f"unknown method {method}")
     except Exception as exc:  # noqa: BLE001 — log failures explicitly

@@ -1,6 +1,14 @@
 # Local full-repo backup created before Hanif-paper cleanup (not pushed)
 archive/
 
+# Large precomputed distance/energy tensors (~17 MB each instance; regenerate via converters)
+**/matrices.npz
+dataset/Hanif/converted_hanif_original_tw/**/matrices.npz
+dataset/Hanif/converted_hanif_relaxed_tw/**/matrices.npz
+
+# Reviewer scratch (keep ROUND*.md; ignore local solver dumps)
+outputs/reviewer_revision/_tmp/
+
 # Python caches and local virtualenvs (root only — do not match src/env/)
 __pycache__/
 *.py[cod]
@@ -44,3 +52,7 @@ outputs/baselines/deterministic_fps_p10_partial/
 outputs/baselines/deterministic_fps_p105/
 outputs/baselines/transformer_search_guide_p11/
 outputs/baselines/paper_full9_holdout/
+
+# Temporary Round-1 staging helpers
+.round1_stash/
+

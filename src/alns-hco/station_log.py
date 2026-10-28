@@ -1,6 +1,7 @@
 """Extract station-visit, route, and solution logs from replayed solutions."""
 from __future__ import annotations
 
+from src.common.energy_accounting import account_route_energy, account_solution_energy
 from src.hanif.model import charging_rate, expected_price, expected_wait
 from src.hanif.replay import customer_sequence, replay_route, replay_solution
 
@@ -74,6 +75,12 @@ def extract_route_rows(instance, routes: list, *, meta: dict) -> list[dict]:
         custs = list(customer_sequence(instance, nodes))
         if not custs:
             continue
+        energy = account_route_energy(
+            instance,
+            list(nodes),
+            list(labels) if labels is not None else None,
+            route_id=route_id,
+        )
         out.append({
             **meta,
             "route_id": int(route_id),
@@ -88,12 +95,27 @@ def extract_route_rows(instance, routes: list, *, meta: dict) -> list[dict]:
             "charging_expense": float(plan.charging_expense),
             "customer_waiting": float(getattr(plan, "customer_waiting", 0.0) or 0.0),
             "hard_violations": int(plan.hard_violations),
+            # Post-hoc energy reporting (does not affect ALNS/HCO)
+            "propulsion_energy": float(energy.propulsion_energy),
+            "enroute_purchased_energy": float(energy.enroute_purchased_energy),
+            "residual_battery_at_depot": float(energy.residual_battery_at_depot),
+            "depot_replenishment_energy": float(energy.depot_replenishment_energy),
+            "mean_energy_per_charging_visit": energy.mean_energy_per_charging_visit,
+            "energy_balance_ok": bool(energy.energy_balance_ok),
         })
     return out
 
 
-def solution_row(metrics, *, meta: dict, runtime_s: float, phase1_checksum: str | None = None) -> dict:
-    return {
+def solution_row(
+    metrics,
+    *,
+    meta: dict,
+    runtime_s: float,
+    phase1_checksum: str | None = None,
+    instance=None,
+    routes: list | None = None,
+) -> dict:
+    row = {
         **meta,
         "feasible": bool(metrics.feasible),
         "served": int(len(metrics.customers)),
@@ -109,6 +131,7 @@ def solution_row(metrics, *, meta: dict, runtime_s: float, phase1_checksum: str 
         "charging_time": float(metrics.charging_time),
         "charging_expense": float(metrics.charging_expense),
         "runtime_s": float(runtime_s),
+        "execution_time_s": float(runtime_s),
         "phase1_checksum": phase1_checksum,
         "Cch_over_Ech": (
             float(metrics.charging_expense) / float(metrics.charged_energy)
@@ -123,3 +146,12 @@ def solution_row(metrics, *, meta: dict, runtime_s: float, phase1_checksum: str 
             if metrics.charged_energy and metrics.charged_energy > 1e-12 else None
         ),
     }
+    if instance is not None and routes is not None:
+        energy = account_solution_energy(instance, routes)
+        row.update(energy.reporting_fields())
+        # Consistency with legacy charged_energy (same charge rule as replay).
+        if abs(float(metrics.charged_energy) - float(energy.enroute_purchased_energy)) > 1e-6:
+            row["charged_energy_vs_enroute_delta"] = (
+                float(metrics.charged_energy) - float(energy.enroute_purchased_energy)
+            )
+    return row
