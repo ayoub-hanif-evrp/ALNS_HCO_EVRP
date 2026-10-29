@@ -1,53 +1,31 @@
 {
-  "n_raw": 6720,
-  "n7": 3720,
-  "schneider_diag": {
-    "n_exports": 3,
-    "n_replay_ok": 3
-  },
-  "figure_check": {
-    "ok": true,
-    "checks": [
-      {
-        "figure": "Figure2",
-        "png": true,
-        "pdf": true,
-        "csv_rows": 16,
-        "ok": true
-      },
-      {
-        "figure": "Figure3",
-        "png": true,
-        "pdf": true,
-        "csv_rows": 16,
-        "ok": true
-      },
-      {
-        "figure": "Figure4",
-        "png": true,
-        "pdf": true,
-        "csv_rows": 16,
-        "ok": true
-      },
-      {
-        "figure": "Figure5",
-        "png": true,
-        "pdf": true,
-        "json_matches_T5_C1": true,
-        "ok": true
-      }
-    ]
-  },
-  "validation": {
-    "pytest_ok": true,
-    "pytest_tail": "52 passed, 10 skipped in 7.73s",
-    "algo_diff_ok": true,
-    "algo_diff": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1544",
-    "energy_identity_t6_ok": 24,
-    "energy_identity_t6_n": 24,
-    "raw_n": 6720,
+  "audit": {
+    "n_raw": 6720,
+    "n7": 3720,
     "raw_dups": 0,
-    "n7": 3720
+    "phase1_het_identity": 584,
+    "nohco_het_cch": {
+      "improved": 16,
+      "unchanged": 501,
+      "worsened": 83
+    },
+    "policy": {
+      "scope": "all_seed01_archives",
+      "n": 240,
+      "partial_feasible": 240,
+      "full_feasible": 42,
+      "both_feasible": 42,
+      "partial_ok_full_infeasible": 198
+    },
+    "energy_identity_t6": "24/24",
+    "figure5_matches_t5": true,
+    "tw_separated_frpr": true,
+    "external_verifier_valid_collapsed": 3,
+    "external_verifier_hard_invalid": 2,
+    "pytest_ok": true,
+    "pytest_tail": "52 passed, 10 skipped in 7.39s",
+    "algo_diff_ok": true,
+    "algo_diff": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1561"
   },
   "authoritative": "FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md"
 }

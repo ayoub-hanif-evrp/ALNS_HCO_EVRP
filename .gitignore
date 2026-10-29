@@ -56,3 +56,13 @@ outputs/baselines/paper_full9_holdout/
 # Temporary Round-1 staging helpers
 .round1_stash/
 
+
+# Portable toolchain for Schneider external verifier (regenerate locally; do not push JDK/Maven binaries)
+outputs/reviewer_revision/tools/jdk17/
+outputs/reviewer_revision/tools/apache-maven/
+outputs/reviewer_revision/tools/*.zip
+outputs/reviewer_revision/tools/evrptw-verifier/target/*
+!outputs/reviewer_revision/tools/evrptw-verifier/target/*.jar
+
+outputs/reviewer_revision/tools/evrptw-verifier/
+
