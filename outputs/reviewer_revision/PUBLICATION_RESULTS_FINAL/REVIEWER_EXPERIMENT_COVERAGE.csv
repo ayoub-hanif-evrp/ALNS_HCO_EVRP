@@ -1,13 +1,12 @@
 request,status,artifact
-HCO contribution ablation five-seed,SATISFIED WITH VERIFIED EVIDENCE,HCO_CONTRIBUTION_AND_SENSITIVITY.md / HCO_* tables
-Parameter sensitivity (candidates/eps/split),SATISFIED WITH VERIFIED EVIDENCE,"k in {2,5,8} identical on Dev subset; eps/split existing ties; k=5 fixed choice not optimum"
-FR/PR fairness / isolation,PARTIALLY SATISFIED WITH LIMITATION,FAIR_COMPARISON_AUDIT.md — stacks differ; not isolated policy
-Longer-budget convergence 288,SATISFIED WITH VERIFIED EVIDENCE,T8_* / primary288
-Schneider full coverage 56,SATISFIED WITH VERIFIED EVIDENCE,T7_* 336/264/72
-Schneider failure diagnosis,SATISFIED WITH VERIFIED EVIDENCE,Round4 replay_route + SCHNEIDER_DIAGNOSTIC_REPORT
-Schneider longer-budget hard set,SATISFIED WITH VERIFIED EVIDENCE,schneider_hard_120s/ — 72/72 completed; 0 feasible (unserved=1); time not the limiter
-Schneider numerical BKS gaps,NOT SATISFIED,convention mismatch documented
-Energy accounting identity,SATISFIED WITH VERIFIED EVIDENCE,T6_*
-Economic post-hoc sensitivity,SATISFIED WITH VERIFIED EVIDENCE,T9_*
-Five-seed primary Hanif tables/figures,SATISFIED WITH VERIFIED EVIDENCE,PUBLICATION_RESULTS_FINAL
-Word results fully integrated,PARTIALLY SATISFIED WITH LIMITATION,ALNS-HCO-PAPER_RESULTS_REVISED.docx — see FINAL_SCIENTIFIC_AUDIT
+FR/PR fairness code-path correction,SATISFIED — VERIFIED,FR_PR_FAIRNESS_CORRECTED.md
+Isolated full vs partial same-route experiment,SATISFIED — VERIFIED,FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv (both_feasible=42/240)
+Schneider 56 coverage + failures retained,SATISFIED — VERIFIED,T7_* primary 336/264/72
+Schneider hard-instance root cause (customer IDs),SATISFIED — VERIFIED,SCHNEIDER_FAILURE_ROOT_CAUSE.md / unserved diag
+Schneider deep source fidelity,SATISFIED — VERIFIED,Schneider_source_field_fidelity.csv
+Schneider published BKS gap table,NOT SATISFIED — MISSING EVIDENCE,SCHNEIDER_BENCHMARK_COMPARABILITY.md — rounding/route-archive barriers
+HCO contribution five-seed,SATISFIED — VERIFIED,HCO_FINAL_CONTRIBUTION.md
+HCO hyperparameter optimality,PARTIAL — EXPLICIT LIMITATION,k=5 fixed choice; identical metrics for 2/5/8
+Convergence 288,SATISFIED — VERIFIED,T8_*
+Energy/economic accounting,SATISFIED — VERIFIED,T6_*/T9_*
+Word Results integration (in-place),PARTIAL — EXPLICIT LIMITATION,ALNS-HCO-PAPER_RESULTS_REVISED.docx (pdf=skipped:ModuleNotFoundError)

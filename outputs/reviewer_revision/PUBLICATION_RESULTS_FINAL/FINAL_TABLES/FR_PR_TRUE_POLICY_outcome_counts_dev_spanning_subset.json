@@ -1,0 +1,8 @@
+{
+  "scope": "dev_spanning_subset",
+  "n": 24,
+  "partial_feasible": 24,
+  "full_feasible": 1,
+  "both_feasible": 1,
+  "partial_ok_full_infeasible": 23
+}

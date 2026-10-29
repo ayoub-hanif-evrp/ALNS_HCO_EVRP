@@ -1,0 +1,8 @@
+{
+  "scope": "all_seed01_archives",
+  "n": 240,
+  "partial_feasible": 240,
+  "full_feasible": 42,
+  "both_feasible": 42,
+  "partial_ok_full_infeasible": 198
+}

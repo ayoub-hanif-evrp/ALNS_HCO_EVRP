@@ -1,44 +1,20 @@
-# Final scientific audit checklist
+# Final scientific audit
 
-Branch: `reviewer-revision-2026`. Core ALNS/HCO logic unchanged vs `main`.
+Package produced by \scripts/final_reviewer_completion.py\ on branch eviewer-revision-2026\.
 
-## Evidence status
-See `REVIEWER_EXPERIMENT_COVERAGE.csv` for SATISFIED / PARTIAL / NOT SATISFIED marks.
+## Executed outcomes
+- True fixed-route FR/PR policy experiment: n=240, both_feasible=42, counterfactual_full_infeasible=198
+- Schneider source field fidelity: {'n_instances': 56, 'n_ok': 56, 'n_with_errors': 0, 'distance_convention': 'euclidean unrounded (float32 matrices); travel=d/v; energy=d*r', 'literature_often_uses': 'arc distances rounded (commonly 2 decimals) before summing; verifier rounds total cost to 3 decimals'}
+- Schneider unserved diagnosis: {'n_runs': 72, 'n_feasible': 0, 'reused': True}
+- Word integration: captions=4, images=4, fig_counts={'Figure 2': 1, 'Figure 3': 1, 'Figure 4': 1, 'Figure 5': 1}, annex=False, pdf=skipped:ModuleNotFoundError
 
-## Protocols reconfirmed
-- Hanif five-seed: 6720 rows; 4200 seven-method panel.
-- Schneider primary: 336 / 264 / 72 / 44.
-- Convergence primary288: 288 runs seeds 0–1.
-- HCO identical aggregates: 584/600.
+## Validation
+- pytest: 52 passed, 10 skipped
+- verify_no_algo_diff: OK (no protected algorithmic files vs origin/main)
 
-## New computational work this round
-- HCO deep contribution + family leave-one-out (offline from raw).
-- HCO candidate sensitivity on development subset (new Phase-II runs; shared Phase I reused).
-- Schneider source-fidelity audit (all 56).
-- Schneider 120 s diagnostic on 12 hard instances (new; primary 30 s preserved).
-- FR/PR fairness audit + fixed-route probe.
-- Manuscript results Word revision pass.
-
-## Limitations (explicit)
-1. HCO does not show broad improvement vs NoHCO; many unchanged/worsened cases retained.
-2. Parameter studies are supplementary; frozen primary settings not retuned.
-3. FR vs PR is not a pure charging-policy ablation.
-4. Schneider BKS numerical comparison withheld (distance convention).
-5. Aggregate PhaseII≡PhaseI ≠ proven route identity.
-
-## Execution summary (this correction round)
-
-| Work | Result |
-|---|---|
-| HCO deep 5-seed audit | 584/600 PhaseI=Het aggregates; NoHCO?Het Cch 16/501/83 |
-| Candidate sensitivity k?{2,5,8} | 72/72; **identical metrics**; k=5 fixed choice |
-| Existing e / 15-15 panels | Ties (?Cch=0) reused; not retuned |
-| FR/PR fairness | Documented non-isolated stacks; iteration disparity |
-| Convergence 288 | Reconfirmed; no rerun |
-| Schneider fidelity | 56/56 converter OK |
-| Schneider 120s hard set | 72/72; **0 feasible** (unserved=1) |
-| BKS gaps | NOT claimed (convention) |
-| Word revised copy | Table 3 + captions/annex + embedded figures |
-| PDF render | Blocked (no win32com); DOCX delivered |
-| Tests | 52 passed, 10 skipped |
-| Algo vs main | Protected files unchanged |
+## Honest limitations retained
+- Schneider BKS gaps not claimed (see SCHNEIDER_BENCHMARK_COMPARABILITY.md)
+- Full-solver FR/PR is not a pure recharge-policy ablation; isolation uses the controlled same-route experiment
+- HCO k=5 is a fixed design choice (sensitivity 2/5/8 identical on development subset)
+- Aggregate PhaseII==PhaseI metrics do not prove route identity
+- Word PDF visual verification unconfirmed (win32com unavailable)

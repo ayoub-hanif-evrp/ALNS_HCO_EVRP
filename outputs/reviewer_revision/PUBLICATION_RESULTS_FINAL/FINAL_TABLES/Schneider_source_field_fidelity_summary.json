@@ -1,0 +1,7 @@
+{
+  "n_instances": 56,
+  "n_ok": 56,
+  "n_with_errors": 0,
+  "distance_convention": "euclidean unrounded (float32 matrices); travel=d/v; energy=d*r",
+  "literature_often_uses": "arc distances rounded (commonly 2 decimals) before summing; verifier rounds total cost to 3 decimals"
+}

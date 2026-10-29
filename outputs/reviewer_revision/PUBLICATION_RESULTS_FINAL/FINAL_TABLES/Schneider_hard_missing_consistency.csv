@@ -1,0 +1,13 @@
+instance,n_runs,n_feasible,unique_missing_sets,most_common_missing,most_common_count,always_same_single_customer
+r101_21,6,0,1,C65,6,True
+r102_21,6,0,1,C65,6,True
+r103_21,6,0,1,C65,6,True
+r105_21,6,0,1,C65,6,True
+r106_21,6,0,1,C65,6,True
+r108_21,6,0,1,C64,6,True
+rc101_21,6,0,1,C75,6,True
+rc103_21,6,0,1,C75,6,True
+rc104_21,6,0,1,C75,6,True
+rc105_21,6,0,1,C75,6,True
+rc106_21,6,0,1,C75,6,True
+rc107_21,6,0,1,C75,6,True

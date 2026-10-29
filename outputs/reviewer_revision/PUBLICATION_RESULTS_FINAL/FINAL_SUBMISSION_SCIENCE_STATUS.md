@@ -1,0 +1,20 @@
+# Final submission science status
+
+- **FR/PR fairness code-path correction**: SATISFIED — VERIFIED — FR_PR_FAIRNESS_CORRECTED.md
+- **Isolated full vs partial same-route experiment**: SATISFIED — VERIFIED — FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv (both_feasible=42/240)
+- **Schneider 56 coverage + failures retained**: SATISFIED — VERIFIED — T7_* primary 336/264/72
+- **Schneider hard-instance root cause (customer IDs)**: SATISFIED — VERIFIED — SCHNEIDER_FAILURE_ROOT_CAUSE.md / unserved diag
+- **Schneider deep source fidelity**: SATISFIED — VERIFIED — Schneider_source_field_fidelity.csv
+- **Schneider published BKS gap table**: NOT SATISFIED — MISSING EVIDENCE — SCHNEIDER_BENCHMARK_COMPARABILITY.md — rounding/route-archive barriers
+- **HCO contribution five-seed**: SATISFIED — VERIFIED — HCO_FINAL_CONTRIBUTION.md
+- **HCO hyperparameter optimality**: PARTIAL — EXPLICIT LIMITATION — k=5 fixed choice; identical metrics for 2/5/8
+- **Convergence 288**: SATISFIED — VERIFIED — T8_*
+- **Energy/economic accounting**: SATISFIED — VERIFIED — T6_*/T9_*
+- **Word Results integration (in-place)**: PARTIAL — EXPLICIT LIMITATION — ALNS-HCO-PAPER_RESULTS_REVISED.docx (pdf=skipped:ModuleNotFoundError)
+
+## Remaining limitations
+- Numerical Schneider BKS gaps not claimed (distance rounding / missing route archives).
+- FR/PR full-solver comparison is not a pure policy ablation (operators differ); isolation uses the controlled same-route experiment.
+- HCO candidate count 5 is a fixed design choice.
+- Aggregate PhaseII≡PhaseI does not prove route identity.
+- Word PDF render: skipped:ModuleNotFoundError.

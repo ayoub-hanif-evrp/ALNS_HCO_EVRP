@@ -1,0 +1,46 @@
+{
+  "job_id": "ALNS-FR|r103_21|schneider|seed1|30s",
+  "job": {
+    "instance_name": "r103_21",
+    "method": "ALNS-FR",
+    "seed": 1,
+    "budget_s": 30.0,
+    "tw": "schneider"
+  },
+  "row": {
+    "instance": "r103_21",
+    "method": "ALNS-FR",
+    "seed": 1,
+    "budget_s": 30.0,
+    "feasible": false,
+    "unserved": 1,
+    "missing_customer_indices": [
+      65
+    ],
+    "missing_customer_string_ids": [
+      "C65"
+    ],
+    "k": 16,
+    "distance": 1704.012032866478,
+    "hard_violations": 0,
+    "duplicates": 0,
+    "failure": "unserved=1",
+    "gi_runtime_s": 0.06077529978938401,
+    "solver_runtime_s": 30.001031099818647,
+    "alns_iterations": 5858,
+    "missing_detail": [
+      {
+        "customer_index": 65,
+        "string_id": "C65",
+        "solo_feasible": false,
+        "solo_failure": "battery_arrival node=0",
+        "station_assisted_feasible": false,
+        "example_station": null
+      }
+    ],
+    "study": "schneider_hard_unserved_diag",
+    "error": null
+  },
+  "saved_utc": "2026-10-29T17:22:34Z",
+  "error": null
+}
