@@ -1,0 +1,16 @@
+artifact,kind,dataset,seeds,instances,methods,statistic,script
+T3_overall_routing_performance.csv,table,solution_results.csv,0-4 (GI:0),60×2 TW,"GI,VNS,SA,ALNS-FR/PR,+HCO suite",instance-mean then mean,build_publication_results_final.py
+T_partial_recharging_FR_vs_PR.csv,table,solution_results.csv,0-4,60 per TW,ALNS-FR→ALNS-PR,paired % + bootstrap CI,build_publication_results_final.py
+T_fixed_route_Detour_vs_Heterogeneous.csv,table,solution_results.csv,0-4,60 per TW,FixedRoute Detour→Het,paired % + CI,build_publication_results_final.py
+T_phase2_NoHCO_vs_Heterogeneous.csv,table,solution_results.csv,0-4,60 per TW,NoHCO→Het,paired % + CI,build_publication_results_final.py
+T4_HCO_contribution_counts_seeds0to4.csv,table,solution_results.csv,0-4,600 matched,PhaseI/NoHCO/Het,improved/unchanged/worsened,build_publication_results_final.py
+T5_family_HCO_effects.csv,table,solution_results.csv,0-4,10/family,several,mean paired %,build_publication_results_final.py
+T6_energy_accounting.csv,table,solution_results + identity,0-4,60×2,all METHOD_ORDER,means; depot reconstructed,build_publication_results_final.py
+T7_Schneider_*,table,schneider/,0-2,56 / 44 paired,"FR,PR",feasibility + paired,copied+validated
+T8_*,table,primary288,0-1,12×2 TW,"FR,PR",paired + gap Δ,copied+validated
+T9_economic_sensitivity_posthoc.csv,table,5-seed+energy,0-4,60×2,"FR,PR,Phase*",post-hoc means,build_publication_results_final.py
+Figure2_*,figure,T_partial_recharging,0-4,60,FR→PR,forest CI,build_publication_results_final.py
+Figure3_*,figure,T_fixed_route,0-4,60,Detour→Het,forest CI,build_publication_results_final.py
+Figure4_*,figure,T_phase2_NoHCO,0-4,60,NoHCO→Het,forest CI,build_publication_results_final.py
+Figure5_*,figure,T5 family phase2_nohco_hco,0-4,10/family,NoHCO→Het,family means only,build_publication_results_final.py
+FigS_FR_PR_convergence_*,figure,primary288,0-1,12,"FR,PR",budget curves,plot_fr_pr_convergence

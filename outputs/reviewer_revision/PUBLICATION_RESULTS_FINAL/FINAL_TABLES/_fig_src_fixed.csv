@@ -1,0 +1,17 @@
+tw,baseline,treatment,metric,n,mean_A,mean_B,mean_abs_diff,mean_paired_pct,median_paired_pct,ci95_lo,ci95_hi,wins,ties,losses,wilcoxon_p,pct_definition
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,k,60,71.09333333333333,71.09333333333333,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,distance,60,50246.91042315682,50251.041248540874,4.1308253840602145,0.007811093521492596,0.0,0.0022250781834869528,0.01412337816387044,0,53,7,0.015625,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,duration,60,171149.07389794308,171171.82866751222,22.75476956912656,0.014294847470378966,0.0,0.004432476115063797,0.025989972406317747,0,53,7,0.015625,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_visits,60,64.49333333333333,64.49333333333333,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charged_energy,60,19608.8581694305,19613.020528175075,4.16235874457949,0.1416309255795696,0.0,0.029347676877349422,0.2919762438555214,0,53,7,0.015625,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,station_waiting,60,971.9140898195903,968.0944484333197,-3.8196413862705234,-1.2525633764526676,0.0,-2.2714923840757284,-0.3583556569228277,7,53,0,0.015625,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_time,60,16829.473055815546,16851.916641386884,22.44358557133627,0.7767081625414766,0.0,0.19405124327121423,1.5087006940244387,0,53,7,0.015625,mean of instance-level 100*(B-A)/A
+original,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_expense,60,10818.764380519722,10813.03454265551,-5.729837864213738,-0.3735529245904427,0.0,-0.7127869231017523,-0.10499813722383246,7,53,0,0.015625,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,k,60,63.17666666666666,63.17666666666666,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,distance,60,51029.71984236677,51029.71984236677,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,duration,60,151929.89640233055,151929.89640233055,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_visits,60,93.68666666666667,93.68666666666667,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charged_energy,60,25643.360181028325,25643.360181028325,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,station_waiting,60,1409.885870908896,1409.885870908896,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_time,60,22187.131548706373,22187.131548706373,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A
+relaxed,FixedRoute-HCO-Detour,FixedRoute-HCO-Heterogeneous,charging_expense,60,13970.026696049847,13970.026696049847,0.0,0.0,0.0,0.0,0.0,0,60,0,,mean of instance-level 100*(B-A)/A

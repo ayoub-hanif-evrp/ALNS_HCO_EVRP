@@ -1,0 +1,17 @@
+{
+  "depot_tariffs": [
+    0.0,
+    0.1,
+    0.2,
+    0.5
+  ],
+  "wages_per_duration": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "optimizer_changed": false,
+  "seeds": "0-4",
+  "claim_restriction": "Hypothetical post-hoc totals. ALNS/HCO do not optimize these objectives."
+}

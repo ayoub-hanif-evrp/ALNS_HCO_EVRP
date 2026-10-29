@@ -1,0 +1,8 @@
+{
+  "n_matched_phase1_het": 600,
+  "n_identical_aggregate_K_distance_charged_energy": 584,
+  "fraction_identical": 0.9733333333333334,
+  "expected_n": 600,
+  "route_identity_claimed": false,
+  "note": "Matching aggregates does not prove identical routes."
+}

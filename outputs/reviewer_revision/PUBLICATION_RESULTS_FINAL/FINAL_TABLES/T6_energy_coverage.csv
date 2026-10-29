@@ -1,0 +1,13 @@
+method,n,has_depot,has_residual,balance_ok,negative_depot_or_residual
+GI,120,120,120,120,0
+VNS,600,600,600,600,0
+SA,600,600,600,600,0
+ALNS-FR,600,600,600,600,0
+ALNS-PR,600,600,600,600,0
+PhaseI-PR-15,600,600,600,600,0
+FixedRoute-HCO-Detour,600,600,600,600,0
+FixedRoute-HCO-Heterogeneous,600,600,600,600,0
+PhaseII-NoHCO,600,600,600,600,0
+PhaseII-Plain,600,600,600,600,0
+PhaseII-Detour,600,600,600,600,0
+PhaseII-Heterogeneous,600,600,600,600,0
