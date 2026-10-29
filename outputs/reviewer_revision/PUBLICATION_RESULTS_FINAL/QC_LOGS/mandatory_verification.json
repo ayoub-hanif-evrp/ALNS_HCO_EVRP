@@ -1,0 +1,85 @@
+{
+  "checks": [
+    {
+      "name": "pytest",
+      "ok": true,
+      "detail": [
+        "52 passed, 10 skipped in 7.38s"
+      ]
+    },
+    {
+      "name": "verify_no_algo_diff",
+      "ok": true,
+      "detail": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1515"
+    },
+    {
+      "name": "hanif_raw_keys",
+      "ok": true,
+      "detail": "rows=6720 unique=6720 dups=0"
+    },
+    {
+      "name": "convergence_288_keys",
+      "ok": true,
+      "detail": "rows=288 unique=288 dups=0"
+    },
+    {
+      "name": "schneider_t7_present",
+      "ok": true,
+      "detail": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\FINAL_TABLES\\T7_Schneider_feasibility_336.csv"
+    },
+    {
+      "name": "word_figures_unique",
+      "ok": false,
+      "detail": {
+        "path": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+        "n_captions_updated": 4,
+        "n_images_inserted": 4,
+        "n_duplicate_captions_removed": 1,
+        "n_text_patches": 6,
+        "n_supp_tables_added": 5,
+        "figure_caption_counts": {
+          "Figure 2": 1,
+          "Figure 3": 1,
+          "Figure 4": 1,
+          "Figure 5": 1
+        },
+        "broken_empty_percentage_sentences": 3,
+        "inline_image_rels": 9,
+        "annex_present": false,
+        "n_tables_total": 15,
+        "pdf_status": "skipped:ModuleNotFoundError+ModuleNotFoundError"
+      }
+    },
+    {
+      "name": "policy_experiment_reverified",
+      "ok": true,
+      "detail": {
+        "n_csv_rows": 240,
+        "n_partial_feasible": 240,
+        "n_both_feasible": 42,
+        "n_partial_ok_full_infeasible": 198,
+        "n_replay_checked": 83,
+        "n_mismatches": 0,
+        "mismatches": [],
+        "energy_identity_ok": 166,
+        "paired_ci_reverified_match": "10/10",
+        "design_note": "Fixes customer order and station visit locations; only recharge alpha changes. A free full-recharge solver could choose different routes/stations."
+      }
+    },
+    {
+      "name": "schneider_full_matrix_fidelity",
+      "ok": true,
+      "detail": {
+        "n_instances": 56,
+        "n_ok": 56,
+        "checks": "g,v,Q,C,r, charging_rate=1/g, ALL distance/time/energy matrix entries vs Euclidean hypot/v/r",
+        "distance_convention": "unrounded Euclidean float32; travel=d/v; energy=d*r"
+      }
+    },
+    {
+      "name": "t6_energy_table",
+      "ok": true,
+      "detail": "n=24"
+    }
+  ]
+}

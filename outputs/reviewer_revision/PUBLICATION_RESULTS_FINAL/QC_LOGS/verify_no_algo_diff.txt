@@ -1,0 +1,3 @@
+OK: no protected algorithmic files in diff vs origin/main / working tree
+changed_count 1515
+

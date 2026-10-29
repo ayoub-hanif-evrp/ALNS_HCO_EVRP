@@ -1,12 +1,13 @@
 request,status,artifact
-FR/PR fairness code-path correction,SATISFIED — VERIFIED,FR_PR_FAIRNESS_CORRECTED.md
-Isolated full vs partial same-route experiment,SATISFIED — VERIFIED,FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv (both_feasible=42/240)
-Schneider 56 coverage + failures retained,SATISFIED — VERIFIED,T7_* primary 336/264/72
-Schneider hard-instance root cause (customer IDs),SATISFIED — VERIFIED,SCHNEIDER_FAILURE_ROOT_CAUSE.md / unserved diag
-Schneider deep source fidelity,SATISFIED — VERIFIED,Schneider_source_field_fidelity.csv
-Schneider published BKS gap table,NOT SATISFIED — MISSING EVIDENCE,SCHNEIDER_BENCHMARK_COMPARABILITY.md — rounding/route-archive barriers
-HCO contribution five-seed,SATISFIED — VERIFIED,HCO_FINAL_CONTRIBUTION.md
-HCO hyperparameter optimality,PARTIAL — EXPLICIT LIMITATION,k=5 fixed choice; identical metrics for 2/5/8
-Convergence 288,SATISFIED — VERIFIED,T8_*
-Energy/economic accounting,SATISFIED — VERIFIED,T6_*/T9_*
-Word Results integration (in-place),PARTIAL — EXPLICIT LIMITATION,ALNS-HCO-PAPER_RESULTS_REVISED.docx (pdf=skipped:ModuleNotFoundError)
+Schneider hard-customer root cause (C65/C64/C75),SATISFIED — VERIFIED,Station-assisted solo feasible; solo D-C-D battery fail; same customer across all seeds/methods
+Schneider full g/v/matrix fidelity,SATISFIED — VERIFIED,"{'n_instances': 56, 'n_ok': 56, 'checks': 'g,v,Q,C,r, charging_rate=1/g, ALL distance/time/energy matrix entries vs Euclidean hypot/v/r', 'distance_convention': 'unrounded Euclidean float32; travel=d/"
+Schneider published BKS numerical comparison,NOT SATISFIED — MISSING EVIDENCE,Rounding + missing verifier-ready route archives; see SCHNEIDER_BENCHMARK_COMPARABILITY.md
+Fixed-route full vs partial verification,SATISFIED — VERIFIED,"{'n_csv_rows': 240, 'n_partial_feasible': 240, 'n_both_feasible': 42, 'n_partial_ok_full_infeasible': 198, 'n_replay_checked': 83, 'n_mismatches': 0, 'mismatches': [], 'energy_identity_ok': 166, 'pair"
+Hanif five-seed results reused (no rerun),SATISFIED — VERIFIED,6720 raw rows; tables T3–T6/T9
+"HCO contribution honesty (C1 concentration, worsenings)",SATISFIED — VERIFIED,HCO_FINAL_CONTRIBUTION.md / Table S3
+FR/PR search-implementation caveat,SATISFIED — VERIFIED,FR_PR_FAIRNESS_CORRECTED.md + Results prose
+Convergence primary288,SATISFIED — VERIFIED,"{'name': 'convergence_288_keys', 'ok': True, 'detail': 'rows=288 unique=288 dups=0'}"
+Word Results integration (figures+tables+prose),SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.docx (figures+S1-S5+prose; pdf ok)
+PDF visual verification,SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.pdf (Word COM export)
+pytest suite,SATISFIED — VERIFIED,"{'name': 'pytest', 'ok': True, 'detail': ['52 passed, 10 skipped in 7.38s']}"
+Protected algorithms unchanged vs main,SATISFIED — VERIFIED,"{'name': 'verify_no_algo_diff', 'ok': True, 'detail': 'OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1515'}"

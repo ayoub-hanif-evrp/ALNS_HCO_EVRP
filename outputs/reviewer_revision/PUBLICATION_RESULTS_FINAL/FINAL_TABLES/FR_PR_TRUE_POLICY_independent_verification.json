@@ -1,0 +1,12 @@
+{
+  "n_csv_rows": 240,
+  "n_partial_feasible": 240,
+  "n_both_feasible": 42,
+  "n_partial_ok_full_infeasible": 198,
+  "n_replay_checked": 83,
+  "n_mismatches": 0,
+  "mismatches": [],
+  "energy_identity_ok": 166,
+  "paired_ci_reverified_match": "10/10",
+  "design_note": "Fixes customer order and station visit locations; only recharge alpha changes. A free full-recharge solver could choose different routes/stations."
+}

@@ -1,15 +1,28 @@
 # Schneider source and route validation
 
-## Field-level source fidelity
-Checked all 56 large instances: customer/station coordinates, demands, time windows,
-service times, depot bounds, Q/C/r/g/v, and unrounded Euclidean arc probe.
+## Full matrix + parameter fidelity (this round)
+Checked all 56 instances for **g, v, Q, C, r**, charging rate (=1/g), and **all** distance/time/energy matrix entries against Euclidean source.
 **OK: 56 / 56.**
-Distance convention: euclidean unrounded (float32 matrices); travel=d/v; energy=d*r.
+Convention: unrounded Euclidean float32; travel=d/v; energy=d*r.
+Detail: `FINAL_TABLES/Schneider_source_full_matrix_fidelity.csv`.
 
-Detail: `FINAL_TABLES/Schneider_source_field_fidelity.csv`.
+## Hard-customer insertion diagnosis
+For each of the 12 hard instances, the repeatedly missing customer admits a **station-assisted solo route** under full recharge, but fails depot–customer–depot on battery (round-trip energy exceeds Q). Instance-level unserved=1 across methods/seeds is therefore classified as a **search/construction limitation**, not a converter bug and not a proof of official-instance infeasibility.
 
-## Unserved-customer diagnosis (30 s, seeds 0–2, FR & PR)
-Runs: 72; feasible among them: 0.
-See `Schneider_hard_unserved_customer_ids.csv` and `Schneider_hard_missing_consistency.csv`.
+| Instance | Customer | TW width | Solo D–C–D | Assisted patterns feasible |
+|---|---|---:|---|---:|
+| r101_21 | C65 | 10 | no (battery_arrival node=0) | 2 |
+| r102_21 | C65 | 10 | no (battery_arrival node=0) | 2 |
+| r103_21 | C65 | 10 | no (battery_arrival node=0) | 2 |
+| r105_21 | C65 | 30 | no (battery_arrival node=0) | 3 |
+| r106_21 | C65 | 30 | no (battery_arrival node=0) | 3 |
+| r108_21 | C64 | 30 | no (battery_arrival node=0) | 4 |
+| rc101_21 | C75 | 30 | no (battery_arrival node=0) | 3 |
+| rc103_21 | C75 | 158 | no (battery_arrival node=0) | 4 |
+| rc104_21 | C75 | 158 | no (battery_arrival node=0) | 4 |
+| rc105_21 | C75 | 29 | no (battery_arrival node=0) | 3 |
+| rc106_21 | C75 | 60 | no (battery_arrival node=0) | 4 |
+| rc107_21 | C75 | 74 | no (battery_arrival node=0) | 4 |
 
-120 s diagnostic (prior round): 72/72 still infeasible with unserved=1 — longer time did not resolve failures.
+Unserved-customer IDs: `Schneider_hard_unserved_customer_ids.csv`.
+120 s diagnostic (prior): 72/72 still unserved=1.

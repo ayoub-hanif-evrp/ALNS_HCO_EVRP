@@ -1,0 +1,6 @@
+{
+  "n_instances": 56,
+  "n_ok": 56,
+  "checks": "g,v,Q,C,r, charging_rate=1/g, ALL distance/time/energy matrix entries vs Euclidean hypot/v/r",
+  "distance_convention": "unrounded Euclidean float32; travel=d/v; energy=d*r"
+}
