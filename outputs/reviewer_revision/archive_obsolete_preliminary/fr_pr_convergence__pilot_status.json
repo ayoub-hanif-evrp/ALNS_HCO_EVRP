@@ -1,0 +1,33 @@
+{
+  "mode": "pilot",
+  "n_jobs_planned": 6,
+  "instances": [
+    "C1_10_1",
+    "R1_10_1",
+    "RC2_10_1"
+  ],
+  "budgets_s": [
+    30.0
+  ],
+  "seeds": [
+    0
+  ],
+  "tw": [
+    "original"
+  ],
+  "started_utc": "2026-10-28T14:32:25Z",
+  "completed": [
+    "ALNS-FR|C1_10_1|original|seed0|30.0s",
+    "ALNS-PR|C1_10_1|original|seed0|30.0s",
+    "ALNS-FR|R1_10_1|original|seed0|30.0s",
+    "ALNS-PR|R1_10_1|original|seed0|30.0s",
+    "ALNS-FR|RC2_10_1|original|seed0|30.0s",
+    "ALNS-PR|RC2_10_1|original|seed0|30.0s"
+  ],
+  "failed": [],
+  "finished_utc": "2026-10-28T14:35:30Z",
+  "wall_s": 184.70489930012263,
+  "n_completed": 6,
+  "n_failed": 0,
+  "incomplete": false
+}

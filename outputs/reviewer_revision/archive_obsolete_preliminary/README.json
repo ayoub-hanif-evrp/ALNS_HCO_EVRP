@@ -1,0 +1,7 @@
+{
+  "purpose": "Obsolete/preliminary status files superseded by Round 4\u20135 canonical outputs",
+  "canonical_convergence": "fr_pr_convergence_primary288/",
+  "canonical_hanif_main": "hanif_main_seeds012/",
+  "canonical_schneider": "schneider/main30_status.json",
+  "seed2_supplementary": "fr_pr_convergence_seed2_supplementary/"
+}

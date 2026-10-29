@@ -1,0 +1,38 @@
+[
+  {
+    "tw": "original",
+    "metric": "k",
+    "n_instances": 12,
+    "mean_gap_change_300_minus_30": 1.1666666666666667,
+    "ci95_lo": 0.08333333333333333,
+    "ci95_hi": 2.3333333333333335,
+    "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+  },
+  {
+    "tw": "original",
+    "metric": "distance",
+    "n_instances": 12,
+    "mean_gap_change_300_minus_30": -523.1614709993204,
+    "ci95_lo": -2069.0746272454658,
+    "ci95_hi": 849.3600283364455,
+    "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+  },
+  {
+    "tw": "relaxed",
+    "metric": "k",
+    "n_instances": 12,
+    "mean_gap_change_300_minus_30": -0.5833333333333334,
+    "ci95_lo": -1.6666666666666667,
+    "ci95_hi": 0.3333333333333333,
+    "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+  },
+  {
+    "tw": "relaxed",
+    "metric": "distance",
+    "n_instances": 12,
+    "mean_gap_change_300_minus_30": -597.1165920495987,
+    "ci95_lo": -3966.4818645765386,
+    "ci95_hi": 2541.995925401648,
+    "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+  }
+]

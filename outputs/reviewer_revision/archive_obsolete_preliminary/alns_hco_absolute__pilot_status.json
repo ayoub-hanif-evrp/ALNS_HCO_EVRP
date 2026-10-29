@@ -1,0 +1,42 @@
+{
+  "mode": "pilot",
+  "n_jobs_planned": 12,
+  "instances": [
+    "C1_10_1",
+    "R1_10_1",
+    "RC2_10_1"
+  ],
+  "seeds": [
+    0
+  ],
+  "tw": [
+    "original"
+  ],
+  "methods": [
+    "ALNS-PR",
+    "PhaseI-PR-15",
+    "PhaseII-NoHCO",
+    "PhaseII-Heterogeneous"
+  ],
+  "started_utc": "2026-10-28T14:35:40Z",
+  "completed": [
+    "ALNS-PR|C1_10_1|original|seed0",
+    "PhaseI-PR-15|C1_10_1|original|seed0",
+    "PhaseII-NoHCO|C1_10_1|original|seed0",
+    "PhaseII-Heterogeneous|C1_10_1|original|seed0",
+    "ALNS-PR|R1_10_1|original|seed0",
+    "PhaseI-PR-15|R1_10_1|original|seed0",
+    "PhaseII-NoHCO|R1_10_1|original|seed0",
+    "PhaseII-Heterogeneous|R1_10_1|original|seed0",
+    "ALNS-PR|RC2_10_1|original|seed0",
+    "PhaseI-PR-15|RC2_10_1|original|seed0",
+    "PhaseII-NoHCO|RC2_10_1|original|seed0",
+    "PhaseII-Heterogeneous|RC2_10_1|original|seed0"
+  ],
+  "failed": [],
+  "finished_utc": "2026-10-28T14:38:47Z",
+  "wall_s": 186.30783699988388,
+  "n_completed": 12,
+  "n_failed": 0,
+  "incomplete": false
+}

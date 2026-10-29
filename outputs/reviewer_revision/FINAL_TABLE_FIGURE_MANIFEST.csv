@@ -1,0 +1,22 @@
+kind,title,path,exists,canonical
+Table,Convergence means by TW/budget,fr_pr_convergence_primary288/table_convergence_by_tw.csv,True,True
+Table,FR–PR paired summaries (seeds 0–1),fr_pr_convergence_primary288/paired_summaries.csv,True,True
+Table,FR–PR lex gaps by budget,fr_pr_convergence_primary288/table_fr_pr_gaps_by_budget_lex.csv,True,True
+Table,Gap change 30→300s summary,final_stats/table_gap_change_30_to_300_summary.csv,True,True
+Table,Gap change 30→300s by instance,final_stats/table_gap_change_30_to_300_by_instance.csv,True,True
+Figure,FR–PR convergence (all TW),fr_pr_convergence_primary288/fig_fr_pr_convergence.png,True,True
+Figure,FR–PR convergence original TW,fr_pr_convergence_primary288/fig_fr_pr_convergence_original.png,True,True
+Figure,FR–PR convergence relaxed TW,fr_pr_convergence_primary288/fig_fr_pr_convergence_relaxed.png,True,True
+Table,Hanif main means by method,hanif_main_seeds012/table_means_by_method.csv,True,True
+Table,Hanif energy coverage,hanif_main_seeds012/table_energy_coverage.csv,True,True
+Table,HCO contribution counts,hco_contribution_audit/summary_counts.csv,True,True
+Table,Schneider 30s feasibility,schneider/table_main30_feasibility.csv,True,True
+Table,Schneider 30s paired FR/PR,schneider/paired_main30_summaries.csv,True,True
+Table,Economic sensitivity scenarios,economic_sensitivity/table_means_selected_scenarios.csv,True,True
+Table,Hanif benchmark characteristics,benchmark_characteristics/table_hanif_instances.csv,True,True
+Table,Schneider benchmark characteristics,benchmark_characteristics/table_schneider_instances.csv,True,True
+Figure,Hanif main original TW,hanif_main_seeds012/fig_hanif_main_original.png,True,True
+Figure,Hanif main relaxed TW,hanif_main_seeds012/fig_hanif_main_relaxed.png,True,True
+Note,HCO-Detour verification,HCO_DETOUR_VERIFICATION.md,True,True
+Note,Schneider neutral charging,schneider/NEUTRAL_CHARGING.md,True,True
+Paper fig attribution,Fig4/Fig5 = NoHCO→HCO (existing),outputs/figures/final_figure_manifest.md,True,True

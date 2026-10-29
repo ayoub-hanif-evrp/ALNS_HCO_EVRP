@@ -1,0 +1,5 @@
+tw,metric,n_instances,mean_gap_change_300_minus_30,ci95_lo,ci95_hi,interpretation
+original,k,12,1.1666666666666667,0.08333333333333333,2.3333333333333335,Positive mean gap change: PR−FR increases (PR relatively worse on lower-is-better metric). Negative: PR−FR decreases (PR relatively better / less worse).
+original,distance,12,-523.1614709993204,-2069.0746272454658,849.3600283364455,Positive mean gap change: PR−FR increases (PR relatively worse on lower-is-better metric). Negative: PR−FR decreases (PR relatively better / less worse).
+relaxed,k,12,-0.5833333333333334,-1.6666666666666667,0.3333333333333333,Positive mean gap change: PR−FR increases (PR relatively worse on lower-is-better metric). Negative: PR−FR decreases (PR relatively better / less worse).
+relaxed,distance,12,-597.1165920495987,-3966.4818645765386,2541.995925401648,Positive mean gap change: PR−FR increases (PR relatively worse on lower-is-better metric). Negative: PR−FR decreases (PR relatively better / less worse).

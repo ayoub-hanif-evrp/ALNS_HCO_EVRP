@@ -1,0 +1,22 @@
+{
+  "hanif_rows": 2520,
+  "hanif_instances": 60,
+  "hanif_tw": 2,
+  "phase2_het_identical_aggregate_vs_phase1": 350,
+  "phase2_het_compared": 360,
+  "fraction_identical": 0.9722222222222222,
+  "schneider_attempts": 336,
+  "schneider_feasible": 264,
+  "schneider_infeasible": 72,
+  "schneider_paired_instances": 44,
+  "convergence_primary_rows": 288,
+  "mean_alns_iterations_by_method_budget": {
+    "ALNS-FR|30s": 3897.3541666666665,
+    "ALNS-FR|120s": 15954.666666666666,
+    "ALNS-FR|300s": 44398.270833333336,
+    "ALNS-PR|30s": 1146.75,
+    "ALNS-PR|120s": 4800.5625,
+    "ALNS-PR|300s": 12156.083333333334
+  },
+  "verified": true
+}

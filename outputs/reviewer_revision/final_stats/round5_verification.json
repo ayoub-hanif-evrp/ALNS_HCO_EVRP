@@ -1,0 +1,76 @@
+{
+  "gap_change": [
+    {
+      "tw": "original",
+      "metric": "k",
+      "n_instances": 12,
+      "mean_gap_change_300_minus_30": 1.1666666666666667,
+      "ci95_lo": 0.08333333333333333,
+      "ci95_hi": 2.3333333333333335,
+      "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+    },
+    {
+      "tw": "original",
+      "metric": "distance",
+      "n_instances": 12,
+      "mean_gap_change_300_minus_30": -523.1614709993204,
+      "ci95_lo": -2069.0746272454658,
+      "ci95_hi": 849.3600283364455,
+      "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+    },
+    {
+      "tw": "relaxed",
+      "metric": "k",
+      "n_instances": 12,
+      "mean_gap_change_300_minus_30": -0.5833333333333334,
+      "ci95_lo": -1.6666666666666667,
+      "ci95_hi": 0.3333333333333333,
+      "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+    },
+    {
+      "tw": "relaxed",
+      "metric": "distance",
+      "n_instances": 12,
+      "mean_gap_change_300_minus_30": -597.1165920495987,
+      "ci95_lo": -3966.4818645765386,
+      "ci95_hi": 2541.995925401648,
+      "interpretation": "Positive mean gap change: PR\u2212FR increases (PR relatively worse on lower-is-better metric). Negative: PR\u2212FR decreases (PR relatively better / less worse)."
+    }
+  ],
+  "claims": {
+    "hanif_rows": 2520,
+    "hanif_instances": 60,
+    "hanif_tw": 2,
+    "phase2_het_identical_aggregate_vs_phase1": 350,
+    "phase2_het_compared": 360,
+    "fraction_identical": 0.9722222222222222,
+    "schneider_attempts": 336,
+    "schneider_feasible": 264,
+    "schneider_infeasible": 72,
+    "schneider_paired_instances": 44,
+    "convergence_primary_rows": 288,
+    "mean_alns_iterations_by_method_budget": {
+      "ALNS-FR|30s": 3897.3541666666665,
+      "ALNS-FR|120s": 15954.666666666666,
+      "ALNS-FR|300s": 44398.270833333336,
+      "ALNS-PR|30s": 1146.75,
+      "ALNS-PR|120s": 4800.5625,
+      "ALNS-PR|300s": 12156.083333333334
+    },
+    "verified": true
+  },
+  "archived_markers": [
+    "archive_obsolete_preliminary\\fr_pr_convergence__analysis_status.json",
+    "fr_pr_convergence\\analysis_status.json.OBSOLETE.txt",
+    "archive_obsolete_preliminary\\fr_pr_convergence__pilot_status.json",
+    "fr_pr_convergence\\pilot_status.json.OBSOLETE.txt",
+    "archive_obsolete_preliminary\\fr_pr_convergence__full_status.json",
+    "fr_pr_convergence\\full_status.json.OBSOLETE.txt",
+    "archive_obsolete_preliminary\\alns_hco_absolute__pilot_status.json",
+    "alns_hco_absolute\\pilot_status.json.OBSOLETE.txt",
+    "archive_obsolete_preliminary\\alns_hco_absolute__full_status.json",
+    "alns_hco_absolute\\full_status.json.OBSOLETE.txt"
+  ],
+  "manifest_n": 21,
+  "manifest_missing": []
+}
