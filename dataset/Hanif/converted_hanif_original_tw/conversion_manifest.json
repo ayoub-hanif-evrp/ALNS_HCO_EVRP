@@ -1,11 +1,11 @@
 {
-  "source": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_A_original_TW",
-  "output": "C:/Users/ayoub/Desktop/Transformer_MARL_EVRP-main/dataset/Hanif/converted_hanif_original_tw",
+  "source": "C:/Users/AYOUB/OneDrive - EMSI/Bureau/PHD_WORK/ALNS_HCO_EVRP/dataset/Hanif/EVRPTW_ChargingStations_Dataset/variant_A_original_TW",
+  "output": "C:/Users/AYOUB/OneDrive - EMSI/Bureau/PHD_WORK/ALNS_HCO_EVRP/dataset/Hanif/converted_hanif_original_tw",
   "variant": "variant_A_original_TW",
   "time_windows_modified": false,
   "num_instances": 60,
   "converted_this_call": 0,
-  "elapsed_seconds": 0.002,
+  "elapsed_seconds": 0.001,
   "instances": [
     "C1_10_1",
     "C1_10_10",
