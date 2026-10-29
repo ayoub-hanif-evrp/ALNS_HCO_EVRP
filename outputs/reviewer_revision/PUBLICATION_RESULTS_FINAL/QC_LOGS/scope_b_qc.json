@@ -1,0 +1,6 @@
+{
+  "pytest_ok": true,
+  "pytest_tail": "52 passed, 10 skipped in 8.35s",
+  "algo_diff_ok": true,
+  "n_rows": 56
+}

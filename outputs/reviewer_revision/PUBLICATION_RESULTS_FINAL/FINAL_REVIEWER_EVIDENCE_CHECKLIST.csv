@@ -8,13 +8,14 @@ R1.6,Detour method description matches code,SATISFIED,outputs/reviewer_revision/
 R1.7,FR/PR init + iteration throughput differences,SATISFIED,FR_PR_FAIRNESS_CORRECTED.md; primary288 mean_alns_iterations
 R1.8,Constant-rate PR ≠ nonlinear charging-speed curve,SATISFIED,model uses constant rate; no nonlinear experiment claimed
 R1.9,"Hardware, benchmarks, seeds, budgets, frozen config",SATISFIED,benchmark_characteristics/*; outputs/config/frozen_experiment_config.json
-R2.1,Schneider coverage + unsuccessful instances,SATISFIED,T7_*; 336/264/72
+R2.1,Schneider coverage + unsuccessful instances,SATISFIED,Primary 336/264/72 + Scope B 56 FR seed0 with routes; hard C65/C64/C75
 R2.2,Explain unsuccessful; search vs mathematical infeasibility,SATISFIED,Schneider hard-customer diagnosis; external verifier missing C65/C75
 R2.3,No heterogeneous claims from Schneider homogeneous data,SATISFIED,schneider/NEUTRAL_CHARGING.md; SCHNEIDER_BENCHMARK_COMPARABILITY.md
 R2.4,Depot tariff/wage sensitivity post-hoc,SATISFIED,T9_economic_sensitivity_posthoc.csv; T9_economic_ASSUMPTIONS.json
 R2.5,Benchmark family/model characteristic tables,SATISFIED,benchmark_characteristics/table_hanif_instances.csv; table_schneider_instances.csv
 R2.6,Dataset availability paths; declarations author-owned,PARTIAL,RESULTS_SOURCE_MANIFEST.csv; README_AUTHOR_PACKAGE.md; declarations not written here
 R2.7,Figure data/units; Figs 4–5 are NoHCO vs Het,SATISFIED,FINAL_FIGURES/Figure4_*; Figure5_*; figure5_family_values.json matches T5
-R2.BKS,Verified numerical Schneider BKS gaps for primary panel,PARTIAL,SCHNEIDER_BENCHMARK_COMPARABILITY.md; Schneider_external_verifier_results.csv (diagnostic only)
+R2.BKS,Verified numerical Schneider BKS gaps for primary panel,PARTIAL,Scope B 44/56 externally valid FR seed0 with routes; Schneider_ScopeB_56_FR_seed0.csv; SCHNEIDER_SCOPE_B_ANALYSIS.md; primary 336 unchanged
 QC,Protected algorithms unchanged vs main,SATISFIED,QC_LOGS/verify_no_algo_diff.txt
 QC,Denominators 6720/3720/584/600/16-501-83/288/240-42-198,SATISFIED,QC_LOGS/final_evidence_audit.json
+R1.5b,PhaseII-Plain vs Heterogeneous five-seed (unfavorable),SATISFIED,T_PhaseII_Plain_vs_Heterogeneous_paired.csv; Plain lower distance on 60/60 per TW

@@ -1,0 +1,11 @@
+instance,family,k,bks_k,report_sol_cost_3dp,bks_d,distance_gap_pct,bks_source_name,external_valid_raw,external_valid_collapsed
+c101_21,C1,12,12,1197.084,1053.83,13.593653625347555,Schneider et al. (2014),True,True
+c107_21,C1,11,11,1174.981,1031.56,13.90331148939471,Schneider et al. (2014),True,True
+c202_21,C2,4,4,750.133,645.16,16.270847541695094,Schneider et al. (2014),True,True
+r206_21,R2,3,3,1108.32,922.19,20.183476290135424,Goeke and Schneider,True,True
+r210_21,R2,3,3,1053.774,843.65,24.906537071060264,Keskin and Catay (2016),True,True
+c208_21,C2,4,4,837.25,638.17,31.195449488380845,Schneider et al. (2014),True,True
+r209_21,R2,3,3,1175.133,867.05,35.53232224208524,Goeke and Schneider,True,True
+c207_21,C2,4,4,866.171,638.17,35.72731403857908,Schneider et al. (2014),True,True
+c204_21,C2,4,4,913.006,636.43,43.45741087000928,Schneider et al. (2014),True,True
+rc208_21,RC2,3,3,1255.132,836.29,50.08334429444333,Goeke and Schneider,True,True

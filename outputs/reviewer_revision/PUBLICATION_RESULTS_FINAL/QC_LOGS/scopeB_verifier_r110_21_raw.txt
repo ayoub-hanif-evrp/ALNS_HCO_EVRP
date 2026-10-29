@@ -1,0 +1,69 @@
+Solution 1 (r110_21__raw.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C62, S7, C64, C49, S8, C36, C47, C46, C82, D0]
+- load:		 107
+- distance:	126.215
+- duration:	226.609
+- violations:	 none
+Route 2: [D0, C60, S9, S11, S11, C91, C100, C98, C59, C93, C99, C61, C5, C83, D0]
+- load:		 140
+- distance:	106.770
+- duration:	227.684
+- violations:	 none
+Route 3: [D0, S13, C96, C84, C17, S10, S11, S11, S11, C16, C86, C44, C85, C94, D0]
+- load:		 160
+- distance:	116.548
+- duration:	226.026
+- violations:	 none
+Route 4: [D0, C6, C14, C43, S14, C15, C2, C87, C13, D0]
+- load:		  94
+- distance:	 91.068
+- duration:	182.855
+- violations:	 none
+Route 5: [D0, C1, S3, C20, C66, C65, C71, S4, S4, S4, S4, S4, S4, S4, S4, S4, C35, C34, D0]
+- load:		 101
+- distance:	121.573
+- duration:	222.766
+- violations:	 none
+Route 6: [D0, C3, C79, C78, C33, C81, C9, C51, S3, S3, S3, S3, S3, S3, S3, C30, C69, C27, D0]
+- load:		 145
+- distance:	 90.250
+- duration:	215.905
+- violations:	 none
+Route 7: [D0, C52, S5, C11, C63, C90, C32, C10, C31, D0]
+- load:		 100
+- distance:	 91.084
+- duration:	173.431
+- violations:	 none
+Route 8: [D0, C89, C45, C8, S9, C18, C7, C48, C19, S7, C88, D0]
+- load:		 119
+- distance:	105.362
+- duration:	220.874
+- violations:	 none
+Route 9: [D0, S15, S16, S17, C75, C74, C22, C41, S16, C42, C97, C37, C92, C95, D0]
+- load:		  96
+- distance:	110.757
+- duration:	226.370
+- violations:	 none
+Route 10: [D0, C21, C56, C23, C67, C39, S18, S1, C24, C12, D0]
+- load:		 124
+- distance:	118.229
+- duration:	225.920
+- violations:	 none
+Route 11: [D0, C70, S3, S1, C29, C80, C68, C50, C77, C76, D0]
+- load:		  96
+- distance:	111.851
+- duration:	206.852
+- violations:	 none
+Route 12: [D0, C40, C54, C55, S19, C25, C4, C72, C73, C26, C28, D0]
+- load:		 121
+- distance:	 92.060
+- duration:	199.775
+- violations:	 none
+Route 13: [D0, S11, C38, C57, S15, C58, C53, D0]
+- load:		  55
+- distance:	 95.334
+- duration:	171.082
+- violations:	 none
+Total cost = 1377.101
+[_valid_]
+

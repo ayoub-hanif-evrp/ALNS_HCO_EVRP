@@ -1,0 +1,687 @@
+{
+  "instance": "r102_21",
+  "family": "R1",
+  "method": "ALNS-FR",
+  "seed": 0,
+  "budget_s": 30.0,
+  "gi_deadline_s": 20.0,
+  "config_note": "Matches primary Schneider FR runner (scripts/run_schneider_experiments.py)",
+  "feasible": false,
+  "unserved": 1,
+  "hard_violations": 0,
+  "k": 21,
+  "distance": 1974.9336500167847,
+  "duration": 4081.7567906644053,
+  "gi_runtime_s": 0.04033749992959201,
+  "alns_runtime_s": 30.0019177000504,
+  "solver_runtime_s": 30.04225519997999,
+  "wall_s": 30.04269909998402,
+  "alns_iterations": 11292,
+  "routes": [
+    {
+      "nodes_int": [
+        0,
+        31,
+        1,
+        102,
+        80,
+        104,
+        20,
+        51,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C31",
+        "C1",
+        "S1",
+        "C80",
+        "S3",
+        "C20",
+        "C51",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        8,
+        89,
+        110,
+        48,
+        88,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C8",
+        "C89",
+        "S9",
+        "C48",
+        "C88",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        53,
+        74,
+        39,
+        119,
+        4,
+        103,
+        34,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C53",
+        "C74",
+        "C39",
+        "S18",
+        "C4",
+        "S2",
+        "C34",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        28,
+        3,
+        33,
+        79,
+        50,
+        104,
+        30,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C28",
+        "C3",
+        "C33",
+        "C79",
+        "C50",
+        "S3",
+        "C30",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        96,
+        38,
+        91,
+        112,
+        99,
+        93,
+        37,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C96",
+        "C38",
+        "C91",
+        "S11",
+        "C99",
+        "C93",
+        "C37",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        5,
+        61,
+        16,
+        85,
+        59,
+        110,
+        82,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C5",
+        "C61",
+        "C16",
+        "C85",
+        "C59",
+        "S9",
+        "C82",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        40,
+        68,
+        54,
+        102,
+        69,
+        27,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C40",
+        "C68",
+        "C54",
+        "S1",
+        "C69",
+        "C27",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        115,
+        43,
+        97,
+        6,
+        58,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "S14",
+        "C43",
+        "C97",
+        "C6",
+        "C58",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        108,
+        19,
+        11,
+        7,
+        52,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "S7",
+        "C19",
+        "C11",
+        "C7",
+        "C52",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        70,
+        104,
+        78,
+        29,
+        77,
+        76,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C70",
+        "S3",
+        "C78",
+        "C29",
+        "C77",
+        "C76",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        18,
+        110,
+        46,
+        17,
+        84,
+        112,
+        14,
+        44,
+        100,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C18",
+        "S9",
+        "C46",
+        "C17",
+        "C84",
+        "S11",
+        "C14",
+        "C44",
+        "C100",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        106,
+        10,
+        32,
+        90,
+        64,
+        63,
+        108,
+        62,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "S5",
+        "C10",
+        "C32",
+        "C90",
+        "C64",
+        "C63",
+        "S7",
+        "C62",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        21,
+        56,
+        72,
+        26,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C21",
+        "C56",
+        "C72",
+        "C26",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        104,
+        66,
+        71,
+        35,
+        9,
+        104,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "S3",
+        "C66",
+        "C71",
+        "C35",
+        "C9",
+        "S3",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        47,
+        109,
+        36,
+        45,
+        83,
+        60,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C47",
+        "S8",
+        "C36",
+        "C45",
+        "C83",
+        "C60",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        94,
+        98,
+        112,
+        86,
+        92,
+        95,
+        13,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C94",
+        "C98",
+        "S11",
+        "C86",
+        "C92",
+        "C95",
+        "C13",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        2,
+        15,
+        115,
+        42,
+        87,
+        57,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C2",
+        "C15",
+        "S14",
+        "C42",
+        "C87",
+        "C57",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        67,
+        118,
+        23,
+        73,
+        41,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C67",
+        "S17",
+        "C23",
+        "C73",
+        "C41",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        109,
+        49,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "S8",
+        "C49",
+        "D0"
+      ],
+      "labels": [
+        null,
+        1.0,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        22,
+        75,
+        120,
+        25,
+        55,
+        24,
+        12,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C22",
+        "C75",
+        "S19",
+        "C25",
+        "C55",
+        "C24",
+        "C12",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "nodes_int": [
+        0,
+        81,
+        0
+      ],
+      "string_ids": [
+        "D0",
+        "C81",
+        "D0"
+      ],
+      "labels": [
+        null,
+        null,
+        null
+      ]
+    }
+  ],
+  "study": "schneider_scope_b",
+  "does_not_replace_primary336": true
+}

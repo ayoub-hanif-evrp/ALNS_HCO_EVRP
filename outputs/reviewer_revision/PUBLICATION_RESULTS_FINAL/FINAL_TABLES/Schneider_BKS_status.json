@@ -1,17 +1,15 @@
 {
   "bks_comparison": "PARTIAL",
-  "reason": "External verifier executed on diagnostic FR full-recharge routes; primary 264 feasible attempts still lack complete route archives for a full BKS gap table.",
+  "scope_b": {
+    "n": 56,
+    "n_report_external_valid": 44,
+    "table": "FINAL_TABLES/Schneider_ScopeB_56_FR_seed0.csv",
+    "analysis": "SCHNEIDER_SCOPE_B_ANALYSIS.md"
+  },
   "primary_protocol_unchanged": {
     "n_attempts": 336,
     "n_feasible": 264,
     "n_unsuccessful": 72
-  },
-  "external_verifier": {
-    "repo": "https://github.com/ghiermann/evrptw-verifier",
-    "n_instances_tested": 5,
-    "n_valid_raw": 3,
-    "n_valid_collapsed": 3,
-    "table": "FINAL_TABLES/Schneider_external_verifier_results.csv"
   },
   "numerical_bks_gap_claimed_for_primary336": false
 }

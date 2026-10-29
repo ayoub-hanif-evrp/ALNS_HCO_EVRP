@@ -78,15 +78,45 @@ PR reduces public charging expense/energy/time; distance may increase. FR/PR are
   - r201_21: K=5 vs BKS 3; cost=1325.483; valid=True; gap%=4.837620222728424; fleet_diff our_k=5 bks_k=3; distance_gap secondary
   - rc101_21: K=24 vs BKS 16; cost=2702.059; valid=False; gap%=—; not_claimed_solution_invalid
 
+## PhaseII-Plain vs PhaseII-Heterogeneous (five-seed; unfavorable control evidence)
+
+PhaseII-Plain uses Phase-I destroy operators (no Phase-II charging-aware destroy / HCO).
+PhaseII-NoHCO uses Phase-II destroy/search without HCO station selection.
+PhaseII-Heterogeneous adds HCO (heterogeneous scoring).
+
+Paired seed-averaged results (treatment − baseline = Het − Plain):
+
+| TW | Metric | n | Mean diff (Het−Plain) | Mean paired % | 95% CI (diff) | Notes |
+|---|---|---:|---:|---:|---|---|
+| original | k | 60 | 0 | +0.000% | [0, 0] | equal K on 60/60 |
+| original | distance | 60 | 682.987 | +1.567% | [585, 780.4] | Plain lower on 60/60 |
+| original | charging_expense | 60 | 508.52 | +4.804% | [382.4, 634.4] |  |
+| original | charged_energy | 60 | 928.598 | +5.413% | [728.8, 1134] |  |
+| original | station_waiting | 60 | -1.08264 | -1.485% | [-10.28, 7.336] |  |
+| relaxed | k | 60 | 0 | +0.000% | [0, 0] | equal K on 60/60 |
+| relaxed | distance | 60 | 1156.42 | +2.692% | [996.3, 1323] | Plain lower on 60/60 |
+| relaxed | charging_expense | 60 | 940.825 | +10.895% | [862, 1020] |  |
+| relaxed | charged_energy | 60 | 1700.93 | +10.151% | [1573, 1834] |  |
+| relaxed | station_waiting | 60 | 19.943 | +3.151% | [12.71, 27.42] |  |
+
+**Interpretation:** Plain achieves lower distance than Heterogeneous on all 60 base instances in each TW with equal mean fleet size — HCO Heterogeneous is not a universal routing improvement over the Plain negative control. Source: `FINAL_TABLES/T_PhaseII_Plain_vs_Heterogeneous_*.csv`.
+
+## Schneider Scope B (new)
+- 56 ALNS-FR × seed 0 × 30 s with full route archives; primary 336 **unchanged**.
+- Reproduced exact primary metrics: **51/56**; discrepancies: **5/56** (`Schneider_ScopeB_repro_discrepancies.csv`).
+- Feasible **44/56**; external Java verifier valid **44/56** (invalid = incomplete customer cover, incl. hard C65/C64/C75 cases).
+- Lex BKS (valid only): fleet better/tie/worse = **0/10/34**; all 10 fleet ties have positive distance gaps vs inventory BKS.
+- Analysis: `SCHNEIDER_SCOPE_B_ANALYSIS.md`. **Recommendation:** Scope B supports optional extension to **168 FR runs** (not 336 yet; no PR rerun for this verifier).
+
 ## 7. Limitations
-1. Full primary Schneider BKS gap table still PARTIAL (no route archives for all 264).
-2. Declarations / manuscript / response letters: author-owned (R2.6 PARTIAL for declarations).
-3. FR/PR ≠ pure recharge ablation; policy experiment is the controlled ablation.
-4. Depot energy reconstructed; economics post-hoc.
-5. Diagnostic 30 s Schneider tours are not competitive BKS claims.
+1. Schneider BKS remains **PARTIAL**: Scope B verifies 44/56 FR seed-0 routes externally; primary 336 still lacks full multi-seed route archives. Inventory BKS gaps (esp. fleet ties) show 30 s FR is not competitive.
+2. Scope B had 5/56 non-exact reproductions vs primary seed-0 metrics (stochastic search); primary archive unchanged.
+3. Declarations / manuscript / response letters: author-owned (R2.6 PARTIAL).
+4. FR/PR ≠ pure recharge ablation; policy experiment is the controlled ablation.
+5. Depot energy reconstructed; economics post-hoc.
+6. Recommend optional **168 FR (56×3 seeds)** before 336; do not rerun PR for full-recharge verifier.
 
 ## 8. QC
-- pytest: 52 passed, 10 skipped in 7.39s (ok=True)
+- pytest: 52 passed, 10 skipped in 7.21s (ok=True)
 - algo-diff vs main: ok=True
-- Figure5↔T5: True
-
+- Scope B summary: `QC_LOGS/schneider_scope_b_summary.json`
