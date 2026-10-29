@@ -1,0 +1,13 @@
+request,status,artifact
+HCO contribution ablation five-seed,SATISFIED WITH VERIFIED EVIDENCE,HCO_CONTRIBUTION_AND_SENSITIVITY.md / HCO_* tables
+Parameter sensitivity (candidates/eps/split),SATISFIED WITH VERIFIED EVIDENCE,"k in {2,5,8} identical on Dev subset; eps/split existing ties; k=5 fixed choice not optimum"
+FR/PR fairness / isolation,PARTIALLY SATISFIED WITH LIMITATION,FAIR_COMPARISON_AUDIT.md — stacks differ; not isolated policy
+Longer-budget convergence 288,SATISFIED WITH VERIFIED EVIDENCE,T8_* / primary288
+Schneider full coverage 56,SATISFIED WITH VERIFIED EVIDENCE,T7_* 336/264/72
+Schneider failure diagnosis,SATISFIED WITH VERIFIED EVIDENCE,Round4 replay_route + SCHNEIDER_DIAGNOSTIC_REPORT
+Schneider longer-budget hard set,SATISFIED WITH VERIFIED EVIDENCE,schneider_hard_120s/ — 72/72 completed; 0 feasible (unserved=1); time not the limiter
+Schneider numerical BKS gaps,NOT SATISFIED,convention mismatch documented
+Energy accounting identity,SATISFIED WITH VERIFIED EVIDENCE,T6_*
+Economic post-hoc sensitivity,SATISFIED WITH VERIFIED EVIDENCE,T9_*
+Five-seed primary Hanif tables/figures,SATISFIED WITH VERIFIED EVIDENCE,PUBLICATION_RESULTS_FINAL
+Word results fully integrated,PARTIALLY SATISFIED WITH LIMITATION,ALNS-HCO-PAPER_RESULTS_REVISED.docx — see FINAL_SCIENTIFIC_AUDIT

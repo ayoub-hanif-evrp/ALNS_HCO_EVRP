@@ -1,0 +1,13 @@
+instance,n_attempts,n_feasible,any_feasible,min_unserved
+r101_21,6,0,False,1.0
+r102_21,6,0,False,1.0
+r103_21,6,0,False,1.0
+r105_21,6,0,False,1.0
+r106_21,6,0,False,1.0
+r108_21,6,0,False,1.0
+rc101_21,6,0,False,1.0
+rc103_21,6,0,False,1.0
+rc104_21,6,0,False,1.0
+rc105_21,6,0,False,1.0
+rc106_21,6,0,False,1.0
+rc107_21,6,0,False,1.0

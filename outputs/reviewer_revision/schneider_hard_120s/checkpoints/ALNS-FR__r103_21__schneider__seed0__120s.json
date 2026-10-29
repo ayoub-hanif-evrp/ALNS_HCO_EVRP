@@ -1,0 +1,28 @@
+{
+  "job_id": "ALNS-FR|r103_21|schneider|seed0|120s",
+  "job": {
+    "instance_name": "r103_21",
+    "method": "ALNS-FR",
+    "seed": 0,
+    "budget_s": 120.0,
+    "tw": "schneider"
+  },
+  "row": {
+    "instance": "r103_21",
+    "method": "ALNS-FR",
+    "seed": 0,
+    "budget_s": 120.0,
+    "feasible": false,
+    "unserved": 1,
+    "k": 16,
+    "distance": 1704.012032866478,
+    "charged_energy": 958.678676366806,
+    "runtime_s": 120.06903829961084,
+    "alns_iterations": 22916,
+    "gi_runtime_s": 0.06513539981096983,
+    "study": "schneider_hard_120s",
+    "error": null
+  },
+  "saved_utc": "2026-10-29T16:00:27Z",
+  "error": null
+}

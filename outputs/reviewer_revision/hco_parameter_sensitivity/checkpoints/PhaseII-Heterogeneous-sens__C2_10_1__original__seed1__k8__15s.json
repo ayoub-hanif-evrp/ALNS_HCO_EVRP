@@ -1,0 +1,38 @@
+{
+  "job_id": "PhaseII-Heterogeneous-sens|C2_10_1|original|seed1|k8|15s",
+  "job": {
+    "instance_name": "C2_10_1",
+    "tw": "original",
+    "seed": 1,
+    "candidates_per_criterion": 8,
+    "method": "PhaseII-Heterogeneous-sens",
+    "budget_s": 15.0
+  },
+  "row": {
+    "instance": "C2_10_1",
+    "family": "C2",
+    "tw": "original",
+    "seed": 1,
+    "candidates_per_criterion": 8,
+    "method": "PhaseII-Heterogeneous-sens",
+    "feasible": true,
+    "k": 44,
+    "distance": 24254.92648756504,
+    "duration": 151902.05758440137,
+    "charged_energy": 3006.1779923439026,
+    "charging_expense": 980.3563544211133,
+    "station_waiting": 132.72895097732544,
+    "charging_time": 3712.231063109102,
+    "charging_visits": 14,
+    "runtime_s": 15.634578499943018,
+    "phase2_iterations": 8,
+    "phase1_distance": 24254.92648756504,
+    "phase1_k": 44,
+    "distance_ratio_vs_phase1": 1.0,
+    "delta_Cch_vs_phase1": 0.0,
+    "study": "hco_candidate_sensitivity",
+    "error": null
+  },
+  "saved_utc": "2026-10-29T15:54:40Z",
+  "error": null
+}

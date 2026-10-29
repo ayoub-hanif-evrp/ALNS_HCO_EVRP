@@ -1,0 +1,9 @@
+{
+  "n_validated": 56,
+  "n_ok": 56,
+  "converter_ok": true,
+  "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+  "heterogeneous_prices_waits_imported": false,
+  "bks_comparable": false,
+  "bks_reason": "Published Schneider BKS typically use rounded distances and/or different objective aggregations; our converter uses unrounded Euclidean. Numerical BKS gaps would be misleading without verified convention match."
+}

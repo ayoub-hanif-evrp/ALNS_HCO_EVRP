@@ -35,3 +35,17 @@ All checked overall/partial cells match archived five-seed publication tables.
 - Figure 3: Regenerated from five-seed fixed-route paired table.
 - Figure 4: Original TW shows modest NoHCO?Het reductions in Cch/Twait/Tch with D˜0; Relaxed near zero — consistent with limited HCO effect.
 - Figure 5: Family means only; C1 Original large negative Cch; no fabricated family CIs.
+## Final correction addenda
+
+### HCO candidate sensitivity (new runs)
+Development subset 6×2 TW×seeds {0,1}; Phase II Heterogeneous with shared Phase I; `candidates_per_criterion` ? {2,5,8}.
+All 72 runs feasible. Metrics identical across k (?Cch=0, distance ratio=1 for 24/24 per k). Only wall-clock differs slightly (k=2 faster than k=8).
+**Conclusion:** Selected k=5 is a reasonable fixed experimental choice on this panel, not a proven optimum. Do not retune the frozen primary study.
+
+### Schneider 120 s hard-instance diagnostic (new runs)
+12 hard instances × FR/PR × seeds 0–2 × 120 s = 72/72 completed.
+**Feasible: 0.** Every run still reports `unserved=1`.
+**Conclusion:** Failures are not resolved by longer search time under the current solver/conversion. Primary 30 s table unchanged. Construction/search limitation stands; not proven mathematical infeasibility.
+
+### Source fidelity
+All 56 Schneider instances validate against `.txt` parameters (converter OK). BKS numerical comparison withheld (unrounded Euclidean vs typical rounded BKS conventions).

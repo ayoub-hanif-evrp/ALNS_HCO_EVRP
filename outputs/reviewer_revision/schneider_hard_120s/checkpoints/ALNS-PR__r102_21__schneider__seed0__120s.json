@@ -1,0 +1,27 @@
+{
+  "job_id": "ALNS-PR|r102_21|schneider|seed0|120s",
+  "job": {
+    "instance_name": "r102_21",
+    "method": "ALNS-PR",
+    "seed": 0,
+    "budget_s": 120.0,
+    "tw": "schneider"
+  },
+  "row": {
+    "instance": "r102_21",
+    "method": "ALNS-PR",
+    "seed": 0,
+    "budget_s": 120.0,
+    "feasible": false,
+    "unserved": 1,
+    "k": 21,
+    "distance": 1974.9336500167847,
+    "charged_energy": 1006.3935873508453,
+    "runtime_s": 120.05807460006326,
+    "alns_iterations": 8984,
+    "study": "schneider_hard_120s",
+    "error": null
+  },
+  "saved_utc": "2026-10-29T16:00:27Z",
+  "error": null
+}

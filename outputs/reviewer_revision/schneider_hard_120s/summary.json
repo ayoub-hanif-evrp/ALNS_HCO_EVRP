@@ -1,0 +1,8 @@
+{
+  "n_planned": 72,
+  "n_completed": 72,
+  "n_feasible": 0,
+  "n_instances_any_feasible_at_120": 0,
+  "primary_30s_unchanged": true,
+  "note": "120s is diagnostic only; do not replace primary 30s table."
+}

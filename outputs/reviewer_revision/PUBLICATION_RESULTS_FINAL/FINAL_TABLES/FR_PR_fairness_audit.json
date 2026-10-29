@@ -1,0 +1,17 @@
+{
+  "FR_stack": "GI (greedy) initialization + care-fi ALNS with full-recharge station policy",
+  "PR_stack": "alns_hco Phase-I ALNS-PR with just-enough charging (no separate GI stage in PR path)",
+  "equal_nominal_wall_clock": true,
+  "equal_end_to_end_including_GI": "FR runtime includes GI; PR runtime is Phase-I ALNS only \u2014 report both",
+  "equal_iteration_throughput": false,
+  "mean_alns_iterations_primary288": {
+    "ALNS-FR|30s": 3897.3541666666665,
+    "ALNS-FR|120s": 15954.666666666666,
+    "ALNS-FR|300s": 44398.270833333336,
+    "ALNS-PR|30s": 1146.75,
+    "ALNS-PR|120s": 4800.5625,
+    "ALNS-PR|300s": 12156.083333333334
+  },
+  "isolated_charging_policy": false,
+  "conclusion": "Primary FR vs PR compares two search configurations (initialization + recharge policy + operators), not a perfectly isolated charging-policy intervention. Fixed-route HCO contrasts isolate station choice on identical Phase-I customer routes."
+}

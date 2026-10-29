@@ -1,0 +1,38 @@
+{
+  "job_id": "PhaseII-Heterogeneous-sens|R2_10_1|relaxed|seed1|k5|15s",
+  "job": {
+    "instance_name": "R2_10_1",
+    "tw": "relaxed",
+    "seed": 1,
+    "candidates_per_criterion": 5,
+    "method": "PhaseII-Heterogeneous-sens",
+    "budget_s": 15.0
+  },
+  "row": {
+    "instance": "R2_10_1",
+    "family": "R2",
+    "tw": "relaxed",
+    "seed": 1,
+    "candidates_per_criterion": 5,
+    "method": "PhaseII-Heterogeneous-sens",
+    "feasible": true,
+    "k": 26,
+    "distance": 51902.260216236115,
+    "duration": 171576.60440783616,
+    "charged_energy": 41885.47830100059,
+    "charging_expense": 25259.585964675185,
+    "station_waiting": 2127.8928830623627,
+    "charging_time": 32996.03566199728,
+    "charging_visits": 126,
+    "runtime_s": 19.899351299973205,
+    "phase2_iterations": 3,
+    "phase1_distance": 51902.260216236115,
+    "phase1_k": 26,
+    "distance_ratio_vs_phase1": 1.0,
+    "delta_Cch_vs_phase1": 0.0,
+    "study": "hco_candidate_sensitivity",
+    "error": null
+  },
+  "saved_utc": "2026-10-29T15:55:37Z",
+  "error": null
+}

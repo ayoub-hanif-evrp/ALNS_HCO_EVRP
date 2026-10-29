@@ -1,0 +1,17 @@
+tw,baseline_k,treatment_k,metric,n,mean_diff,ci95_lo,ci95_hi,mean_pct
+original,5,2,charging_expense,12,0.0,0.0,0.0,0.0
+original,5,2,distance,12,0.0,0.0,0.0,0.0
+original,5,2,station_waiting,12,0.0,0.0,0.0,0.0
+original,5,2,runtime_s,12,-0.46496612499079976,-0.7239012333059994,-0.21659098338568583,-2.8435241008561953
+relaxed,5,2,charging_expense,12,0.0,0.0,0.0,0.0
+relaxed,5,2,distance,12,0.0,0.0,0.0,0.0
+relaxed,5,2,station_waiting,12,0.0,0.0,0.0,0.0
+relaxed,5,2,runtime_s,12,-0.621447916685914,-1.2181687582827483,-0.13834985836486643,-3.4315212977705554
+original,5,8,charging_expense,12,0.0,0.0,0.0,0.0
+original,5,8,distance,12,0.0,0.0,0.0,0.0
+original,5,8,station_waiting,12,0.0,0.0,0.0,0.0
+original,5,8,runtime_s,12,1.168987900018692,0.4056275833087663,1.9513157416173879,7.386240444594886
+relaxed,5,8,charging_expense,12,0.0,0.0,0.0,0.0
+relaxed,5,8,distance,12,0.0,0.0,0.0,0.0
+relaxed,5,8,station_waiting,12,0.0,0.0,0.0,0.0
+relaxed,5,8,runtime_s,12,-0.15491974997955063,-1.1256990999681875,0.7094142750138417,-0.3266318762014566

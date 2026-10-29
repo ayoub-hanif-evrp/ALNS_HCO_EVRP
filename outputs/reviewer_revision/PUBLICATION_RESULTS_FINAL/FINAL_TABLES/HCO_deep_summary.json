@@ -1,0 +1,14 @@
+{
+  "phase1_het_identical_aggregate_K_D_Ech": 584,
+  "phase1_het_compared": 600,
+  "fraction_identical": 0.9733333333333334,
+  "nohco_het_Cch_runlevel": {
+    "improved": 16,
+    "unchanged": 501,
+    "worsened": 83
+  },
+  "n_worsened_Cch_runs_listed": 83,
+  "route_identity_claimed": false,
+  "eps": 0.0,
+  "eps_note": "phase2_distance_tolerance=0 freezes D<=D_PR; many HCO-feasible neighbours rejected on distance."
+}

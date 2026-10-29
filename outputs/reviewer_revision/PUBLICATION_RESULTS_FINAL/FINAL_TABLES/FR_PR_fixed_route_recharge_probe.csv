@@ -1,0 +1,13 @@
+instance,tw,phase1_routes_replay_ok,phase1_routes_replay_fail,fixed_detour_Cch,fixed_het_Cch,note
+C1_10_1,original,111,0,1137.460531005012,1137.460531005012,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+C1_10_1,relaxed,114,0,5285.646104790526,5285.646104790526,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+C2_10_1,original,45,0,1577.5836968578406,1577.5836968578406,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+C2_10_1,relaxed,51,0,3499.926707196875,3499.926707196875,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+R1_10_1,original,155,0,7897.621105900311,7897.621105900311,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+R1_10_1,relaxed,94,0,17090.43407801377,17090.43407801377,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+R2_10_1,original,41,0,33198.89191888358,33198.89191888358,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+R2_10_1,relaxed,26,0,26103.283737690148,26103.283737690148,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+RC1_10_1,original,107,0,6541.312359018303,6541.312359018303,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+RC1_10_1,relaxed,92,0,15575.553144231892,15575.553144231892,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+RC2_10_1,original,49,0,14061.761198377877,14061.761198377877,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
+RC2_10_1,relaxed,25,0,13959.589541179843,13959.589541179843,FR and PR use different ALNS stacks; FixedRoute isolates charging on shared Phase-I customers
