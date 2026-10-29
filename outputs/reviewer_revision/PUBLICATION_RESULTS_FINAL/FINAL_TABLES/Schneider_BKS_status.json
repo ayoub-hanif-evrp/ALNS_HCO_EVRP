@@ -1,70 +1,16 @@
 {
   "bks_comparison": "PARTIAL",
   "fr168": {
+    "n_feas": 132,
+    "n_valid": 132,
+    "n_exact": 144,
+    "n_fleet_better": 0,
+    "n_fleet_tie": 34,
+    "n_fleet_worse": 98,
     "n_attempts": 168,
-    "n_feasible": 132,
-    "n_unsuccessful": 36,
-    "n_external_valid": 132,
-    "n_reproduced_exact_vs_primary": 144,
-    "n_discrepancy_vs_primary": 24,
-    "n_collapse_conceals": 0,
-    "lex_bks_fleet_better_tie_worse": [
-      0,
-      34,
-      98
-    ],
-    "by_seed": {
-      "0": {
-        "n": 56,
-        "feasible": 44,
-        "external_valid": 44,
-        "exact_repro": 51
-      },
-      "1": {
-        "n": 56,
-        "feasible": 44,
-        "external_valid": 44,
-        "exact_repro": 45
-      },
-      "2": {
-        "n": 56,
-        "feasible": 44,
-        "external_valid": 44,
-        "exact_repro": 48
-      }
-    },
-    "primary336_unchanged": true,
-    "pr_not_validated_by_full_recharge_verifier": true,
-    "discrepancy_diagnosis": {
-      "n_serial_exact_match_primary": 2,
-      "likely_cause": "Wall-clock ALNS budget: under parallel CPU contention Scope B completed fewer iterations than the primary archive on the five mismatched instances, producing different (usually worse) incumbents despite identical seed and GI. Serial diagnostics probe whether matching primary iteration throughput restores the primary metrics."
-    },
-    "freeze_check": {
-      "n_raw": 6720,
-      "n7": 3720,
-      "phase1_het": 584,
-      "nohco_het_cch": [
-        16,
-        501,
-        83
-      ],
-      "policy": {
-        "scope": "all_seed01_archives",
-        "n": 240,
-        "partial_feasible": 240,
-        "full_feasible": 42,
-        "both_feasible": 42,
-        "partial_ok_full_infeasible": 198
-      },
-      "fig5_ok": true,
-      "plain_vs_het_rows": 10,
-      "convergence_primary288": 288
-    }
+    "n_discrepancies": 24
   },
-  "note": "Complete 168 FR external verification; BKS gaps for externally valid FR only. Not a 336 FR/PR verification.",
-  "primary_protocol_unchanged": {
-    "n_attempts": 336,
-    "n_feasible": 264,
-    "n_unsuccessful": 72
-  }
+  "pr_route_external_verification": "NOT_REQUIRED_BY_DOCUMENTED_REVIEWER_SUMMARY",
+  "primary336_unchanged": true,
+  "java_verifier": "full_recharge_only"
 }

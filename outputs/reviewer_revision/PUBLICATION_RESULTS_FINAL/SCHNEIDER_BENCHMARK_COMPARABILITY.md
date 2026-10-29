@@ -36,5 +36,8 @@ See `SCHNEIDER_REPRODUCIBILITY_DIAGNOSIS.md`. Wall-clock ALNS ⇒ load-dependent
 - Checkpoints: `outputs/reviewer_revision/schneider_fr168/checkpoints/`
 - Logs: `QC_LOGS/fr168_verifier_*.txt`
 
-## Relation to primary 336
-Official feasibility coverage remains **336 / 264 / 72** (FR+PR). This 168-run package is **FR-only** route-level external verification + BKS. It must not be labeled as verification of the full FR/PR panel.
+## PR route verification
+Documented reviewer concerns (repository RESPONSE summary) require Schneider **coverage and honest failure reporting**, not an independent PR-specific route verifier. The Java tool is **full-recharge only** and must not be used to claim PR verification.
+
+## Reproducibility
+All 24 FR168 vs-primary discrepancies audited in `Schneider_FR168_all24_discrepancies.csv` and summarized in `SCHNEIDER_REPRODUCIBILITY_ALL24.md`.

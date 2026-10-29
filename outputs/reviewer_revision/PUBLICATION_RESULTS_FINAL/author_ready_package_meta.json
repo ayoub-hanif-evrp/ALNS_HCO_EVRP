@@ -1,31 +1,56 @@
 {
+  "authoritative": "FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md",
+  "fr168_complete": true,
   "audit": {
-    "n_raw": 6720,
-    "n7": 3720,
-    "raw_dups": 0,
-    "phase1_het_identity": 584,
-    "nohco_het_cch": {
-      "improved": 16,
-      "unchanged": 501,
-      "worsened": 83
-    },
-    "policy": {
-      "scope": "all_seed01_archives",
-      "n": 240,
-      "partial_feasible": 240,
-      "full_feasible": 42,
-      "both_feasible": 42,
-      "partial_ok_full_infeasible": 198
-    },
-    "energy_identity_t6": "24/24",
-    "figure5_matches_t5": true,
-    "tw_separated_frpr": true,
-    "external_verifier_valid_collapsed": 3,
-    "external_verifier_hard_invalid": 2,
     "pytest_ok": true,
-    "pytest_tail": "52 passed, 10 skipped in 7.39s",
+    "pytest_tail": "52 passed, 10 skipped in 7.55s",
     "algo_diff_ok": true,
-    "algo_diff": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1561"
-  },
-  "authoritative": "FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md"
+    "freeze": {
+      "n_raw": 6720,
+      "n7": 3720,
+      "phase1_het": 584,
+      "nohco_het": [
+        16,
+        501,
+        83
+      ],
+      "policy": {
+        "scope": "all_seed01_archives",
+        "n": 240,
+        "partial_feasible": 240,
+        "full_feasible": 42,
+        "both_feasible": 42,
+        "partial_ok_full_infeasible": 198
+      },
+      "energy_t6": "24/24",
+      "fig5_ok": true,
+      "tw_frpr_ok": true,
+      "figures": {
+        "Figure2": true,
+        "Figure3": true,
+        "Figure4": true,
+        "Figure5": true
+      },
+      "plain_n": 10,
+      "convergence": 288
+    },
+    "fr168": {
+      "n_feas": 132,
+      "n_valid": 132,
+      "n_exact": 144,
+      "n_fleet_better": 0,
+      "n_fleet_tie": 34,
+      "n_fleet_worse": 98
+    },
+    "n_discrepancies": 24,
+    "impact_counts": {
+      "DISTANCE_MATERIAL": 3,
+      "DISTANCE_MINOR": 16,
+      "FLEET_CHANGED": 5
+    },
+    "cause_counts": {
+      "SUPPORTED_LOWER_ITERATION_THROUGHPUT": 24
+    },
+    "pr_route_verification": "NOT_REQUIRED_BY_DOCUMENTED_REVIEWER_SUMMARY"
+  }
 }

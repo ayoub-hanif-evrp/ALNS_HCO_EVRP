@@ -1,9 +1,9 @@
-# Author-ready scientific results package
+# Author-ready scientific results package (FINAL)
 
 **Authoritative report:** [`FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md`](FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md)
 
-**Checklist (R1.1–R2.7 + BKS):** [`FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv`](FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv)
+**Checklist:** [`FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv`](FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv)
 
-**Schneider external verifier:** [`SCHNEIDER_BENCHMARK_COMPARABILITY.md`](SCHNEIDER_BENCHMARK_COMPARABILITY.md)
+Schneider FR evidence is the complete **FR168** study (56×3), not the earlier 3-instance diagnostics or seed-0-only Scope B alone.
 
-Manuscripts, figure placement, declarations, and response letters remain **author-owned**.
+Manuscript / declarations / response letters: **author-owned**.
