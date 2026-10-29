@@ -1,0 +1,25 @@
+TW,Method,n,propulsion_E,enroute_purchased_E,depot_replenish_E,residual_at_depot_E,charging_expense,note
+original,GI,60,"59,123.7","27,763.3","31,360.4","14,939.6","14,963.7",depot/residual reconstructed via aggregate identity
+original,VNS,60,"48,813.3","22,417.9","26,395.4","18,940.6","12,117.1",depot/residual reconstructed via aggregate identity
+original,SA,60,"49,344.5","23,625.2","25,719.3","19,800.7","12,885.4",depot/residual reconstructed via aggregate identity
+original,ALNS-FR,60,"47,363.0","23,294.6","24,068.4","17,905.6","12,840.2",depot/residual reconstructed via aggregate identity
+original,ALNS-PR,60,"48,766.9","18,898.5","29,868.4","12,171.6","10,458.7",depot/residual reconstructed via aggregate identity
+original,PhaseI-PR-15,60,"50,274.5","19,742.1","30,532.4","12,123.6","10,891.3",depot/residual reconstructed via aggregate identity
+original,FixedRoute-HCO-Detour,60,"50,246.9","19,608.9","30,638.1","12,017.9","10,818.8",depot/residual reconstructed via aggregate identity
+original,FixedRoute-HCO-Heterogeneous,60,"50,251.0","19,613.0","30,638.0","12,018.0","10,813.0",depot/residual reconstructed via aggregate identity
+original,PhaseII-NoHCO,60,"50,260.6","19,681.2","30,579.4","12,076.6","10,855.4",depot/residual reconstructed via aggregate identity
+original,PhaseII-Plain,60,"49,573.4","18,656.5","30,916.8","11,739.2","10,286.1",depot/residual reconstructed via aggregate identity
+original,PhaseII-Detour,60,"50,253.7","19,580.8","30,672.9","11,983.1","10,801.8",depot/residual reconstructed via aggregate identity
+original,PhaseII-Heterogeneous,60,"50,256.3","19,585.1","30,671.2","11,984.8","10,794.6",depot/residual reconstructed via aggregate identity
+relaxed,GI,60,"68,841.6","35,285.6","33,556.1","12,643.9","19,126.4",depot/residual reconstructed via aggregate identity
+relaxed,VNS,60,"48,027.0","25,520.6","22,506.4","20,851.6","13,666.8",depot/residual reconstructed via aggregate identity
+relaxed,SA,60,"49,366.9","26,602.9","22,763.9","20,498.1","14,293.6",depot/residual reconstructed via aggregate identity
+relaxed,ALNS-FR,60,"48,167.4","26,661.8","21,505.7","15,612.3","14,551.6",depot/residual reconstructed via aggregate identity
+relaxed,ALNS-PR,60,"49,464.4","24,630.2","24,834.2","12,401.8","13,439.6",depot/residual reconstructed via aggregate identity
+relaxed,PhaseI-PR-15,60,"51,029.7","25,643.4","25,386.4","12,519.6","13,970.0",depot/residual reconstructed via aggregate identity
+relaxed,FixedRoute-HCO-Detour,60,"51,029.7","25,643.4","25,386.4","12,519.6","13,970.0",depot/residual reconstructed via aggregate identity
+relaxed,FixedRoute-HCO-Heterogeneous,60,"51,029.7","25,643.4","25,386.4","12,519.6","13,970.0",depot/residual reconstructed via aggregate identity
+relaxed,PhaseII-NoHCO,60,"51,019.7","25,592.1","25,427.7","12,478.3","13,942.2",depot/residual reconstructed via aggregate identity
+relaxed,PhaseII-Plain,60,"49,873.3","23,942.4","25,930.9","11,975.1","13,029.2",depot/residual reconstructed via aggregate identity
+relaxed,PhaseII-Detour,60,"51,029.7","25,643.4","25,386.4","12,519.6","13,970.0",depot/residual reconstructed via aggregate identity
+relaxed,PhaseII-Heterogeneous,60,"51,029.7","25,643.4","25,386.4","12,519.6","13,970.0",depot/residual reconstructed via aggregate identity

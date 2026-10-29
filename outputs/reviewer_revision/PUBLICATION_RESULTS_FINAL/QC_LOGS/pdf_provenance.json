@@ -1,0 +1,11 @@
+{
+  "docx": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+  "docx_mtime": 1793298520.562784,
+  "docx_size": 555474,
+  "pdf": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.pdf",
+  "pdf_mtime": 1793298526.2431586,
+  "pdf_size": 1282953,
+  "renderer": "Word.Application ExportAsFixedFormat (wdExportFormatPDF=17)",
+  "status": "OK:1282953",
+  "ok": true
+}

@@ -1,0 +1,2 @@
+scope,n_evaluations,partial_feasible,both_feasible,partial_ok_full_infeasible,interpretation
+all_seed01_PhaseI_archives,240,240,42,198,Counterfactual: fixed visits; free FR solver may choose other routes

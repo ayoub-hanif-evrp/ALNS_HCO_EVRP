@@ -1,0 +1,11 @@
+TW,metric,n_instances_both_feasible,mean_diff_full_minus_partial,ci95_lo,ci95_hi,mean_pct
+original,charged_energy,12,459.60,48.99,"1,105.51",+1.50%
+original,charging_expense,12,261.10,19.21,645.56,+1.52%
+original,charging_time,12,372.36,45.48,864.59,+1.44%
+original,station_waiting,12,23.20,1.83,57.74,+1.39%
+original,duration,12,119.67,0.00,359.00,+0.08%
+relaxed,charged_energy,21,429.94,0.00,946.88,+1.06%
+relaxed,charging_expense,21,242.44,0.06,519.87,+1.00%
+relaxed,charging_time,21,358.29,-0.07,791.00,+1.10%
+relaxed,station_waiting,21,18.12,0.00,39.67,+0.71%
+relaxed,duration,21,206.90,-2.52,468.94,+0.15%

@@ -1,0 +1,4 @@
+method,n_attempts,n_feasible,n_unsuccessful,feasibility_rate,note
+ALNS-FR,168,132,36,0.7857142857142857,Primary 30s protocol; all unsuccessful attempts retained
+ALNS-PR,168,132,36,0.7857142857142857,Primary 30s protocol; all unsuccessful attempts retained
+BOTH,336,264,72,0.7857142857142857,56 instances × 2 methods × 3 seeds = 336; 12 hard instances → 72 unsuccessful

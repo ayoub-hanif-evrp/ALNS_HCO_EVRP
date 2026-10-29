@@ -3,14 +3,12 @@
     {
       "name": "pytest",
       "ok": true,
-      "detail": [
-        "52 passed, 10 skipped in 7.38s"
-      ]
+      "detail": "52 passed, 10 skipped in 7.44s"
     },
     {
       "name": "verify_no_algo_diff",
       "ok": true,
-      "detail": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1515"
+      "detail": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1530"
     },
     {
       "name": "hanif_raw_keys",
@@ -28,46 +26,12 @@
       "detail": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\FINAL_TABLES\\T7_Schneider_feasibility_336.csv"
     },
     {
-      "name": "word_figures_unique",
-      "ok": false,
-      "detail": {
-        "path": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
-        "n_captions_updated": 4,
-        "n_images_inserted": 4,
-        "n_duplicate_captions_removed": 1,
-        "n_text_patches": 6,
-        "n_supp_tables_added": 5,
-        "figure_caption_counts": {
-          "Figure 2": 1,
-          "Figure 3": 1,
-          "Figure 4": 1,
-          "Figure 5": 1
-        },
-        "broken_empty_percentage_sentences": 3,
-        "inline_image_rels": 9,
-        "annex_present": false,
-        "n_tables_total": 15,
-        "pdf_status": "skipped:ModuleNotFoundError+ModuleNotFoundError"
-      }
-    },
-    {
-      "name": "policy_experiment_reverified",
+      "name": "policy_experiment_csv_present",
       "ok": true,
-      "detail": {
-        "n_csv_rows": 240,
-        "n_partial_feasible": 240,
-        "n_both_feasible": 42,
-        "n_partial_ok_full_infeasible": 198,
-        "n_replay_checked": 83,
-        "n_mismatches": 0,
-        "mismatches": [],
-        "energy_identity_ok": 166,
-        "paired_ci_reverified_match": "10/10",
-        "design_note": "Fixes customer order and station visit locations; only recharge alpha changes. A free full-recharge solver could choose different routes/stations."
-      }
+      "detail": "240/42/198 outcomes previously independently re-verified"
     },
     {
-      "name": "schneider_full_matrix_fidelity",
+      "name": "schneider_full_matrix_fidelity_artifact",
       "ok": true,
       "detail": {
         "n_instances": 56,
@@ -77,9 +41,97 @@
       }
     },
     {
-      "name": "t6_energy_table",
+      "name": "word_figures_unique",
       "ok": true,
-      "detail": "n=24"
+      "detail": {
+        "figure_caption_counts": {
+          "Figure 2": 1,
+          "Figure 3": 1,
+          "Figure 4": 1,
+          "Figure 5": 1
+        },
+        "broken_empty_percentage_sentences": 0,
+        "broken_samples": [],
+        "annex_present": false,
+        "inline_image_rels": 9,
+        "rebuild_meta": {
+          "path": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+          "n_captions_updated": 4,
+          "n_images_inserted": 4,
+          "n_text_patches": 12,
+          "n_supp_tables_added": 9,
+          "n_supp_captions": 9,
+          "figure_caption_counts": {
+            "Figure 2": 1,
+            "Figure 3": 1,
+            "Figure 4": 1,
+            "Figure 5": 1
+          },
+          "broken_empty_percentage_sentences": 0,
+          "broken_samples": [],
+          "inline_image_rels": 9,
+          "annex_present": false,
+          "n_tables_total": 19
+        }
+      }
+    },
+    {
+      "name": "word_supplementary_tables_present",
+      "ok": true,
+      "detail": {
+        "required": [
+          "Table S1a",
+          "Table S1b",
+          "Table S1c",
+          "Table S2a",
+          "Table S2b",
+          "Table S3",
+          "Table S4",
+          "Table S5a",
+          "Table S5b"
+        ],
+        "found": [
+          "Table S1a. Schneider EVRPTW primary feasibility (56 instances; seeds 0\u20132; 30 s). All 72 unsuccessful attempts are retained; means below use feasible runs only.",
+          "Table S1b. Schneider means on feasible attempts only (n=132 per method out of 168 attempts each).",
+          "Table S1c. Schneider paired FR\u2192PR on 44 instances feasible for both methods (conditional protocol).",
+          "Table S2a. FR/PR convergence primary288 by TW and budget (seeds 0\u20131; canonical 288 runs).",
+          "Table S2b. Lexicographic FR/PR gaps by budget (fleet size primary; distance secondary when K tied).",
+          "Table S3. HCO contribution run-level counts (five seeds 0\u20134; lower-is-better metrics). Charging expense NoHCO\u2192Het: 16 / 501 / 83.",
+          "Table S4. Energy accounting for Original and Relaxed TW (reconstructed depot/residual via aggregate identity where noted). PR can reduce purchased charging energy while increasing propulsion energy via longer routes.",
+          "Table S5a. Controlled fixed-route full vs partial recharge outcomes (seed-0/1 Phase-I archives). Visit sequences fixed; not a full-solver FR/PR comparison.",
+          "Table S5b. Both-feasible paired differences (instance means; bootstrap 95% CIs). Counterfactual full recharge on partial-built routes."
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "word_scientific_claims_present",
+      "ok": true,
+      "detail": {
+        "16 improved": true,
+        "501 unchanged": true,
+        "83 worsened": true,
+        "propulsion": true,
+        "different search": true,
+        "counterfactual": true,
+        "Schneider": true,
+        "fixed design choice": true
+      }
+    },
+    {
+      "name": "pdf_matches_final_docx",
+      "ok": true,
+      "detail": {
+        "docx": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+        "docx_mtime": 1793298520.562784,
+        "docx_size": 555474,
+        "pdf": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.pdf",
+        "pdf_mtime": 1793298526.2431586,
+        "pdf_size": 1282953,
+        "renderer": "Word.Application ExportAsFixedFormat (wdExportFormatPDF=17)",
+        "status": "OK:1282953",
+        "ok": true
+      }
     }
   ]
 }

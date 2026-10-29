@@ -1,31 +1,19 @@
 # Schneider published-benchmark comparability
 
+## Status: **NOT SATISFIED — MISSING EVIDENCE** for a primary numerical BKS gap table
+
 ## Independent verifier
 [ghiermann/evrptw-verifier](https://github.com/ghiermann/evrptw-verifier) verifies Schneider-format
-instances and complete route sequences (node string IDs). Total cost is rounded to **3 decimals**
-(sum rounded, not each arc). Full-recharge E-VRPTW semantics of Schneider et al. (2014).
+instances and complete route sequences. Total cost rounded to 3 decimals. Full-recharge E-VRPTW semantics.
 
-## Our converter (verified this round)
-- Euclidean distances **unrounded** (float32); travel = d/v; energy = d×r.
-- Parameters g, v, Q, C, r and **all** matrix entries cross-checked: 56/56 OK.
-- Homogeneous charging (rate 1/g); waits disabled; neutral price placeholders.
+## What we verified
+- Source + full matrix fidelity (g, v, Q, C, r, all distance/time/energy entries): 56/56 OK.
+- Hard-customer diagnosis: C65/C64/C75 admit station-assisted solo routes; solo D–C–D fails on battery.
+- Identifying missing customers does **not** prove official complete-instance infeasibility.
 
-## Literature BKS inventory
-`src/care-fi/evaluation/schneider_bks.py` transcribes Erdelić & Carić (2022) FR BKS consolidations
-(56 FR entries).
+## Why BKS gaps are not claimed
+1. Primary Schneider checkpoints store metrics without complete node-string route archives (sample has_routes=False). Distance convention remains unrounded Euclidean vs common 2-decimal arc rounding; verifier rounds total cost to 3 decimals. Without exported verifier-valid tours under a documented shared rounding convention, numerical BKS gaps are not claimed.
+2. FR vs PR BKS sets assume specific charging policies incompatible with mixing unverified search configs.
+3. Hard instances (72 attempts) are incomplete and cannot be verifier-validated.
 
-## Feasible-route independent verification status
-Primary Schneider experiment stores feasibility/metrics per attempt. Full node-string route archives
-suitable for the external verifier were **not** frozen for all 264 feasible attempts in the publication
-package. Hard instances (72 attempts) are incomplete (unserved=1) and cannot be verifier-validated.
-
-## Why a verified BKS gap table is NOT claimed
-1. Arc-distance rounding: our unrounded Euclidean vs common 2-decimal arc rounding before summing.
-2. Verifier rounds **total** distance/cost to 3 decimals — comparable only after exporting routes under
-   a documented rounding convention.
-3. Incomplete hard-instance solutions cannot be exported as verifier-valid tours.
-4. FR vs PR BKS sets assume specific charging policies; mixing with our ALNS search configurations
-   without independently verified route export would be misleading.
-
-**Status: NOT SATISFIED — MISSING EVIDENCE** for a primary numerical BKS gap table.
-This is an explicit scientific limitation, not an oversight of report writing.
+BKS inventory remains in `src/care-fi/evaluation/schneider_bks.py` for reference only.

@@ -1,13 +1,6 @@
 request,status,artifact
-Schneider hard-customer root cause (C65/C64/C75),SATISFIED — VERIFIED,Station-assisted solo feasible; solo D-C-D battery fail; same customer across all seeds/methods
-Schneider full g/v/matrix fidelity,SATISFIED — VERIFIED,"{'n_instances': 56, 'n_ok': 56, 'checks': 'g,v,Q,C,r, charging_rate=1/g, ALL distance/time/energy matrix entries vs Euclidean hypot/v/r', 'distance_convention': 'unrounded Euclidean float32; travel=d/"
-Schneider published BKS numerical comparison,NOT SATISFIED — MISSING EVIDENCE,Rounding + missing verifier-ready route archives; see SCHNEIDER_BENCHMARK_COMPARABILITY.md
-Fixed-route full vs partial verification,SATISFIED — VERIFIED,"{'n_csv_rows': 240, 'n_partial_feasible': 240, 'n_both_feasible': 42, 'n_partial_ok_full_infeasible': 198, 'n_replay_checked': 83, 'n_mismatches': 0, 'mismatches': [], 'energy_identity_ok': 166, 'pair"
-Hanif five-seed results reused (no rerun),SATISFIED — VERIFIED,6720 raw rows; tables T3–T6/T9
-"HCO contribution honesty (C1 concentration, worsenings)",SATISFIED — VERIFIED,HCO_FINAL_CONTRIBUTION.md / Table S3
-FR/PR search-implementation caveat,SATISFIED — VERIFIED,FR_PR_FAIRNESS_CORRECTED.md + Results prose
-Convergence primary288,SATISFIED — VERIFIED,"{'name': 'convergence_288_keys', 'ok': True, 'detail': 'rows=288 unique=288 dups=0'}"
-Word Results integration (figures+tables+prose),SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.docx (figures+S1-S5+prose; pdf ok)
-PDF visual verification,SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.pdf (Word COM export)
-pytest suite,SATISFIED — VERIFIED,"{'name': 'pytest', 'ok': True, 'detail': ['52 passed, 10 skipped in 7.38s']}"
-Protected algorithms unchanged vs main,SATISFIED — VERIFIED,"{'name': 'verify_no_algo_diff', 'ok': True, 'detail': 'OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1515'}"
+Word figures + prose integrity,SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.docx
+Supplementary tables S1-S5,SATISFIED — VERIFIED,FINAL_TABLES/WORD_SUPPLEMENTARY/
+PDF matches final DOCX,SATISFIED — VERIFIED,ALNS-HCO-PAPER_RESULTS_REVISED.pdf
+Schneider BKS comparison,NOT SATISFIED — MISSING EVIDENCE,SCHNEIDER_BENCHMARK_COMPARABILITY.md
+Mandatory QC zero failures,SATISFIED — VERIFIED,QC_LOGS/mandatory_verification.json

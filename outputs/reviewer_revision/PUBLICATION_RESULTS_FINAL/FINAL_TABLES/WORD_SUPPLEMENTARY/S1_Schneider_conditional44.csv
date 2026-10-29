@@ -1,0 +1,6 @@
+metric,protocol,n_instances,mean_pct_PR_vs_FR,ci95_pct,note
+distance,30s_only_conditional_feasible,44,-0.22%,"[-1.91, 1.42]",Conditional on instances feasible for both methods (44)
+k,30s_only_conditional_feasible,44,+4.68%,"[2.78, 6.68]",Conditional on instances feasible for both methods (44)
+charged_energy,30s_only_conditional_feasible,44,-15.55%,"[-19.12, -12.11]",Conditional on instances feasible for both methods (44)
+duration,30s_only_conditional_feasible,44,+2.26%,"[0.91, 3.67]",Conditional on instances feasible for both methods (44)
+solver_runtime_s,30s_only_conditional_feasible,44,+0.02%,"[0.01, 0.03]",Conditional on instances feasible for both methods (44)

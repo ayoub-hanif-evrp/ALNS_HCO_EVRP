@@ -1,0 +1,39 @@
+{
+  "word": {
+    "path": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+    "n_captions_updated": 4,
+    "n_images_inserted": 4,
+    "n_text_patches": 12,
+    "n_supp_tables_added": 9,
+    "n_supp_captions": 9,
+    "figure_caption_counts": {
+      "Figure 2": 1,
+      "Figure 3": 1,
+      "Figure 4": 1,
+      "Figure 5": 1
+    },
+    "broken_empty_percentage_sentences": 0,
+    "broken_samples": [],
+    "inline_image_rels": 9,
+    "annex_present": false,
+    "n_tables_total": 19
+  },
+  "pdf": {
+    "docx": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.docx",
+    "docx_mtime": 1793298520.562784,
+    "docx_size": 555474,
+    "pdf": "outputs\\reviewer_revision\\PUBLICATION_RESULTS_FINAL\\ALNS-HCO-PAPER_RESULTS_REVISED.pdf",
+    "pdf_mtime": 1793298526.2431586,
+    "pdf_size": 1282953,
+    "renderer": "Word.Application ExportAsFixedFormat (wdExportFormatPDF=17)",
+    "status": "OK:1282953",
+    "ok": true
+  },
+  "bks": {
+    "bks_comparison": "NOT SATISFIED",
+    "reason": "Primary Schneider checkpoints store metrics without complete node-string route archives (sample has_routes=False). Distance convention remains unrounded Euclidean vs common 2-decimal arc rounding; verifier rounds total cost to 3 decimals. Without exported verifier-valid tours under a documented shared rounding convention, numerical BKS gaps are not claimed.",
+    "checkpoints_scanned_dir": "outputs\\reviewer_revision\\schneider\\checkpoints"
+  },
+  "n_checks": 11,
+  "failed": []
+}

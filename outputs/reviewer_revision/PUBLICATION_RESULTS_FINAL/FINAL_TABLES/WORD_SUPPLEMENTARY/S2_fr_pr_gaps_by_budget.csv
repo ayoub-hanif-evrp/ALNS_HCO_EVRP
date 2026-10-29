@@ -1,0 +1,7 @@
+Budget_s,TW,n_instances,mean_dK_PR_minus_FR,mean_dDist_PR_minus_FR,K_ties,lex_note
+30,original,12,-0.21,"2,071.6",4,Fleet size primary; distance secondary when K tied
+30,relaxed,12,1.67,"1,596.3",3,Fleet size primary; distance secondary when K tied
+120,original,12,0.46,"1,433.3",2,Fleet size primary; distance secondary when K tied
+120,relaxed,12,1.08,"-1,240.0",1,Fleet size primary; distance secondary when K tied
+300,original,12,0.96,"1,548.5",2,Fleet size primary; distance secondary when K tied
+300,relaxed,12,1.08,999.2,3,Fleet size primary; distance secondary when K tied
