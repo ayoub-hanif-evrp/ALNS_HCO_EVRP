@@ -23,7 +23,8 @@ from src.common.energy_accounting import (
     attach_search_diagnostics,
 )
 from src.common.paths import hanif_dirs
-from src.common.stats import bootstrap_mean_ci, mean, pct_change, wins_ties_losses
+from src.common.paired_stats import paired_instance_effects, summarize_paired  # noqa: F401
+from src.common.stats import mean
 from src.hanif.benchmarks.alns import solve_alns
 from src.hanif.benchmarks.greedy import solve_greedy
 from src.hanif.loader import list_instances, load_hanif
@@ -38,16 +39,23 @@ BALANCED_12 = (
     "RC2_10_1", "RC2_10_2",
 )
 
+# Round-3 compute-limited fallback: one instance per family (still all six families).
+BALANCED_6 = (
+    "C1_10_1", "C2_10_1", "R1_10_1", "R2_10_1", "RC1_10_1", "RC2_10_1",
+)
+
 PILOT_INSTANCES = ("C1_10_1", "R1_10_1", "RC2_10_1")
 FR_PR_BUDGETS_S = (30.0, 120.0, 300.0)
 
 
-def select_instances(*, pilot: bool = False, names: list[str] | None = None) -> list[str]:
+def select_instances(*, pilot: bool = False, names: list[str] | None = None, balanced_core: bool = False) -> list[str]:
     available = set(list_instances())
     if names:
         chosen = list(names)
     elif pilot:
         chosen = list(PILOT_INSTANCES)
+    elif balanced_core:
+        chosen = list(BALANCED_6)
     else:
         chosen = list(BALANCED_12)
     missing = [n for n in chosen if n not in available]
@@ -268,74 +276,6 @@ def enrich_phase1_from_shared(*, instance_name: str, tw: str, seed: int) -> dict
     )
 
 
-def paired_instance_effects(
-    rows: list[dict],
-    *,
-    method_a: str,
-    method_b: str,
-    metric: str,
-    tw: str | None = None,
-) -> list[dict]:
-    """Instance-level paired B−A effects with bootstrap CI over instances."""
-    by_inst: dict[str, dict] = defaultdict(dict)
-    for r in rows:
-        if tw is not None and r.get("tw") != tw:
-            continue
-        if str(r.get("feasible")).lower() not in {"true", "1"}:
-            continue
-        if r.get("error"):
-            continue
-        key = (r["instance"], r.get("tw"), r.get("seed"))
-        # average over seeds later at instance level
-        by_inst.setdefault((r["instance"], r.get("tw")), {}).setdefault(r["method"], []).append(r)
-
-    effects = []
-    for (inst, twv), methods in sorted(by_inst.items()):
-        a_rows = methods.get(method_a) or []
-        b_rows = methods.get(method_b) or []
-        if not a_rows or not b_rows:
-            continue
-        a_vals = [float(x[metric]) for x in a_rows if x.get(metric) not in (None, "")]
-        b_vals = [float(x[metric]) for x in b_rows if x.get(metric) not in (None, "")]
-        if not a_vals or not b_vals:
-            continue
-        a_m, b_m = mean(a_vals), mean(b_vals)
-        effects.append({
-            "instance": inst,
-            "tw": twv,
-            "method_a": method_a,
-            "method_b": method_b,
-            "metric": metric,
-            "a_mean": a_m,
-            "b_mean": b_m,
-            "diff_b_minus_a": (None if a_m is None or b_m is None else b_m - a_m),
-            "pct_b_vs_a": pct_change(b_m, a_m) if a_m is not None and b_m is not None else None,
-        })
-    return effects
-
-
-def summarize_paired(effects: list[dict], *, seed: int = 0) -> dict:
-    diffs = [e["diff_b_minus_a"] for e in effects if e.get("diff_b_minus_a") is not None]
-    pcts = [e["pct_b_vs_a"] for e in effects if e.get("pct_b_vs_a") is not None]
-    a = [e["a_mean"] for e in effects if e.get("a_mean") is not None]
-    b = [e["b_mean"] for e in effects if e.get("b_mean") is not None]
-    lo, hi = bootstrap_mean_ci(diffs, seed=seed) if diffs else (None, None)
-    plo, phi = bootstrap_mean_ci(pcts, seed=seed + 1) if pcts else (None, None)
-    w, t, l = wins_ties_losses(b, a) if a and b and len(a) == len(b) else (0, 0, 0)
-    return {
-        "n_instances": len(effects),
-        "mean_diff": mean(diffs),
-        "ci95_diff_lo": lo,
-        "ci95_diff_hi": hi,
-        "mean_pct": mean(pcts),
-        "ci95_pct_lo": plo,
-        "ci95_pct_hi": phi,
-        "wins_b": w,
-        "ties": t,
-        "losses_b": l,
-    }
-
-
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -360,10 +300,23 @@ def aggregate_means(rows: list[dict], group_keys: tuple[str, ...], metrics: tupl
             continue
         if r.get("error"):
             continue
-        key = tuple(r.get(k) for k in group_keys)
-        groups[key].append(r)
+        parts = []
+        for k in group_keys:
+            v = r.get(k)
+            if k in {"budget_s", "budget", "seed"} and v not in (None, ""):
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    pass
+            parts.append(v)
+        groups[tuple(parts)].append(r)
     out = []
-    for key, items in sorted(groups.items()):
+
+    def _sort_key(item):
+        key = item[0]
+        return tuple(("" if x is None else f"{type(x).__name__}:{x}") for x in key)
+
+    for key, items in sorted(groups.items(), key=_sort_key):
         rec = {k: v for k, v in zip(group_keys, key)}
         rec["n"] = len(items)
         for m in metrics:
@@ -381,33 +334,48 @@ def aggregate_means(rows: list[dict], group_keys: tuple[str, ...], metrics: tupl
     return out
 
 
-def plot_fr_pr_convergence(agg_rows: list[dict], out_path: Path) -> None:
-    """Simple matplotlib convergence plot from measured aggregates."""
+def plot_fr_pr_convergence(agg_rows: list[dict], out_path: Path, *, tw: str | None = None) -> None:
+    """Publication-style multi-budget convergence plot from measured aggregates."""
     try:
         import matplotlib.pyplot as plt
     except ImportError:
         write_json(out_path.with_suffix(".json"), {"error": "matplotlib_missing", "rows": agg_rows})
         return
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    for ax, metric, title in zip(
+    rows = list(agg_rows)
+    if tw is not None:
+        rows = [r for r in rows if r.get("tw") == tw]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    for ax, metric, title, ylab in zip(
         axes,
         ("mean_distance", "mean_k"),
-        ("Mean distance", "Mean fleet size K"),
+        ("Travel distance vs search budget", "Fleet size vs search budget"),
+        ("Mean distance", r"Mean fleet size $K$"),
     ):
-        for method, marker in ((METHOD_ALNS_FR, "o"), (METHOD_ALNS_PR, "s")):
-            pts = [r for r in agg_rows if r.get("method") == method]
-            pts = sorted(pts, key=lambda r: float(r.get("budget_s") or 0))
-            if not pts:
+        for method, marker, color in (
+            (METHOD_ALNS_FR, "o", "#1f4e79"),
+            (METHOD_ALNS_PR, "s", "#c45911"),
+        ):
+            pts = [r for r in rows if r.get("method") == method]
+            # If aggregated without tw split, use as-is; else average across tw later upstream
+            by_b: dict[float, list] = defaultdict(list)
+            for r in pts:
+                if r.get(metric) is None:
+                    continue
+                by_b[float(r["budget_s"])].append(float(r[metric]))
+            if not by_b:
                 continue
-            xs = [float(r["budget_s"]) for r in pts]
-            ys = [r.get(metric) for r in pts]
-            ax.plot(xs, ys, marker=marker, label=method)
-        ax.set_xlabel("Budget (s)")
-        ax.set_ylabel(title)
+            xs = sorted(by_b)
+            ys = [sum(by_b[x]) / len(by_b[x]) for x in xs]
+            ax.plot(xs, ys, marker=marker, color=color, linewidth=2, markersize=7, label=method)
+        ax.set_xlabel("Equal search budget (s)")
+        ax.set_ylabel(ylab)
         ax.set_title(title)
-        ax.legend()
+        ax.set_xticks([30, 120, 300])
+        ax.legend(frameon=False)
         ax.grid(True, alpha=0.3)
+    subtitle = f"TW={tw}" if tw else "all TW regimes in aggregate file"
+    fig.suptitle(f"ALNS-FR vs ALNS-PR convergence ({subtitle})", fontsize=11, y=1.02)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)

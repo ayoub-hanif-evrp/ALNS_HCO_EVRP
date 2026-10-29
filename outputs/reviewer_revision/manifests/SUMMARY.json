@@ -1,0 +1,27 @@
+{
+  "hanif_main": {
+    "label": "hanif_main_120_tw",
+    "n_planned": 2520,
+    "n_reusable_solution_results": 2520,
+    "n_missing_solve": 0,
+    "note": "Original publication CSV already covers all 60\u00d72\u00d7methods\u00d7seeds0-2. Main work is energy enrichment from routes/shared Phase I, not re-solve."
+  },
+  "schneider_main": {
+    "label": "schneider_main_56",
+    "n_planned": 336,
+    "n_missing": 336
+  },
+  "convergence_288": {
+    "label": "convergence_288_supplementary",
+    "n_planned": 288,
+    "n_done": 288,
+    "n_missing": 0,
+    "missing_by_budget": {},
+    "missing_by_tw": {}
+  },
+  "compute_estimate_hours_rough": {
+    "hanif_main_resolves_needed": 0,
+    "schneider_missing_30s_2workers": 1.4,
+    "convergence_missing_avg150s_2workers": 0.0
+  }
+}

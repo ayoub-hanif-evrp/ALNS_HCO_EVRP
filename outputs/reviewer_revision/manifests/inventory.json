@@ -1,0 +1,10 @@
+{
+  "solution_results": {
+    "path": "C:\\Users\\AYOUB\\OneDrive - EMSI\\Bureau\\PHD_WORK\\ALNS_HCO_EVRP\\outputs\\raw\\solution_results.csv",
+    "n_rows": 6720,
+    "n_keys": 6720
+  },
+  "shared_phase1_n": 600,
+  "fr_pr_checkpoints_done": 352,
+  "schneider_attempted": 390
+}

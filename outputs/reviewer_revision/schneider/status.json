@@ -1,0 +1,15 @@
+{
+  "label": "schneider_main_56",
+  "budget_s": 30.0,
+  "neutral_charging_assumptions": "Homogeneous rate 1/g from Schneider file; station waiting time = 0; uniform neutral expected price = 1.0 for schema only. Not used to claim heterogeneous price/waiting benefits.",
+  "n_attempted": 390,
+  "n_feasible_rows": 300,
+  "n_infeasible_rows": 90,
+  "feasibility_rate": 0.7692307692307693,
+  "n_planned": 336,
+  "n_completed": 336,
+  "n_missing": 0,
+  "complete_protocol": true,
+  "missing_job_ids": [],
+  "completion_rate": 1.0
+}

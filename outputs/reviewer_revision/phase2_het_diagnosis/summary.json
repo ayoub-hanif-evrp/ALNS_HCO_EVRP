@@ -1,0 +1,8 @@
+{
+  "n_compared": 12,
+  "n_unchanged_vs_phase1": 12,
+  "fraction_unchanged": 1.0,
+  "phase2_distance_tolerance_eps": 0.0,
+  "interpretation": "On the preliminary absolute-results slice, PhaseII-Heterogeneous often returns the Phase-I routes unchanged. Recorded rows still show positive hco_calls / feasible_hco_calls and phase2 iterations, so HCO is evaluated. Acceptance requires phase2_admissible (K<=K*, D<=D_PR*(1+eps) with eps=0) plus lexicographic improvement. With a tight distance freeze, many destroy/repair moves are rejected on distance even when HCO finds feasible recharges. This is a documented behavioural finding \u2014 the algorithm was not altered in Round 3.",
+  "algorithm_modified": false
+}

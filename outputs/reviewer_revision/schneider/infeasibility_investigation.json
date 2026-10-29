@@ -1,0 +1,137 @@
+[
+  {
+    "instance": "r101_21",
+    "gi_feasible": false,
+    "gi_unserved": 1,
+    "gi_k": 25,
+    "missing_customers": [
+      65
+    ],
+    "details": [
+      {
+        "customer_index": 65,
+        "x": 62.0,
+        "y": 77.0,
+        "demand": 20.0,
+        "ready": 68.0,
+        "due": 78.0,
+        "service": 10.0,
+        "dist_depot": 49.92995071411133,
+        "energy_depot": 49.92995071411133,
+        "Q": 62.14,
+        "v": 1.0,
+        "travel_time_depot": 49.92995071411133,
+        "depot_due": 230.0,
+        "customer": 65,
+        "solo_feasible": false,
+        "solo_unserved": 99,
+        "solo_hard_violations": 1,
+        "solo_distance": 99.85990142822266,
+        "solo_duration": 127.92995071411133
+      }
+    ],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "instance": "rc101_21",
+    "gi_feasible": false,
+    "gi_unserved": 1,
+    "gi_k": 24,
+    "missing_customers": [
+      75
+    ],
+    "details": [
+      {
+        "customer_index": 75,
+        "x": 5.0,
+        "y": 5.0,
+        "demand": 16.0,
+        "ready": 65.0,
+        "due": 95.0,
+        "service": 10.0,
+        "dist_depot": 57.00876998901367,
+        "energy_depot": 57.00876998901367,
+        "Q": 79.69,
+        "v": 1.0,
+        "travel_time_depot": 57.00876998901367,
+        "depot_due": 240.0,
+        "customer": 75,
+        "solo_feasible": false,
+        "solo_unserved": 99,
+        "solo_hard_violations": 1,
+        "solo_distance": 114.01753997802734,
+        "solo_duration": 132.00876998901367
+      }
+    ],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "instance": "r102_21",
+    "gi_feasible": false,
+    "gi_unserved": 1,
+    "gi_k": 21,
+    "missing_customers": [
+      65
+    ],
+    "details": [
+      {
+        "customer_index": 65,
+        "x": 62.0,
+        "y": 77.0,
+        "demand": 20.0,
+        "ready": 68.0,
+        "due": 78.0,
+        "service": 10.0,
+        "dist_depot": 49.92995071411133,
+        "energy_depot": 49.92995071411133,
+        "Q": 62.14,
+        "v": 1.0,
+        "travel_time_depot": 49.92995071411133,
+        "depot_due": 230.0,
+        "customer": 65,
+        "solo_feasible": false,
+        "solo_unserved": 99,
+        "solo_hard_violations": 1,
+        "solo_distance": 99.85990142822266,
+        "solo_duration": 127.92995071411133
+      }
+    ],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "instance": "rc102_21",
+    "gi_feasible": true,
+    "gi_unserved": 0,
+    "gi_k": 20,
+    "missing_customers": [],
+    "details": [],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "instance": "r201_21",
+    "gi_feasible": true,
+    "gi_unserved": 0,
+    "gi_k": 8,
+    "missing_customers": [],
+    "details": [],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "instance": "rc201_21",
+    "gi_feasible": true,
+    "gi_unserved": 0,
+    "gi_k": 8,
+    "missing_customers": [],
+    "details": [],
+    "interpretation": "If solo_feasible is True but GI/ALNS leave the customer unserved, this is a search/construction failure under the current operators/time limit \u2014 NOT a proof of mathematical infeasibility of the Schneider instance. If solo_feasible is False, the unrounded Euclidean conversion and/or TW/battery semantics make that customer unreachable alone (converter/model interaction)."
+  },
+  {
+    "battery_unreachable_example": {
+      "instance": "r101_21",
+      "customer": 65,
+      "Q": 62.14,
+      "energy_depot_to_cust_and_back": 99.86,
+      "finding": "Under unrounded Euclidean conversion, customer 65 cannot complete a return trip on one battery and cannot reach a station after service with residual energy. solo_feasible=False and no simple station insertion was feasible in a small probe. This is a geometry/battery interaction under our distance convention \u2014 not silent exclusion. All 56 instances are still executed; infeasible outcomes are recorded."
+    }
+  }
+]

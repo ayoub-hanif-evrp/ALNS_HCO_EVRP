@@ -1,0 +1,10 @@
+{
+  "label": "hanif_main_3seed",
+  "n_rows": 2520,
+  "n_feasible": 2520,
+  "n_phase2_het": 360,
+  "n_phase2_het_identical_to_phase1": 350,
+  "complete_benchmark_coverage": true,
+  "provenance": "outputs/raw/solution_results.csv + shared_phase1 energy enrichment",
+  "resolves_executed": 0
+}

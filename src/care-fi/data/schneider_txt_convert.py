@@ -3,9 +3,12 @@
 Source format: Schneider, Stenger, Goeke (2014). Files are the 56 large
 ``*_21`` instances (100 customers, 21 charging stations) plus optional small
 C5/C10/C15 instances. Euclidean distance; travel time = distance / v;
-energy = distance * r. Homogeneous charging rate 1/g. No station wait or price.
+energy = distance * r. Homogeneous charging rate 1/g.
 
-Does not write ``stations.csv``, so the loader keeps wait/price disabled.
+Neutral schema attrs only (not heterogeneous evidence):
+- charging_rate = 1/g (homogeneous)
+- price_mu=0, price_sigma=0 → E[price]=1 (uniform neutral)
+- wait columns omitted so expected wait stays disabled (=0)
 """
 from __future__ import annotations
 
@@ -16,8 +19,10 @@ from pathlib import Path
 
 import numpy as np
 
-DEFAULT_RAW = Path("dataset/Schneider/raw")
-DEFAULT_CONVERTED = Path("dataset/Schneider/evrptw_instances")
+# Source .txt files live beside the converter output under evrptw_instances/;
+# converted folders are written to dataset/Schneider/converted/.
+DEFAULT_RAW = Path("dataset/Schneider/evrptw_instances")
+DEFAULT_CONVERTED = Path("dataset/Schneider/converted")
 
 LARGE_56 = tuple(
     [f"c10{i}_21" for i in range(1, 10)]
@@ -189,6 +194,27 @@ def convert_one_txt(txt_path: Path, output_dir: Path) -> dict:
         energy_matrix=energy,
     )
 
+    # Neutral station attributes for schema compatibility only.
+    # Wait columns omitted: loader leaves station_wait_expected=None → wait=0.
+    # Do NOT write wait_mu=0 (lognormal E[W]=exp(0)=1 would invent wait=1).
+    # price_mu=0, sigma=0 → E[price]=1 uniform. Homogeneous rate=1/g.
+    homog_rate = (1.0 / g) if g > 0 else 1.0
+    station_rows = []
+    for sid in station_indices:
+        station_rows.append({
+            "node_id": int(sid),
+            "hanif_station_id": int(sid),
+            "charging_rate": float(homog_rate),
+            "price_mu": 0.0,
+            "price_sigma": 0.0,
+            "expected_price_per_energy": 1.0,
+            "density_score": 0.0,
+        })
+    with (out_dir / "stations.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(station_rows[0].keys()))
+        w.writeheader()
+        w.writerows(station_rows)
+
     meta = {
         "instance_name": name,
         "problem_type": "E-VRPTW",
@@ -202,9 +228,13 @@ def convert_one_txt(txt_path: Path, output_dir: Path) -> dict:
         "depot_has_charging": True,
         "planning_horizon": horizon,
         "max_abs_coordinate": max_abs,
-        "station_wait_model": "none",
-        "station_price_model": "none",
+        "station_wait_model": "zero",
+        "station_price_model": "uniform_neutral_1",
         "heterogeneous_stations": False,
+        "neutral_attrs_note": (
+            "wait=0; expected_price_per_energy=1.0 uniform; rate=1/g homogeneous. "
+            "Not used to claim heterogeneous price/waiting benefits."
+        ),
         "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
     }
     vehicle = {
@@ -240,7 +270,9 @@ def convert_one_txt(txt_path: Path, output_dir: Path) -> dict:
         "energy_consumption_rate": energy_rate,
         "inverse_charging_rate": g,
         "speed": speed,
-        "station_wait_model": "none",
+        "station_wait_model": "zero",
+        "station_price_model": "uniform_neutral_1",
+        "heterogeneous_stations": False,
         "validation_passed": True,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")

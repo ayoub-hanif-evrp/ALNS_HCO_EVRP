@@ -1,0 +1,17 @@
+{
+  "instance_name": "c101_21",
+  "family": "C1",
+  "num_customers": 100,
+  "num_stations": 21,
+  "num_nodes": 122,
+  "planning_horizon": 1236.0,
+  "load_capacity": 200.0,
+  "battery_capacity": 79.69,
+  "energy_consumption_rate": 1.0,
+  "inverse_charging_rate": 3.39,
+  "speed": 1.0,
+  "station_wait_model": "zero",
+  "station_price_model": "uniform_neutral_1",
+  "heterogeneous_stations": false,
+  "validation_passed": true
+}
