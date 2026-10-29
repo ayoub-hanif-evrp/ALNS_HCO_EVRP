@@ -1,21 +1,22 @@
 request_id,request,status,evidence
-R1.1,Equal FR/PR budgets; 30/120/300 convergence,SATISFIED,T8_*; FigS_*; primary288
-R1.2,Fleet size before distance,SATISFIED,T8 lex; Schneider_FR168_*
-R1.3,Original/Relaxed TW separate,SATISFIED,paired_comparisons_all.csv
-R1.4,Energy accounting,SATISFIED,T6_energy_accounting.csv
-R1.5,HCO attribution + Plain,SATISFIED,T4_*; T5_*; T_PhaseII_Plain_vs_Heterogeneous_*
+R1.1,Equal FR/PR budgets; 30/120/300,SATISFIED,T8_*; FigS_*; primary288
+R1.2,Fleet before distance,SATISFIED,T8 lex; Schneider_FR168_BKS_*
+R1.3,TW not pooled,SATISFIED,paired_comparisons_all.csv
+R1.4,Energy accounting,SATISFIED,T6_*
+R1.5,HCO + Plain,SATISFIED,T4_*; T5_*; Plain vs Het
 R1.6,Detour vs code,SATISFIED,HCO_DETOUR_VERIFICATION.md
-R1.7,FR/PR implementation differences,SATISFIED,FR_PR_FAIRNESS_CORRECTED.md
-R1.8,Linear PR vs nonlinear charging,SATISFIED,constant-rate model
-R1.9,Setup transparency,SATISFIED,benchmark_characteristics; frozen_experiment_config.json
-R2.1,Schneider coverage + failures,SATISFIED,336/264/72; FR168 168/132/36
-R2.2,Unsuccessful instance explanation,SATISFIED,hard customers; FR168 verifier missing-customer logs
-R2.3,No hetero claims from Schneider,SATISFIED,schneider/NEUTRAL_CHARGING.md
-R2.4,Post-hoc tariff/wage,SATISFIED,T9_*
-R2.5,Benchmark characteristic tables,SATISFIED,benchmark_characteristics/*
-R2.6,Data availability; declarations author-owned,PARTIAL,RESULTS_SOURCE_MANIFEST.csv; declarations author-owned
-R2.7,Figures 4–5 NoHCO vs Het,SATISFIED,FINAL_FIGURES/Figure4_*; Figure5_*
-R2.BKS,FR BKS with external verification,PARTIAL,Schneider_FR168_* (132/168 valid); inventory BKS; not full 336 FR/PR
-R2.PR_routes,Independent PR route-level external verification,NOT REQUIRED,"Documented R2 concerns require Schneider coverage/honesty, not PR-specific external route checker; transparent limitation only"
-QC,Algorithms unchanged vs main,SATISFIED,QC_LOGS/verify_no_algo_diff.txt
-QC,Denominators + figures match sources,SATISFIED,QC_LOGS/final_package_v2_audit.json
+R1.7,FR/PR engines,SATISFIED,FR_PR_FAIRNESS_CORRECTED.md
+R1.8,Linear PR vs nonlinear,SATISFIED,constant-rate model
+R1.9,Setup transparency,SATISFIED,benchmark_characteristics; frozen config
+R2.1,Schneider coverage,SATISFIED,336/264/72; FR168
+R2.2,Unsuccessful explained,SATISFIED,hard customers; FR168 logs
+R2.3,No hetero from Schneider,SATISFIED,NEUTRAL_CHARGING.md
+R2.4,Post-hoc economics,SATISFIED,T9_*
+R2.5,Benchmark tables,SATISFIED,benchmark_characteristics/*
+R2.6,Data paths; declarations author-owned,PARTIAL,manifests; declarations author-owned
+R2.7,Figs 4–5 NoHCO vs Het,SATISFIED,Figure4_*; Figure5_*; figure_source_verification.json
+R2.BKS,FR external verification + BKS,PARTIAL,FR168 132 valid; provenance CSV; not 336 FR/PR route-verified
+R2.PR_routes,Independent PR route verification,PARTIAL,Not explicitly requested in available reviewer-concern summary; PR route-level external verification remains unavailable
+QC,Algorithms vs main unchanged,SATISFIED,QC_LOGS/verify_no_algo_diff.txt
+QC,Source counts + figures,SATISFIED,QC_LOGS/final_release_audit.json
+NOTE,Reviewer-letter wording verification,PARTIAL,Checked against repository reviewer-concern summary only

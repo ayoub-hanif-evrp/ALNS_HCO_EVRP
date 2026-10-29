@@ -1,9 +1,9 @@
-# Author-ready scientific results package (FINAL)
+# Author-ready scientific results package (FINAL RELEASE)
 
-**Authoritative report:** [`FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md`](FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md)
+1. Start here: [`AUTHOR_SCIENTIFIC_HANDOFF_FINAL.md`](AUTHOR_SCIENTIFIC_HANDOFF_FINAL.md)
+2. Full numbers: [`FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md`](FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md)
+3. Checklist: [`FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv`](FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv)
+4. Provenance: [`RESULTS_SOURCE_MANIFEST.csv`](RESULTS_SOURCE_MANIFEST.csv)
+5. Obsolete claims: [`SUPERSEDED_REPORTS_INDEX.md`](SUPERSEDED_REPORTS_INDEX.md)
 
-**Checklist:** [`FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv`](FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv)
-
-Schneider FR evidence is the complete **FR168** study (56×3), not the earlier 3-instance diagnostics or seed-0-only Scope B alone.
-
-Manuscript / declarations / response letters: **author-owned**.
+Manuscript / letters / declarations are **author-owned**.

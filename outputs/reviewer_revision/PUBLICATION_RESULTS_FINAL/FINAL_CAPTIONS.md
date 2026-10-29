@@ -33,3 +33,7 @@ File: `FINAL_TABLES/T5_family_HCO_effects.csv` (filter `comparison=phase2_nohco_
 **Table 9.** Post-hoc depot electricity and wage sensitivity (not optimized).
 
 **Figure S (convergence).** `FigS_FR_PR_convergence_*.png` — two-seed supplementary panel; do not mix into five-seed primary claims.
+
+**Schneider FR168 (results package).** Externally verified full-recharge ALNS-FR routes (168 attempts). Instance-level table uses best-of-three valid seeds (K then distance), not averaging. Files: `Schneider_FR168_*.csv`, `Schneider_BKS_FR_provenance_56.csv`.
+
+**Author warning:** Do not copy three-seed HCO identity **350/360** from historical response drafts; five-seed identity is **584/600**.

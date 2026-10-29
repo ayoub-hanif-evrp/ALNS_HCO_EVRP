@@ -1,0 +1,119 @@
+{
+  "source_counts": {
+    "hanif_raw_n": 6720,
+    "hanif_n7": 3720,
+    "hanif_alns_fr_seeds": {
+      "1": 120,
+      "0": 120,
+      "2": 120,
+      "3": 120,
+      "4": 120
+    },
+    "hanif_gi_seeds": {
+      "0": 120
+    },
+    "hanif_fr_tw": {
+      "original": 300,
+      "relaxed": 300
+    },
+    "convergence_n": 288,
+    "convergence_budgets": {
+      "ALNS-FR|120.0": 48,
+      "ALNS-FR|300.0": 48,
+      "ALNS-FR|30.0": 48,
+      "ALNS-PR|120.0": 48,
+      "ALNS-PR|300.0": 48,
+      "ALNS-PR|30.0": 48
+    },
+    "schneider_primary_30s_n": 336,
+    "schneider_primary_feasible": 264,
+    "schneider_primary_unsuccessful": 72,
+    "fr168_n": 168,
+    "fr168_feasible": 132,
+    "fr168_valid": 132,
+    "fr168_lex_valid": {
+      "FLEET_TIE": 34,
+      "FLEET_WORSE_THAN_BKS": 98
+    },
+    "fr168_repro": {
+      "REPRODUCED_EXACT": 144,
+      "DISCREPANCY": 24
+    },
+    "disc_n": 24,
+    "disc_keys_match_fr168": true,
+    "disc_impact": {
+      "DISTANCE_MINOR": 16,
+      "DISTANCE_MATERIAL": 3,
+      "FLEET_CHANGED": 5
+    },
+    "disc_all_feas_consistent": true,
+    "disc_all_lower_iters": true,
+    "phase1_het": 584,
+    "nohco_het": [
+      16,
+      501,
+      83
+    ],
+    "policy": {
+      "scope": "all_seed01_archives",
+      "n": 240,
+      "partial_feasible": 240,
+      "full_feasible": 42,
+      "both_feasible": 42,
+      "partial_ok_full_infeasible": 198
+    },
+    "plain_distance_n_plain_lower": {
+      "original": 60,
+      "relaxed": 60
+    },
+    "checks_ok": true
+  },
+  "figure_check": {
+    "ok": true,
+    "checks": [
+      {
+        "figure": "Figure2",
+        "check": "partial_src_vs_paired_distance_original",
+        "ok": true,
+        "png": true,
+        "pdf": true
+      },
+      {
+        "figure": "Figure3",
+        "check": "_fig_src_fixed.csv_vs_paired_charging_expense_original",
+        "ok": true,
+        "png": true,
+        "pdf": true
+      },
+      {
+        "figure": "Figure4",
+        "check": "_fig_src_nohco.csv_vs_paired_charging_expense_original",
+        "ok": true,
+        "png": true,
+        "pdf": true
+      },
+      {
+        "figure": "Figure5",
+        "check": "all_family_panels_vs_T5_phase2_nohco_hco",
+        "ok": true,
+        "png": true,
+        "pdf": true
+      },
+      {
+        "figure": "FigS_convergence",
+        "check": "files_and_T8_source_present_pixel_values_not_reextracted",
+        "ok": true,
+        "png_n": 3,
+        "pdf_n": 3,
+        "limitation": "Plotted pixel values not re-extracted from PNG; source table T8 present"
+      }
+    ]
+  },
+  "bks_provenance_n": 56,
+  "pytest_ok": true,
+  "pytest_tail": "52 passed, 10 skipped in 7.32s",
+  "algo_diff_ok": true,
+  "algo_diff": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 2768",
+  "reviewer_letter_note": "Checked against repository reviewer-concern summary; original letters not independently verified",
+  "no_full_scale_rerun": true
+}

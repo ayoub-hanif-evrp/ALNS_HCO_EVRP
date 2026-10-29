@@ -38,3 +38,7 @@ n = **24**. Feasibility matched primary in **24/24**.
 - Similar-iteration discrepancies remain **uncertain** (timing path dependence).
 - Scientific fleet/feasibility conclusions vs primary change only where impact is `FLEET_CHANGED` (feasibility never changed in this set).
 
+
+## Threshold note
+The 5% distance split (`DISTANCE_MATERIAL` vs `DISTANCE_MINOR`) is a **descriptive categorization** for reporting, not an independently established statistical significance threshold.
+Lower iteration throughput is an **evidence-supported contributing explanation**, not proof that CPU contention was the sole cause.

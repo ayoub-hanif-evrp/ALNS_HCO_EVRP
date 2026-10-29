@@ -1,18 +1,24 @@
-artifact,kind,dataset,seeds,instances,methods,statistic,script
-FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md,report,all verified CSVs,0-4 Hanif; 0-2 Schneider; 0-1 convergence,60×2 / 56 / 12×2,full panel,authoritative synthesis,build_author_ready_scientific_package.py
-FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv,checklist,package,—,—,—,SATISFIED/PARTIAL/NOT,build_author_ready_scientific_package.py
-T3_overall_routing_performance.csv,table,solution_results.csv,0-4 (GI:0),60×2 TW,GI..HCO suite,instance-mean then mean,build_publication_results_final.py
-paired_comparisons_all.csv,table,solution_results.csv,0-4,60/TW,"FR/PR, HCO contrasts",paired % + bootstrap CI,build_publication_results_final.py
-T4_HCO_contribution_counts_seeds0to4.csv,table,solution_results.csv,0-4,600 matched,PhaseI/NoHCO/Het,improved/unchanged/worsened,build_publication_results_final.py
-T5_family_HCO_effects.csv,table,solution_results.csv,0-4,10/family,HCO contrasts,mean paired %,build_publication_results_final.py
-T6_energy_accounting.csv,table,solution_results+identity,0-4,60×2,all,means; depot reconstructed,build_publication_results_final.py
-T7_Schneider_*,table,schneider primary,0-2,56 / 44 paired,"FR,PR",feasibility+paired,reviewer Schneider pipeline
-T8_*,table,primary288,0-1,12×2 TW,"FR,PR",paired+lex gaps,fr_pr_convergence
+artifact,kind,dataset,seeds,instances,methods,aggregation,script
+AUTHOR_SCIENTIFIC_HANDOFF_FINAL.md,handoff,final package,—,—,—,n/a,final_scientific_release_audit.py
+FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md,report,verified CSVs,0-4 Hanif; 0-2 Schneider FR168,60×2 / 56,full,see tables,final_scientific_release_audit.py (prior: finalize_scientific_package_v2.py)
+FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv,checklist,package,—,—,—,n/a,final_scientific_release_audit.py
+T3_overall_routing_performance.csv,table,outputs/raw/solution_results.csv,0-4 (GI:0),60×2 TW,GI..HCO,seed-mean within instance then mean,build_publication_results_final.py
+paired_comparisons_all.csv,table,solution_results.csv,0-4,60/TW,"FR/PR,HCO",instance paired % + bootstrap CI; TW separate,build_publication_results_final.py
+Figure2_*,figure,_fig_src_partial.csv / paired,0-4,60/TW,ALNS-FR→PR,forest of paired %,build_publication_results_final.py
+Figure3_*,figure,_fig_src_fixed.csv,0-4,60/TW,FixedRoute Detour→Het,forest paired %,build_publication_results_final.py
+Figure4_*,figure,_fig_src_nohco.csv,0-4,60/TW,PhaseII-NoHCO→Het,forest paired %,build_publication_results_final.py
+Figure5_*,figure,T5 + figure5_family_values.json,0-4,10/family,phase2_nohco_hco,family means (no CI),build_publication_results_final.py
+FigS_FR_PR_convergence_*,figure,T8_table_convergence_by_tw.csv,0-1,12×2,"FR,PR",budget means,plot_fr_pr_convergence / build_publication_results_final.py
+T4_HCO_contribution_counts_seeds0to4.csv,table,solution_results.csv,0-4,600 matched,PhaseI/NoHCO/Het,run-level counts,build_publication_results_final.py
+T_PhaseII_Plain_vs_Heterogeneous_paired.csv,table,solution_results.csv,0-4,60/TW,Plain vs Het,seed-mean within instance then paired,run_schneider_scope_b.py / polish
+T6_energy_accounting.csv,table,solution_results + identity,0-4,60×2,all,means; depot reconstructed,build_publication_results_final.py
+T8_*,table,primary288 runs.csv,0-1,12×2,"FR,PR",paired + lex,fr_pr_convergence pipeline
 T9_economic_sensitivity_posthoc.csv,table,5-seed+energy,0-4,60×2,"FR,PR,Phase*",post-hoc means,build_publication_results_final.py
-FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv,table,shared_phase1,0-1,60×2 archives,partial vs full alpha,counterfactual feasibility+paired,final_reviewer_completion.py
-Figure2_* .. Figure5_* + FigS_*,figure,paired/T5/T8,as tables,as tables,as tables,forest/family/convergence,build_publication_results_final.py / plot_fr_pr_convergence
-Schneider_route_export_diag.csv,diagnostic,new short FR runs,0,"c101_21,c201_21,r201_21",ALNS-FR,route export+replay; no BKS gap claim,build_author_ready_scientific_package.py
-Schneider_external_verifier_results.csv,external_verification,schneider_route_export_diag + original .txt,0,"c101_21,c201_21,r201_21 (+ hard r101_21,rc101_21)",ALNS-FR,ghiermann Java verifier validity + inventory BKS gaps (diagnostic),run_schneider_external_verifier.py
-Schneider_FR168_external_verification.csv,external_verification,schneider_fr168 checkpoints + original .txt,0-2,56 LARGE,ALNS-FR,168 FR external validity + lex BKS,run_schneider_fr168_final.py
-Schneider_FR168_all24_discrepancies.csv,reproducibility,FR168 vs primary FR checkpoints,0-2,24 discrepancy cells,ALNS-FR,per-discrepancy audit,finalize_scientific_package_v2.py
-Schneider_FR168_BKS_instance_summary.csv,table,FR168 externally valid,0-2 within instance,56,ALNS-FR,best-seed lex within instance,finalize_scientific_package_v2.py
+Schneider_FR168_external_verification.csv,table,schneider_fr168 checkpoints,0-2,56,ALNS-FR,per-run,run_schneider_fr168_final.py
+Schneider_FR168_BKS_by_run.csv,table,FR168 + BKS inventory,0-2,56,ALNS-FR,per-run lex vs consolidated BKS,finalize_scientific_package_v2.py
+Schneider_FR168_BKS_instance_summary.csv,table,FR168,0-2,56,ALNS-FR,BEST_OF_THREE valid seeds lex K then D (not average),final_scientific_release_audit.py
+Schneider_BKS_FR_provenance_56.csv,provenance,schneider_bks.py / Erdelic 2022,—,56,FR BKS inventory,lit vs Erdelic lex pick,final_scientific_release_audit.py
+Schneider_FR168_all24_discrepancies.csv,reproducibility,FR168 vs primary FR,0-2,24 cells,ALNS-FR,per discrepancy,finalize_scientific_package_v2.py
+FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv,table,shared_phase1 archives,0-1,60×2,partial vs full alpha,counterfactual feasibility,final_reviewer_completion.py
+HCO_sensitivity_candidates.csv,table,hco_parameter_sensitivity,dev,subset,Het k=2/5/8,identity check,hco sensitivity runner
+QC_LOGS/final_release_audit.json,qc,package,—,—,—,n/a,final_scientific_release_audit.py

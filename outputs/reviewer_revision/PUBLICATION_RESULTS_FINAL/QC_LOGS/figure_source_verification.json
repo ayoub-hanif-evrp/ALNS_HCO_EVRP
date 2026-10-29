@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "figure": "Figure2",
+      "check": "partial_src_vs_paired_distance_original",
+      "ok": true,
+      "png": true,
+      "pdf": true
+    },
+    {
+      "figure": "Figure3",
+      "check": "_fig_src_fixed.csv_vs_paired_charging_expense_original",
+      "ok": true,
+      "png": true,
+      "pdf": true
+    },
+    {
+      "figure": "Figure4",
+      "check": "_fig_src_nohco.csv_vs_paired_charging_expense_original",
+      "ok": true,
+      "png": true,
+      "pdf": true
+    },
+    {
+      "figure": "Figure5",
+      "check": "all_family_panels_vs_T5_phase2_nohco_hco",
+      "ok": true,
+      "png": true,
+      "pdf": true
+    },
+    {
+      "figure": "FigS_convergence",
+      "check": "files_and_T8_source_present_pixel_values_not_reextracted",
+      "ok": true,
+      "png_n": 3,
+      "pdf_n": 3,
+      "limitation": "Plotted pixel values not re-extracted from PNG; source table T8 present"
+    }
+  ]
+}

@@ -1,43 +1,32 @@
-# Schneider FR×3 seeds (168) — final external verification
+# Schneider FR168 — final analysis (release audit)
 
-## Protocol
-- 56 large instances × seeds {0,1,2} × ALNS-FR 30 s (GI 20 s) = **168** attempts
-- Seed 0 reused from Scope B; seeds 1–2 newly executed with route archives
-- Primary FR/PR **336** dataset **not** overwritten
-- Java verifier = full-recharge only → **does not validate ALNS-PR**
+## Scope distinction
+- **FR168**: 56 instances × 3 seeds ALNS-FR with route archives + Java **full-recharge** external verification.
+  Complete for its **132** complete/valid routes (of 168 attempts).
+- **Primary 336**: original FR+PR panel (264 feasible / 72 unsuccessful) — **not** independently route-verified.
+- Do **not** label FR168 as verification of the full 336 FR/PR panel.
 
-## Counts
-- Feasible: **132/168**
-- Unsuccessful: **36/168**
-- Externally valid (report variant): **132/168**
-- Exact reproduce vs primary FR checkpoints: **144/168**
-- Metric discrepancies vs primary: **24/168**
-- Collapse conceals violation: **0**
+## Counts (from archives)
+- Attempts **168**; feasible **132**; unsuccessful **36**
+- Externally valid **132**
+- Exact vs primary **144**; discrepancies **24**
+- Lex BKS among valid runs: {'FLEET_TIE': 34, 'FLEET_WORSE_THAN_BKS': 98}
 
-### By seed
-| Seed | Feasible | External valid | Exact repro |
-|---:|---:|---:|---:|
-| 0 | 44/56 | 44/56 | 51/56 |
-| 1 | 44/56 | 44/56 | 45/56 |
-| 2 | 44/56 | 44/56 | 48/56 |
+## Instance-level aggregation
+Instance summary uses **best externally valid seed by lexicographic (K, then distance)**.
+This is **best-of-three selection**, **not** seed averaging.
+Optional descriptive means over feasible seeds are reported separately in the same CSV.
 
-## Lexicographic BKS (externally valid FR only)
-- Fleet better / tie / worse: **0 / 34 / 98**
-- Distance gaps only meaningful under fleet ties; secondary when fleets differ
-- Inventory: Schneider et al. (2014) / Schiffer & Walther via `schneider_bks.py`
-- Verifier distance: unrounded Euclidean arcs; total rounded to 3 decimals
+## BKS provenance
+- Inventory: Erdelić & Carić (2022) consolidating earlier FR literature (`Schneider_BKS_FR_provenance_56.csv`, n=56).
+- Consolidated BKS = lex min(K,D) of literature row vs Erdelić ALNS.
+- Our verified distances: unrounded Euclidean; verifier total to 3 dp. Gap % assumes inventory D is comparable; residual rounding uncertainty remains.
+- Incomplete/invalid runs remain visible and are excluded from numerical gap calculations.
 
-## Reproducibility
-See `SCHNEIDER_REPRODUCIBILITY_DIAGNOSIS.md`. Wall-clock ALNS ⇒ load-dependent iteration counts.
+## PR
+Independent PR route-level external verification is **not claimed**.
+Not explicitly requested in the available repository reviewer-concern summary; original reviewer-letter wording was not independently verified in this audit.
+Java verifier must not be used to claim PR validation.
 
-## Artifacts
-- `FINAL_TABLES/Schneider_FR168_external_verification.csv`
-- `FINAL_TABLES/Schneider_FR168_BKS_fleet_ties.csv`
-- Checkpoints: `outputs/reviewer_revision/schneider_fr168/checkpoints/`
-- Logs: `QC_LOGS/fr168_verifier_*.txt`
-
-## PR route verification
-Documented reviewer concerns (repository RESPONSE summary) require Schneider **coverage and honest failure reporting**, not an independent PR-specific route verifier. The Java tool is **full-recharge only** and must not be used to claim PR verification.
-
-## Reproducibility
-All 24 FR168 vs-primary discrepancies audited in `Schneider_FR168_all24_discrepancies.csv` and summarized in `SCHNEIDER_REPRODUCIBILITY_ALL24.md`.
+## Primary 336
+Official FR/PR coverage: **336** attempts, **264** feasible, **72** unsuccessful.
