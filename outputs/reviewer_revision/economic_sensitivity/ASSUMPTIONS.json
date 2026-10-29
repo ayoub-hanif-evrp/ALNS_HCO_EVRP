@@ -1,0 +1,16 @@
+{
+  "depot_tariffs_tested": [
+    0.0,
+    0.1,
+    0.2,
+    0.5
+  ],
+  "wages_per_duration_tested": [
+    0.0,
+    0.25,
+    0.5,
+    1.0
+  ],
+  "optimizer_changed": false,
+  "claim_restriction": "These totals are hypothetical post-hoc evaluations. ALNS/HCO do not optimize wage-inclusive or depot-tariff total cost."
+}

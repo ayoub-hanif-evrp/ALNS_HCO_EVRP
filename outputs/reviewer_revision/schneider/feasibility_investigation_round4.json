@@ -1,0 +1,692 @@
+{
+  "main30_status": {
+    "n_planned_30s": 336,
+    "n_rows_30s": 336,
+    "n_feasible": 264,
+    "n_infeasible": 72,
+    "n_instances_both_methods_feasible_paired": 44,
+    "infeasible_instances": [
+      "r101_21",
+      "r102_21",
+      "r103_21",
+      "r105_21",
+      "r106_21",
+      "r108_21",
+      "rc101_21",
+      "rc103_21",
+      "rc104_21",
+      "rc105_21",
+      "rc106_21",
+      "rc107_21"
+    ],
+    "excluded_from_primary_stats": "non-30s pilot/selected records",
+    "complete_protocol": true
+  },
+  "instance_findings": [
+    {
+      "instance": "r101_21",
+      "family": "r101",
+      "Q": 62.14,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.48,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "r102_21",
+      "family": "r102",
+      "Q": 62.14,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.48,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "r103_21",
+      "family": "r103",
+      "Q": 62.14,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.48,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "r105_21",
+      "family": "r105",
+      "Q": 62.14,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.48,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "r106_21",
+      "family": "r106",
+      "Q": 62.6,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.48,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "r108_21",
+      "family": "r108",
+      "Q": 64.06,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.47,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc101_21",
+      "family": "rc101",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc103_21",
+      "family": "rc103",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc104_21",
+      "family": "rc104",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc105_21",
+      "family": "rc105",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc106_21",
+      "family": "rc106",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    },
+    {
+      "instance": "rc107_21",
+      "family": "rc107",
+      "Q": 79.69,
+      "C": 200.0,
+      "r": 1.0,
+      "g": 0.38,
+      "v": 1.0,
+      "num_customers": 100,
+      "num_stations": 21,
+      "distance_convention": "euclidean_unrounded; travel=distance/v; energy=distance*r",
+      "probes": [],
+      "disclaimer": "replay_route tests a single route's battery/TW/capacity walk. It does not mark other customers unserved. Failure of a small station-insert probe is not a mathematical proof of instance infeasibility under every distance-rounding convention."
+    }
+  ],
+  "method_note": "Individual-route feasibility uses replay_route. Round-3 try_solo_route incorrectly used replay_solution (counts other customers unserved). For all 12 ALNS-infeasible instances, every customer that fails a direct depot-customer-depot walk has at least one feasible station-insertion pattern in a small probe \u2014 so ALNS unserved=1 is classified as construction/search failure under the current implementation, not proven mathematical infeasibility.",
+  "corrected_route_probes": [
+    {
+      "instance": "r101_21",
+      "n_customers_solo_infeasible": 26,
+      "n_customers_feasible_via_station_probe": 26,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 9,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            9,
+            0
+          ]
+        },
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 14,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            112,
+            14,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "r102_21",
+      "n_customers_solo_infeasible": 26,
+      "n_customers_feasible_via_station_probe": 26,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 9,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            9,
+            0
+          ]
+        },
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 14,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            112,
+            14,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "r103_21",
+      "n_customers_solo_infeasible": 26,
+      "n_customers_feasible_via_station_probe": 26,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 9,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            9,
+            0
+          ]
+        },
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 14,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            111,
+            14,
+            111,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "r105_21",
+      "n_customers_solo_infeasible": 26,
+      "n_customers_feasible_via_station_probe": 26,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 9,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            9,
+            0
+          ]
+        },
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 14,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            112,
+            14,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "r106_21",
+      "n_customers_solo_infeasible": 26,
+      "n_customers_feasible_via_station_probe": 26,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 9,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            9,
+            0
+          ]
+        },
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 14,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            112,
+            14,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "r108_21",
+      "n_customers_solo_infeasible": 21,
+      "n_customers_feasible_via_station_probe": 21,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 11,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            11,
+            0
+          ]
+        },
+        {
+          "customer": 23,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            115,
+            23,
+            115,
+            0
+          ]
+        },
+        {
+          "customer": 25,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            102,
+            25,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc101_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc103_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc104_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc105_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc106_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    },
+    {
+      "instance": "rc107_21",
+      "n_customers_solo_infeasible": 29,
+      "n_customers_feasible_via_station_probe": 29,
+      "n_customers_fail_solo_and_station_probe": 0,
+      "examples_need_charge": [
+        {
+          "customer": 5,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            104,
+            5,
+            0
+          ]
+        },
+        {
+          "customer": 16,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            110,
+            16,
+            0
+          ]
+        },
+        {
+          "customer": 17,
+          "solo_failure": "battery_arrival node=0",
+          "example_feasible_nodes": [
+            0,
+            109,
+            17,
+            0
+          ]
+        }
+      ],
+      "examples_fail_all_probes": [],
+      "classification": "construction_or_search_failure_likely",
+      "disclaimer": "Not a proof of mathematical infeasibility of official Schneider instances under rounded distances."
+    }
+  ]
+}

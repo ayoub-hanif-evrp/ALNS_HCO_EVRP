@@ -1,0 +1,8 @@
+method,n,has_residual,has_depot,flagged,residual_fill_rate
+ALNS-FR,360,360,360,0,1.0
+ALNS-PR,360,360,360,0,1.0
+FixedRoute-HCO-Detour,360,360,360,0,1.0
+FixedRoute-HCO-Heterogeneous,360,360,360,0,1.0
+PhaseI-PR-15,360,360,360,0,1.0
+PhaseII-Heterogeneous,360,360,360,0,1.0
+PhaseII-NoHCO,360,360,360,0,1.0

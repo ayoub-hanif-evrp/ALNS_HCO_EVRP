@@ -1,0 +1,53 @@
+{
+  "identities": {
+    "E_drive": "K*B_max + E_enroute - E_return",
+    "E_depot": "E_drive - E_enroute",
+    "E_return": "K*B_max - E_depot"
+  },
+  "label": "reconstructed_from_aggregate_energy_balance",
+  "assumption": "full departure battery; no charging losses; Hanif energy=distance*rate where propulsion derived",
+  "coverage": {
+    "ALNS-FR": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "ALNS-PR": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "PhaseI-PR-15": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "FixedRoute-HCO-Heterogeneous": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "PhaseII-NoHCO": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "PhaseII-Heterogeneous": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    },
+    "FixedRoute-HCO-Detour": {
+      "n": 360,
+      "has_residual": 360,
+      "has_depot": 360,
+      "flagged": 0
+    }
+  }
+}

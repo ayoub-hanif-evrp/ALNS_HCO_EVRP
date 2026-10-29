@@ -1,17 +1,10 @@
 {
-  "label": "priority_protocol",
-  "runtime_definition": "solver_runtime_s = wall-clock inside ALNS (+ GI for FR). reporting_overhead_s = post-hoc energy/diagnostics only. end_to_end_runtime_s = solver_runtime_s + reporting_overhead_s. Equal search budget is the ALNS time_limit_s / phase1_s argument (30/120/300).",
-  "updated_utc": "2026-10-29T01:16:27Z",
-  "n_planned": 288,
-  "n_completed": 288,
-  "n_missing": 0,
-  "complete_protocol": true,
-  "missing_job_ids": [],
-  "completion_rate": 1.0,
-  "missing_reporting_fields": [],
-  "budgets_present_s": [
-    30.0,
-    120.0,
-    300.0
-  ]
+  "label": "primary_288_seeds01",
+  "protocol": "288_primary_seeds_0_1",
+  "n_rows": 288,
+  "n_cells": 12,
+  "cell_size": 24,
+  "ok": true,
+  "n_paired_summaries": 36,
+  "mean_n_matched_seeds_max": 2.0
 }

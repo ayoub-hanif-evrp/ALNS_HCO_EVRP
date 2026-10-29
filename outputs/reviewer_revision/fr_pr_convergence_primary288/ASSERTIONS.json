@@ -1,0 +1,7 @@
+{
+  "n_primary": 288,
+  "cell_size": 24,
+  "matched_seeds_required": 2,
+  "mean_n_matched_seeds_max": 2.0,
+  "passed": true
+}

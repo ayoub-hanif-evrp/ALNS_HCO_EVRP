@@ -1,0 +1,10 @@
+{
+  "label": "primary_288_seeds01",
+  "protocol": "288_primary_seeds_0_1",
+  "n_rows": 288,
+  "n_cells": 12,
+  "cell_size": 24,
+  "ok": true,
+  "n_paired_summaries": 36,
+  "mean_n_matched_seeds_max": 2.0
+}

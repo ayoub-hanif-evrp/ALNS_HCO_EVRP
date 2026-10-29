@@ -1,0 +1,8 @@
+{
+  "n_compared_phase1_het": 360,
+  "n_identical_aggregate_metrics_vs_phase1": 350,
+  "fraction_identical_aggregate": 0.9722222222222222,
+  "eps": 0.0,
+  "eps_note": "phase2_distance_tolerance=0.0 freezes distance at D<=D_PR. Acceptance also requires K<=K* and lexicographic improvement. Matching aggregate distance/charged_energy/K does not prove identical routes without final-route checksums or node sequences.",
+  "algorithm_modified": false
+}
