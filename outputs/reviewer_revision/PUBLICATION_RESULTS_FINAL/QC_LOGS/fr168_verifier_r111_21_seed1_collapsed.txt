@@ -1,0 +1,74 @@
+Solution 1 (r111_21__seed1__collapsed.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C89, C60, C84, C17, C61, S11, C85, C93, C99, C6, D0]
+- load:		 115
+- distance:	 70.607
+- duration:	181.094
+- violations:	 none
+Route 2: [D0, C22, S17, S18, S19, C25, C55, C24, C29, C12, C26, D0]
+- load:		  74
+- distance:	111.087
+- duration:	204.630
+- violations:	 none
+Route 3: [D0, C1, C70, C20, C9, S4, C71, C35, C34, C78, D0]
+- load:		  80
+- distance:	107.872
+- duration:	211.746
+- violations:	 none
+Route 4: [D0, C40, C74, S17, S18, C4, C72, C73, C58, C53, D0]
+- load:		 102
+- distance:	 84.541
+- duration:	174.016
+- violations:	 none
+Route 5: [D0, C96, C37, S11, C44, C38, C14, C42, C97, C95, C94, D0]
+- load:		 137
+- distance:	 93.728
+- duration:	196.859
+- violations:	 none
+Route 6: [D0, C59, C98, C100, C91, S11, C16, C86, C5, C83, D0]
+- load:		 147
+- distance:	 83.918
+- duration:	177.327
+- violations:	 none
+Route 7: [D0, C92, C43, S14, C15, C57, C2, C87, C13, D0]
+- load:		  80
+- distance:	 84.419
+- duration:	173.580
+- violations:	 none
+Route 8: [D0, C3, C79, C33, C51, S3, C30, C69, C27, D0]
+- load:		 100
+- distance:	 74.308
+- duration:	163.200
+- violations:	 none
+Route 9: [D0, C81, S4, C65, C66, C32, C90, C63, S5, D0]
+- load:		 107
+- distance:	123.809
+- duration:	229.382
+- violations:	 none
+Route 10: [D0, S9, S10, C45, C8, C46, C47, C48, C19, S7, C88, C31, D0]
+- load:		 142
+- distance:	110.037
+- duration:	227.003
+- violations:	 none
+Route 11: [D0, C21, C75, S17, C54, C80, C68, C77, C50, C76, C28, D0]
+- load:		 145
+- distance:	 94.719
+- duration:	198.571
+- violations:	 none
+Route 12: [D0, C62, S8, C36, C49, C64, C11, S7, C10, D0]
+- load:		  91
+- distance:	123.550
+- duration:	224.863
+- violations:	 none
+Route 13: [D0, C52, C7, C82, C18, D0]
+- load:		  42
+- distance:	 51.458
+- duration:	 91.458
+- violations:	 none
+Route 14: [D0, C56, C39, S18, C67, C23, C41, D0]
+- load:		  96
+- distance:	103.274
+- duration:	170.957
+- violations:	 none
+Total cost = 1317.328
+[_valid_]
+

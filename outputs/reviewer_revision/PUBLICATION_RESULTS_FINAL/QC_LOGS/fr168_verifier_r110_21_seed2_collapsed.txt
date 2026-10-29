@@ -1,0 +1,74 @@
+Solution 1 (r110_21__seed2__collapsed.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C62, C64, C49, S8, C36, C47, C46, C82, D0]
+- load:		 107
+- distance:	124.990
+- duration:	224.833
+- violations:	 none
+Route 2: [D0, C89, C60, C45, C17, C16, S11, C38, C86, C61, D0]
+- load:		 119
+- distance:	119.029
+- duration:	222.880
+- violations:	 none
+Route 3: [D0, C52, C7, C48, C19, S7, C88, C31, C69, C27, D0]
+- load:		 125
+- distance:	 76.321
+- duration:	176.130
+- violations:	 none
+Route 4: [D0, C70, S3, C20, C32, C90, C63, C11, C10, S5, D0]
+- load:		  78
+- distance:	104.501
+- duration:	210.394
+- violations:	 none
+Route 5: [D0, C40, C74, S17, C4, C54, C24, C29, S1, C12, D0]
+- load:		  85
+- distance:	100.639
+- duration:	204.145
+- violations:	 none
+Route 6: [D0, C6, C96, S11, C100, C85, C98, C37, C92, C97, C95, D0]
+- load:		 124
+- distance:	 63.431
+- duration:	165.155
+- violations:	 none
+Route 7: [D0, C1, S3, C51, C9, C34, C78, C3, C77, C76, C28, D0]
+- load:		 109
+- distance:	 81.902
+- duration:	183.256
+- violations:	 none
+Route 8: [D0, S14, C43, C14, C44, C91, C93, C99, C59, S13, C94, D0]
+- load:		 132
+- distance:	 86.225
+- duration:	198.335
+- violations:	 none
+Route 9: [D0, C33, C81, S4, C35, C65, C71, S4, C66, C30, D0]
+- load:		 126
+- distance:	122.725
+- duration:	224.272
+- violations:	 none
+Route 10: [D0, C5, C84, C83, C8, C18, S0, D0]
+- load:		  65
+- distance:	 64.910
+- duration:	144.119
+- violations:	 none
+Route 11: [D0, C58, C2, C57, C15, C42, C87, C13, D0]
+- load:		  94
+- distance:	 66.113
+- duration:	136.113
+- violations:	 none
+Route 12: [D0, C21, C72, C75, S17, C22, C41, C73, C53, D0]
+- load:		 100
+- distance:	 69.785
+- duration:	153.340
+- violations:	 none
+Route 13: [D0, C56, C23, C67, C39, S18, C25, C55, C26, D0]
+- load:		 116
+- distance:	101.932
+- duration:	199.212
+- violations:	 none
+Route 14: [D0, C50, C79, C68, C80, D0]
+- load:		  78
+- distance:	 59.171
+- duration:	 99.171
+- violations:	 none
+Total cost = 1241.674
+[_valid_]
+

@@ -1,0 +1,4 @@
+Solution 1 (r108_21__seed0__collapsed.sol.txt): Not all customers have been assigned to a route!
+customers missing: C64
+[_INVALID_]
+

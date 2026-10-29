@@ -1,0 +1,19 @@
+Solution 1 (r210_21__seed0__raw.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C52, C7, C8, C99, C59, C92, C100, C14, C42, C26, C76, S3, C81, C33, C68, C80, C54, C25, C67, C23, C75, C74, C2, C57, C87, C97, C95, C94, C89, C6, S13, S7, C10, C30, C20, C71, C9, C51, D0]
+- load:		 521
+- distance:	388.111
+- duration:	827.711
+- violations:	 none
+Route 2: [D0, C28, C53, C18, S9, C13, C58, C21, C72, C56, C39, S18, C55, C77, C50, C69, C31, C88, C62, C11, C64, C49, C36, C47, C48, C82, S9, C45, C17, C61, C16, C86, C38, C85, C96, D0]
+- load:		 534
+- distance:	326.003
+- duration:	700.620
+- violations:	 none
+Route 3: [D0, C27, C70, C1, C3, C79, C78, C34, C35, C65, C66, C32, C90, C63, C19, C46, S9, C83, C60, C84, C5, C93, C98, C37, C91, C44, C43, S14, C15, C41, C22, C73, C40, C4, C24, C29, C12, D0]
+- load:		 403
+- distance:	339.659
+- duration:	808.694
+- violations:	 none
+Total cost = 1053.774
+[_valid_]
+

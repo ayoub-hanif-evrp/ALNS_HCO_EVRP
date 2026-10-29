@@ -1,0 +1,64 @@
+Solution 1 (r112_21__seed1__raw.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, S5, C62, C11, C64, C49, C36, S8, C47, C48, D0]
+- load:		 138
+- distance:	116.976
+- duration:	222.705
+- violations:	 none
+Route 2: [D0, C1, C70, C20, C66, S4, S4, C65, C71, C9, C51, D0]
+- load:		 110
+- distance:	120.386
+- duration:	225.959
+- violations:	 none
+Route 3: [D0, C52, C88, C82, C46, C8, S9, C18, D0]
+- load:		  56
+- distance:	 81.218
+- duration:	170.277
+- violations:	 none
+Route 4: [D0, C3, C79, C78, C34, C35, S4, C81, C33, C50, C27, D0]
+- load:		 127
+- distance:	 93.533
+- duration:	207.830
+- violations:	 none
+Route 5: [D0, C89, S9, C60, C93, C85, S11, C61, C84, C17, C45, C83, C5, D0]
+- load:		 156
+- distance:	103.215
+- duration:	222.433
+- violations:	 none
+Route 6: [D0, C55, C25, S19, S1, C24, C29, C68, C77, C76, C28, D0]
+- load:		  99
+- distance:	 98.231
+- duration:	202.732
+- violations:	 none
+Route 7: [D0, C31, C7, C19, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S7, S5, C10, C63, C90, C32, C30, C69, D0]
+- load:		 128
+- distance:	109.824
+- duration:	224.745
+- violations:	 none
+Route 8: [D0, C40, C21, C72, C75, S17, C56, C4, C54, S1, C80, C12, C26, D0]
+- load:		 148
+- distance:	 90.573
+- duration:	218.632
+- violations:	 none
+Route 9: [D0, C96, C59, C92, C100, C91, S11, C44, C86, C16, C99, C94, D0]
+- load:		 167
+- distance:	 81.777
+- duration:	195.989
+- violations:	 none
+Route 10: [D0, C6, S13, C98, C37, C14, C38, C43, S14, C42, D0]
+- load:		  69
+- distance:	100.630
+- duration:	202.283
+- violations:	 none
+Route 11: [D0, S18, C39, C67, C23, C22, C74, C73, C2, S15, C53, D0]
+- load:		 141
+- distance:	104.408
+- duration:	225.134
+- violations:	 none
+Route 12: [D0, C58, C41, S16, C15, C57, C87, C97, C95, C13, D0]
+- load:		 119
+- distance:	 80.230
+- duration:	174.589
+- violations:	 none
+Total cost = 1181.001
+[_valid_]
+

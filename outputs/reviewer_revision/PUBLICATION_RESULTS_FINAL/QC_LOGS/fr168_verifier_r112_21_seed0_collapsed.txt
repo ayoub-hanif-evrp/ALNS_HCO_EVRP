@@ -1,0 +1,69 @@
+Solution 1 (r112_21__seed0__collapsed.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C59, C37, C98, S11, C91, C100, C42, C43, C15, C57, D0]
+- load:		  91
+- distance:	 88.313
+- duration:	191.396
+- violations:	 none
+Route 2: [D0, C89, C60, C84, C17, C86, C16, S11, C5, C83, C18, D0]
+- load:		 130
+- distance:	 92.853
+- duration:	207.331
+- violations:	 none
+Route 3: [D0, C1, C70, C20, C66, S4, C65, C71, C9, C51, D0]
+- load:		 110
+- distance:	120.386
+- duration:	225.959
+- violations:	 none
+Route 4: [D0, C74, S17, C22, C41, C2, C97, S11, C93, C99, C92, C95, D0]
+- load:		 103
+- distance:	105.047
+- duration:	228.911
+- violations:	 none
+Route 5: [D0, C8, C45, C46, C36, S8, C64, C11, C88, D0]
+- load:		  61
+- distance:	124.963
+- duration:	222.803
+- violations:	 none
+Route 6: [D0, C52, C7, C82, C48, C47, S8, C49, C19, D0]
+- load:		 140
+- distance:	 95.060
+- duration:	185.268
+- violations:	 none
+Route 7: [D0, C6, C96, C85, C61, S11, C44, C38, C14, C87, C13, D0]
+- load:		 171
+- distance:	 94.607
+- duration:	199.409
+- violations:	 none
+Route 8: [D0, C3, C79, C78, C34, C35, S4, C81, C33, C50, C77, C76, D0]
+- load:		 138
+- distance:	101.627
+- duration:	225.925
+- violations:	 none
+Route 9: [D0, C31, S5, S7, C62, C10, C63, C90, C32, C30, C69, C27, D0]
+- load:		 141
+- distance:	 94.488
+- duration:	199.124
+- violations:	 none
+Route 10: [D0, C80, C68, C29, C24, C55, S19, C56, C73, C53, D0]
+- load:		  85
+- distance:	 96.260
+- duration:	200.691
+- violations:	 none
+Route 11: [D0, C58, C40, S19, C25, C54, C12, C28, D0]
+- load:		  86
+- distance:	 75.507
+- duration:	151.855
+- violations:	 none
+Route 12: [D0, C21, C72, C75, S17, C23, C67, C39, C4, C26, D0]
+- load:		 175
+- distance:	 93.180
+- duration:	187.036
+- violations:	 none
+Route 13: [D0, C94, D0]
+- load:		  27
+- distance:	 24.083
+- duration:	 34.083
+- violations:	 none
+Total cost = 1206.374
+[_valid_]
+

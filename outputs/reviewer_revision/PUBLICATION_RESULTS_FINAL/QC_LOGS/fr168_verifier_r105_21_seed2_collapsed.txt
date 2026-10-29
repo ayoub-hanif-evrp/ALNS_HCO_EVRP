@@ -1,0 +1,4 @@
+Solution 1 (r105_21__seed2__collapsed.sol.txt): Not all customers have been assigned to a route!
+customers missing: C65
+[_INVALID_]
+

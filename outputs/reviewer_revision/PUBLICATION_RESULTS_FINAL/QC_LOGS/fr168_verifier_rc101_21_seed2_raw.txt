@@ -1,0 +1,4 @@
+Solution 1 (rc101_21__seed2__raw.sol.txt): Not all customers have been assigned to a route!
+customers missing: C75
+[_INVALID_]
+

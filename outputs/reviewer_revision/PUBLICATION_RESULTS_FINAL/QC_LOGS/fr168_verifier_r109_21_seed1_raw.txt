@@ -1,0 +1,79 @@
+Solution 1 (r109_21__seed1__raw.sol.txt): All customers have been assigned to a route.
+Route 1: [D0, C21, C56, C39, C67, S18, S1, C24, C12, C26, D0]
+- load:		 112
+- distance:	117.781
+- duration:	224.608
+- violations:	 none
+Route 2: [D0, C33, C81, S4, S4, C34, C29, C77, C76, C28, D0]
+- load:		 103
+- distance:	 95.539
+- duration:	183.372
+- violations:	 none
+Route 3: [D0, C1, C70, S3, C20, C66, C65, C35, S4, C9, D0]
+- load:		  93
+- distance:	119.578
+- duration:	227.380
+- violations:	 none
+Route 4: [D0, S19, C25, C55, C54, C80, C50, C51, S3, D0]
+- load:		  55
+- distance:	105.659
+- duration:	202.735
+- violations:	 none
+Route 5: [D0, S14, C43, C14, C42, C97, C95, C94, D0]
+- load:		  91
+- distance:	 81.716
+- duration:	155.684
+- violations:	 none
+Route 6: [D0, C6, C59, C98, C100, C91, S11, S13, C99, D0]
+- load:		  68
+- distance:	 62.532
+- duration:	141.353
+- violations:	 none
+Route 7: [D0, C40, C74, C22, C75, S17, C23, C4, C72, C73, C53, D0]
+- load:		 149
+- distance:	 87.752
+- duration:	193.447
+- violations:	 none
+Route 8: [D0, C96, C61, C38, S11, C85, C93, C92, C37, C87, C13, D0]
+- load:		 162
+- distance:	103.110
+- duration:	222.295
+- violations:	 none
+Route 9: [D0, C89, C60, C84, C17, C16, S11, C86, C44, S11, S11, S11, S11, S11, S11, S11, S11, S11, S11, S11, S11, S11, S13, D0]
+- load:		  99
+- distance:	 97.042
+- duration:	204.842
+- violations:	 none
+Route 10: [D0, C8, S8, C49, C64, C11, C19, S7, C88, D0]
+- load:		  86
+- distance:	118.094
+- duration:	220.251
+- violations:	 none
+Route 11: [D0, C31, C62, S7, S8, C36, C46, C47, C48, C82, D0]
+- load:		 131
+- distance:	106.192
+- duration:	196.423
+- violations:	 none
+Route 12: [D0, C52, C18, C83, C45, C5, S13, D0]
+- load:		  74
+- distance:	 70.903
+- duration:	146.680
+- violations:	 none
+Route 13: [D0, C7, S5, C63, C90, C32, C69, C27, D0]
+- load:		  63
+- distance:	 87.454
+- duration:	163.067
+- violations:	 none
+Route 14: [D0, C58, C2, C15, S16, C41, C57, D0]
+- load:		  45
+- distance:	 78.722
+- duration:	148.093
+- violations:	 none
+Route 15: [D0, C68, C3, C79, C78, S4, C71, C30, C10, D0]
+- load:		 127
+- distance:	107.608
+- duration:	200.757
+- violations:	 none
+Total cost = 1439.683
+[_valid_]
+
