@@ -1,5 +1,22 @@
 {
   "bks_comparison": "NOT SATISFIED",
-  "reason": "Primary Schneider checkpoints store metrics without complete node-string route archives (sample has_routes=False). Distance convention remains unrounded Euclidean vs common 2-decimal arc rounding; verifier rounds total cost to 3 decimals. Without exported verifier-valid tours under a documented shared rounding convention, numerical BKS gaps are not claimed.",
-  "checkpoints_scanned_dir": "outputs\\reviewer_revision\\schneider\\checkpoints"
+  "reason": "Primary Schneider checkpoints store metrics without complete node-string route archives. Distance convention remains unrounded Euclidean vs common 2-decimal arc rounding; the independent verifier rounds total cost to 3 decimals. Inventory compare_row distances are reference-only and are not publication BKS gaps.",
+  "primary_protocol_unchanged": {
+    "n_attempts": 336,
+    "n_feasible": 264,
+    "n_unsuccessful": 72
+  },
+  "targeted_route_export_diag": {
+    "n_exports": 3,
+    "n_internal_replay_ok": 3,
+    "instances": ["c101_21", "c201_21", "r201_21"],
+    "budget_s": 30,
+    "numerical_bks_gap_claimed": false,
+    "paths": [
+      "outputs/reviewer_revision/schneider_route_export_diag/",
+      "FINAL_TABLES/Schneider_route_export_diag.csv"
+    ]
+  },
+  "documentation": "SCHNEIDER_BENCHMARK_COMPARABILITY.md",
+  "checkpoints_scanned_dir": "outputs/reviewer_revision/schneider/checkpoints"
 }

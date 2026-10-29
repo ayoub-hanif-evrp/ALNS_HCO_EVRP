@@ -3216,8 +3216,9 @@
         "charging_visits": 0.021231422505308156
       }
     ],
-    "n7": 4200,
-    "n_raw": 6720
+    "n7": 3720,
+    "n_raw": 6720,
+    "n7_note": "corrected: 120 GI + 6*600 = 3720"
   },
   "hco": {
     "n_matched_phase1_het": 600,
@@ -3257,5 +3258,9 @@
     "updated_cells": 40
   },
   "n_archive_match": 144,
-  "n_archive_mismatch": 0
+  "n_archive_mismatch": 0,
+  "n7_previous_incorrect": 4200,
+  "n7": 3720,
+  "n7_corrected": 3720,
+  "n7_note": "120 GI + 6*600 stochastic = 3720; prior 4200 incorrectly assumed GI x 5 seeds"
 }

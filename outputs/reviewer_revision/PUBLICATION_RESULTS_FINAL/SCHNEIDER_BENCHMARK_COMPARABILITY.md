@@ -1,19 +1,32 @@
 # Schneider published-benchmark comparability
 
-## Status: **NOT SATISFIED — MISSING EVIDENCE** for a primary numerical BKS gap table
+## Reviewer requirement interpretation
+Transparent **external validation** of the Schneider EVRPTW set (feasibility, fidelity, hard-instance
+diagnosis) was completed. A **verified numerical BKS gap table** additionally requires matching
+distance rounding, charging policy, objective, and independently checkable route archives.
+That last requirement remains **unresolved**.
 
-## Independent verifier
-[ghiermann/evrptw-verifier](https://github.com/ghiermann/evrptw-verifier) verifies Schneider-format
-instances and complete route sequences. Total cost rounded to 3 decimals. Full-recharge E-VRPTW semantics.
+## What exists
+- Primary protocol unchanged: **336** attempts, **264** feasible, **72** unsuccessful.
+- Hard customers C65/C64/C75 diagnosed; station-assisted solo routes exist.
+- Full g/v/matrix fidelity: 56/56 OK.
+- BKS inventory in code: 56 FR entries (`schneider_bks.py`) — reference only.
+- Independent verifier project: https://github.com/ghiermann/evrptw-verifier (3-decimal total rounding;
+  Schneider full-recharge semantics).
 
-## What we verified
-- Source + full matrix fidelity (g, v, Q, C, r, all distance/time/energy entries): 56/56 OK.
-- Hard-customer diagnosis: C65/C64/C75 admit station-assisted solo routes; solo D–C–D fails on battery.
-- Identifying missing customers does **not** prove official complete-instance infeasibility.
+## Targeted route-export diagnostic (NEW, does not alter primary 336)
+Saved complete routes for 3 ALNS-FR 30 s runs on easy instances:
+c101_21, c201_21, r201_21.
+- Independent internal replay match: **3/3**.
+- Artifacts: `outputs/reviewer_revision/schneider_route_export_diag/` and
+  `FINAL_TABLES/Schneider_route_export_diag.csv`.
 
-## Why BKS gaps are not claimed
-1. Primary Schneider checkpoints store metrics without complete node-string route archives (sample has_routes=False). Distance convention remains unrounded Euclidean vs common 2-decimal arc rounding; verifier rounds total cost to 3 decimals. Without exported verifier-valid tours under a documented shared rounding convention, numerical BKS gaps are not claimed.
-2. FR vs PR BKS sets assume specific charging policies incompatible with mixing unverified search configs.
-3. Hard instances (72 attempts) are incomplete and cannot be verifier-validated.
+## Why numerical BKS gaps are still NOT claimed
+1. Our distances are **unrounded Euclidean** (float32); many published tables use **2-decimal arc**
+   rounding before summing; the verifier rounds **total** cost to 3 decimals.
+2. Primary experiment checkpoints did not freeze string-ID routes for all 264 feasible attempts.
+3. Inventory `compare_row` distances are therefore **not** treated as publication BKS gaps.
+4. Homogeneous Schneider charging does **not** validate heterogeneous price/wait HCO claims.
 
-BKS inventory remains in `src/care-fi/evaluation/schneider_bks.py` for reference only.
+**Status: NOT SATISFIED — MISSING EVIDENCE** for a primary numerical BKS gap table.
+External feasibility validation and hard-instance diagnosis: **SATISFIED**.

@@ -1,0 +1,15 @@
+request,status,evidence
+Hanif five-seed main results (6720 / 3720),SATISFIED,outputs/raw/solution_results.csv; T3_*; FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md
+Correct 4200→3720 and supersede 350/360,SATISFIED,NUMERICAL_VALIDATION_REPORT.md; SUPERSEDED_REPORTS_INDEX.md; FINAL_RESULTS_REPORT banner
+FR/PR paired stats + Figure 2,SATISFIED,paired_comparisons_all.csv; FINAL_FIGURES/Figure2_*
+HCO ablations + 16/501/83 + 584/600 + Figure 4/5,SATISFIED,T4_*; T5_*; FINAL_FIGURES/Figure4_*; Figure5_*
+Fixed-route Detour vs Het Figure 3,SATISFIED,FINAL_FIGURES/Figure3_*; paired FixedRoute contrast
+Convergence primary288,SATISFIED,T8_*; FigS_FR_PR_convergence_*
+Fixed-route full vs partial counterfactual 240/42/198,SATISFIED,FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv; FR_PR_POLICY_EXPERIMENT_VERIFICATION.md
+Energy accounting + post-hoc economics,SATISFIED,T6_*; T9_*
+HCO candidate sensitivity 2/5/8,SATISFIED,HCO_sensitivity_candidates*.csv (identical metrics; k=5 fixed choice)
+Schneider 336/264/72 + hard customers + fidelity,SATISFIED,T7_*; SCHNEIDER_FAILURE_ROOT_CAUSE.md; Schneider_source_full_matrix_fidelity_*
+Schneider published numerical BKS gaps,NOT SATISFIED,SCHNEIDER_BENCHMARK_COMPARABILITY.md; route export diag does not claim gaps
+FR/PR fairness (both use GI; operators differ),SATISFIED,FR_PR_FAIRNESS_CORRECTED.md
+Figure values match CSV sources,SATISFIED,QC_LOGS/figure_csv_consistency.json
+Protected algorithms unchanged vs main,SATISFIED,QC_LOGS/verify_no_algo_diff.txt

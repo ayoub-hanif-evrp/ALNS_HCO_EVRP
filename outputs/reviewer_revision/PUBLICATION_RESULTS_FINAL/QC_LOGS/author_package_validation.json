@@ -1,0 +1,11 @@
+{
+  "pytest_ok": true,
+  "pytest_tail": "52 passed, 10 skipped in 7.73s",
+  "algo_diff_ok": true,
+  "algo_diff": "OK: no protected algorithmic files in diff vs origin/main / working tree\nchanged_count 1544",
+  "energy_identity_t6_ok": 24,
+  "energy_identity_t6_n": 24,
+  "raw_n": 6720,
+  "raw_dups": 0,
+  "n7": 3720
+}

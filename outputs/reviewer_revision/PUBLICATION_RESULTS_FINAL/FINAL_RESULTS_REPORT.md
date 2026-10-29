@@ -1,3 +1,5 @@
+> **AUTHORITATIVE UPDATE:** Seven-method panel = **3720** rows (120 GI + 6×600), not 4200. Five-seed PhaseI→Het identity = **584/600**; NoHCO→Het Cch = **16/501/83**. Older three-seed **350/360** HCO audits are historical (see SUPERSEDED_REPORTS_INDEX.md).
+
 # Final scientific results report
 
 **Branch:** `reviewer-revision-2026`  
@@ -8,7 +10,7 @@
 
 | Protocol | Source | N |
 |---|---|---|
-| Hanif main | `outputs/raw/solution_results.csv` | 6720 (incl. GI/VNS/SA); 7-method panel 4200 |
+| Hanif main | `outputs/raw/solution_results.csv` | 6720 (incl. GI/VNS/SA); 7-method panel 3720 |
 | Schneider 30 s | `outputs/reviewer_revision/schneider/` | 336 attempts |
 | FR/PR convergence | `fr_pr_convergence_primary288/` | 288 |
 

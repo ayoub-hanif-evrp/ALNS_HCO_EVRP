@@ -1,3 +1,5 @@
+> **SUPERSEDED for five-seed publication claims.** Use outputs/reviewer_revision/PUBLICATION_RESULTS_FINAL/FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md. Historical three-seed **350/360** is replaced by **584/600**; seven-method panel is **3720**, not 4200.
+
 # Round 5 — Final scientific verification & manuscript-delivery report
 
 **Branch:** `reviewer-revision-2026`  

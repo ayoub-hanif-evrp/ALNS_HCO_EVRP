@@ -1,16 +1,14 @@
 artifact,kind,dataset,seeds,instances,methods,statistic,script
-T3_overall_routing_performance.csv,table,solution_results.csv,0-4 (GI:0),60×2 TW,"GI,VNS,SA,ALNS-FR/PR,+HCO suite",instance-mean then mean,build_publication_results_final.py
-T_partial_recharging_FR_vs_PR.csv,table,solution_results.csv,0-4,60 per TW,ALNS-FR→ALNS-PR,paired % + bootstrap CI,build_publication_results_final.py
-T_fixed_route_Detour_vs_Heterogeneous.csv,table,solution_results.csv,0-4,60 per TW,FixedRoute Detour→Het,paired % + CI,build_publication_results_final.py
-T_phase2_NoHCO_vs_Heterogeneous.csv,table,solution_results.csv,0-4,60 per TW,NoHCO→Het,paired % + CI,build_publication_results_final.py
+FINAL_VERIFIED_RESULTS_FOR_AUTHOR.md,report,all verified CSVs,0-4 Hanif; 0-2 Schneider; 0-1 convergence,60×2 / 56 / 12×2,full panel,authoritative synthesis,build_author_ready_scientific_package.py
+FINAL_REVIEWER_EVIDENCE_CHECKLIST.csv,checklist,package,—,—,—,SATISFIED/PARTIAL/NOT,build_author_ready_scientific_package.py
+T3_overall_routing_performance.csv,table,solution_results.csv,0-4 (GI:0),60×2 TW,GI..HCO suite,instance-mean then mean,build_publication_results_final.py
+paired_comparisons_all.csv,table,solution_results.csv,0-4,60/TW,"FR/PR, HCO contrasts",paired % + bootstrap CI,build_publication_results_final.py
 T4_HCO_contribution_counts_seeds0to4.csv,table,solution_results.csv,0-4,600 matched,PhaseI/NoHCO/Het,improved/unchanged/worsened,build_publication_results_final.py
-T5_family_HCO_effects.csv,table,solution_results.csv,0-4,10/family,several,mean paired %,build_publication_results_final.py
-T6_energy_accounting.csv,table,solution_results + identity,0-4,60×2,all METHOD_ORDER,means; depot reconstructed,build_publication_results_final.py
-T7_Schneider_*,table,schneider/,0-2,56 / 44 paired,"FR,PR",feasibility + paired,copied+validated
-T8_*,table,primary288,0-1,12×2 TW,"FR,PR",paired + gap Δ,copied+validated
+T5_family_HCO_effects.csv,table,solution_results.csv,0-4,10/family,HCO contrasts,mean paired %,build_publication_results_final.py
+T6_energy_accounting.csv,table,solution_results+identity,0-4,60×2,all,means; depot reconstructed,build_publication_results_final.py
+T7_Schneider_*,table,schneider primary,0-2,56 / 44 paired,"FR,PR",feasibility+paired,reviewer Schneider pipeline
+T8_*,table,primary288,0-1,12×2 TW,"FR,PR",paired+lex gaps,fr_pr_convergence
 T9_economic_sensitivity_posthoc.csv,table,5-seed+energy,0-4,60×2,"FR,PR,Phase*",post-hoc means,build_publication_results_final.py
-Figure2_*,figure,T_partial_recharging,0-4,60,FR→PR,forest CI,build_publication_results_final.py
-Figure3_*,figure,T_fixed_route,0-4,60,Detour→Het,forest CI,build_publication_results_final.py
-Figure4_*,figure,T_phase2_NoHCO,0-4,60,NoHCO→Het,forest CI,build_publication_results_final.py
-Figure5_*,figure,T5 family phase2_nohco_hco,0-4,10/family,NoHCO→Het,family means only,build_publication_results_final.py
-FigS_FR_PR_convergence_*,figure,primary288,0-1,12,"FR,PR",budget curves,plot_fr_pr_convergence
+FR_PR_TRUE_FIXED_ROUTE_POLICY_EXPERIMENT.csv,table,shared_phase1,0-1,60×2 archives,partial vs full alpha,counterfactual feasibility+paired,final_reviewer_completion.py
+Figure2_* .. Figure5_* + FigS_*,figure,paired/T5/T8,as tables,as tables,as tables,forest/family/convergence,build_publication_results_final.py / plot_fr_pr_convergence
+Schneider_route_export_diag.csv,diagnostic,new short FR runs,0,"c101_21,c201_21,r201_21",ALNS-FR,route export+replay; no BKS gap claim,build_author_ready_scientific_package.py

@@ -1,0 +1,32 @@
+{
+  "checks": [
+    {
+      "figure": "Figure2",
+      "png": true,
+      "pdf": true,
+      "csv_rows": 16,
+      "ok": true
+    },
+    {
+      "figure": "Figure3",
+      "png": true,
+      "pdf": true,
+      "csv_rows": 16,
+      "ok": true
+    },
+    {
+      "figure": "Figure4",
+      "png": true,
+      "pdf": true,
+      "csv_rows": 16,
+      "ok": true
+    },
+    {
+      "figure": "Figure5",
+      "png": true,
+      "pdf": true,
+      "json_matches_T5_C1": true,
+      "ok": true
+    }
+  ]
+}
